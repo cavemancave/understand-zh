@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第十一章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand013_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand015.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1 id="chap-swap-management">第十一章　交换管理</h1>
+  <div class="meta">原文版本：Chapter 11 — Swap Management</div>
+
+<p>
+正如 Linux 会把空闲内存用作磁盘数据的缓冲区一样，最终也必须释放进程使用的私有页或匿名页。这类页与有磁盘文件作为后备的页不同，不能被简单丢弃然后稍后再读回来；而是要被仔细地复制到<em>后备存储（backing storage）</em>，有时也称为<em>交换区（swap area）</em>。本章详细讨论 Linux 如何使用和管理它的后备存储。
+</p>
+
+<p>
+严格地说，Linux 并不进行&ldquo;交换（swapping）&rdquo;，因为&ldquo;swapping&rdquo;一词指的是把进程的整个地址空间复制到磁盘，而&ldquo;分页（paging）&rdquo;才是指把单个页面写出。事实上，Linux 按现代硬件支持的方式实现的是分页，但在讨论和文档中传统上仍把它叫做 swapping。为与 Linux 中的惯用法保持一致，本书也使用&ldquo;交换&rdquo;一词。
+</p>
+
+<p>
+存在交换空间是可取的，主要有两点理由。第一，它扩展了进程可使用的内存量。虚拟内存与交换空间使得即便进程只部分驻留内存，大型进程也能运行。由于&ldquo;旧&rdquo;页可被换出，被寻址的内存量可以轻易超过 RAM 大小，因为按需分页机制会在需要时把页面重新装回内存。
+</p>
+
+<p>
+随便看一眼的读者<sup><a id="text15" href="#note15">1</a></sup>可能会认为，只要内存足够多就不需要交换；但这就引出了第二个理由。一个进程在生命周期早期引用的相当一部分页可能只用于初始化，之后再也不会用到。把这些页换出从而腾出更多磁盘缓冲区，比让它们继续驻留而无人使用更划算。
+</p>
+
+<p>
+需要注意的是，交换并非没有缺点，其中最重要也最显而易见的一点就是：磁盘很慢，非常非常慢。如果若干进程在频繁地访问大量内存，再多的交换空间或者再昂贵的高性能磁盘也无法让它在合理时间内运行——只有增加 RAM 才能解决问题。这就是为什么如<a href="understand013_zh.html#chap-page-frame-reclamation">第 10 章</a>所讨论的那样，换出&ldquo;正确&rdquo;的页非常重要；同时也需要把相关的页紧挨着保存在交换空间里，使它们在预读时有较大概率被一同读回。下面我们就从 Linux 如何描述一个交换区谈起。
+</p>
+
+<p>
+本章开头会描述 Linux 为系统中每一个活动交换区所维护的数据结构，以及交换区在磁盘上的信息组织。然后讨论 Linux 在分页之后如何记住在交换区中找到这些页的方法，以及交换槽是如何被分配的。之后会讨论<em>交换缓存（Swap Cache）</em>，它对共享页非常重要。到这里，信息已经足够让我们开始理解交换区的激活与停用、页的换入与换出、以及最终对交换区的读写过程。
+</p>
+
+<h2 id="sec-describing-swap-area">11.1　描述交换区</h2>
+
+<p>
+每个活动的交换区，无论是文件还是分区，都有一个 <tt>swap_info_struct</tt> 结构来描述它。运行中系统里所有这样的结构都保存在一个静态声明的数组 <tt>swap_info</tt> 中，该数组拥有 <tt>MAX_SWAPFILES</tt> 个表项；<tt>MAX_SWAPFILES</tt> 被静态定义为 32，这意味着一个运行中的系统最多可存在 32 个交换区。<tt>swap_info_struct</tt> 在 &lt;<tt>linux/swap.h</tt>&gt; 中声明如下：
+</p>
+
+<pre> 64 struct swap_info_struct {
+ 65     unsigned int flags;
+ 66     kdev_t swap_device;
+ 67     spinlock_t sdev_lock;
+ 68     struct dentry * swap_file;
+ 69     struct vfsmount *swap_vfsmnt;
+ 70     unsigned short * swap_map;
+ 71     unsigned int lowest_bit;
+ 72     unsigned int highest_bit;
+ 73     unsigned int cluster_next;
+ 74     unsigned int cluster_nr;
+ 75     int prio;
+ 76     int pages;
+ 77     unsigned long max;
+ 78     int next;
+ 79 };
+</pre>
+
+<p>下面对这个相当庞大的结构里每个字段作简要说明。</p>
+
+<dl>
+  <dt><b>flags</b></dt>
+  <dd>这是一个位域，有两个可能的取值。如果交换区当前处于活动状态，就会置上 <tt>SWP_USED</tt>。<tt>SWP_WRITEOK</tt> 定义为 3，即最低两位，<em>包含</em> <tt>SWP_USED</tt> 位。当 Linux 准备好向该区写入时（写入要求该区必须是活动的），flags 会被设为 <tt>SWP_WRITEOK</tt>。</dd>
+
+  <dt><b>swap_device</b></dt>
+  <dd>该交换区所用分区对应的设备保存在此。若交换区是一个文件，则该字段为 NULL。</dd>
+
+  <dt><b>sdev_lock</b></dt>
+  <dd>与 Linux 中许多结构一样，这个结构也需要保护。<tt>sdev_lock</tt> 是一个自旋锁，用于保护本结构，特别是 <tt>swap_map</tt>。可用 <tt>swap_device_lock()</tt> 与 <tt>swap_device_unlock()</tt> 来加锁和解锁。</dd>
+
+  <dt><b>swap_file</b></dt>
+  <dd>这是被挂载为交换区的实际特殊文件所对应的 <tt>dentry</tt>。例如，当一个分区被挂载用作交换区时，它可以是 <tt>/dev/</tt> 目录下某个文件的 <tt>dentry</tt>。停用一个交换区时需要靠它来定位正确的 <tt>swap_info_struct</tt>。</dd>
+
+  <dt><b>vfs_mount</b></dt>
+  <dd>这是与该交换区设备或文件所在挂载点相对应的 <tt>vfs_mount</tt> 对象。</dd>
+
+  <dt><b>swap_map</b></dt>
+  <dd>这是一个大数组，交换区里每个交换条目（即每个页大小的槽位）都有一项。每一项是该槽位用户数的引用计数。交换缓存算作一个用户，每一个已被换出到该槽位的 PTE 也算作一个用户。如果该项等于 <tt>SWAP_MAP_MAX</tt>，则该槽位被永久分配；如果等于 <tt>SWAP_MAP_BAD</tt>，则该槽位永远不会被使用。</dd>
+
+  <dt><b>lowest_bit</b></dt>
+  <dd>这是该交换区中可能可用的最低空闲槽位号，用作线性扫描的起点以减少搜索空间。已知这个位置以下肯定不会有空闲槽。</dd>
+
+  <dt><b>highest_bit</b></dt>
+  <dd>这是该交换区中可能可用的最高空闲槽位号。与 <tt>lowest_bit</tt> 类似，已知此位置以上肯定不会有空闲槽。</dd>
+
+  <dt><b>cluster_next</b></dt>
+  <dd>下一个将要使用的块簇的偏移。交换区会尽量按簇分配，以增加相关页面被一起保存的概率。</dd>
+
+  <dt><b>cluster_nr</b></dt>
+  <dd>当前簇中仍剩余可分配的页数。</dd>
+
+  <dt><b>prio</b></dt>
+  <dd>每个交换区都有一个优先级，存储在此字段中。各区按优先级排序，并据此决定被使用的可能性。默认情况下，优先级按激活顺序排列，但管理员也可在使用 <b>swapon</b> 时通过 <tt>-p</tt> 选项指定。</dd>
+
+  <dt><b>pages</b></dt>
+  <dd>由于交换文件中部分槽位可能不可用，此字段保存交换区中可用页的数量。它与 <tt>max</tt> 的不同之处在于：标记为 <tt>SWAP_MAP_BAD</tt> 的槽位不计入其中。</dd>
+
+  <dt><b>max</b></dt>
+  <dd>该交换区中槽位的总数。</dd>
+
+  <dt><b>next</b></dt>
+  <dd>系统中下一个交换区在 <tt>swap_info</tt> 数组中的下标。</dd>
+</dl>
+
+<p>
+这些交换区虽然存储在数组里，但也被组织在一个伪链表 <tt>swap_list</tt> 中，其类型非常简单，在 &lt;<tt>linux/swap.h</tt>&gt; 中声明如下：
+</p>
+
+<pre>153 struct swap_list_t {
+154     int head;    /* head of priority-ordered swapfile list */
+155     int next;    /* swapfile to be used next */
+156 };
+</pre>
+
+<p>
+字段 <tt>swap_list_t</tt>&rarr;<tt>head</tt> 是当前使用中优先级最高的交换区，而 <tt>swap_list_t</tt>&rarr;<tt>next</tt> 是下一个应被使用的交换区。这样在寻找合适交换区时可以按优先级顺序排列各区，同时在必要时仍可通过数组进行快速查找。
+</p>
+
+<p>
+每个交换区在磁盘上都被划分为若干页大小的槽位——例如在 x86 上每个槽就是 4096 字节。第一个槽位总是被保留，因为其中包含的关于交换区的信息不能被覆盖。交换区前 1 KiB 用于存放分区的磁盘标签，可被用户态工具读取。剩余空间则用于存放关于交换区的信息，由系统程序 <b>mkswap</b> 在创建交换区时填充。这些信息用于填充一个 <tt>union</tt> <tt>swap_header</tt>，其在 &lt;<tt>linux/swap.h</tt>&gt; 中声明如下：
+</p>
+
+<pre> 25 union swap_header {
+ 26     struct
+ 27     {
+ 28         char reserved[PAGE_SIZE - 10];
+ 29         char magic[10];
+ 30     } magic;
+ 31     struct
+ 32     {
+ 33         char     bootbits[1024];
+ 34         unsigned int version;
+ 35         unsigned int last_page;
+ 36         unsigned int nr_badpages;
+ 37         unsigned int padding[125];
+ 38         unsigned int badpages[1];
+ 39     } info;
+ 40 };
+</pre>
+
+<p>下面对各字段进行说明。</p>
+
+<dl>
+  <dt><b>magic</b></dt>
+  <dd>联合体中的 <tt>magic</tt> 部分仅用于识别&ldquo;魔数&rdquo;字符串。该字符串的存在是为了确保非交换区分区不会被误用，并据此判断交换区的版本。若字符串为&ldquo;SWAP-SPACE&rdquo;，则为版本 1 的交换文件格式；若为&ldquo;SWAPSPACE2&rdquo;，则为版本 2。其中那个很大的 reserved 数组只是为了让魔数字符串恰好位于这一页的末尾被读取。</dd>
+
+  <dt><b>bootbits</b></dt>
+  <dd>这是预留区域，包含关于分区的信息（例如磁盘标签）。</dd>
+
+  <dt><b>version</b></dt>
+  <dd>交换区布局的版本号。</dd>
+
+  <dt><b>last_page</b></dt>
+  <dd>交换区中最后一个可用页。</dd>
+
+  <dt><b>nr_badpages</b></dt>
+  <dd>本字段保存交换区中已知的坏页数量。</dd>
+
+  <dt><b>padding</b></dt>
+  <dd>磁盘扇区通常约为 512 字节。<tt>version</tt>、<tt>last_page</tt> 和 <tt>nr_badpages</tt> 三个字段占 12 字节，<tt>padding</tt> 用于填充剩余的 500 字节，正好凑满一个扇区。</dd>
+
+  <dt><b>badpages</b></dt>
+  <dd>该页的剩余空间用于保存最多 <tt>MAX_SWAP_BADPAGES</tt> 个坏槽位的下标。这些槽位由 <b>mkswap</b> 在使用 <tt>-c</tt> 选项检查交换区时填入。</dd>
+</dl>
+
+<p>
+<tt>MAX_SWAP_BADPAGES</tt> 是一个编译期常量，随结构变化而变化，但按其当前形式由下面这个简单等式可得为 637：
+</p>
+
+<pre>
+MAX_SWAP_BADPAGES = (PAGE_SIZE - 1024 - 512 - 10) / sizeof(long)
+</pre>
+
+<p>
+其中 1024 是引导块大小，512 是 padding 大小，10 是用于标识交换文件格式的魔数字符串长度。
+</p>
+
+<h2 id="sec-mapping-pte-to-swap-entries">11.2　把页表项映射为交换条目</h2>
+
+<p>
+当一页被换出时，Linux 使用对应的 PTE 来保存足够信息，以便日后在磁盘上重新定位该页。显然，PTE 本身大小不足以保存该页在磁盘上的精确位置，但用来保存 <tt>swap_info</tt> 数组中的下标和该页在 <tt>swap_map</tt> 中的偏移则绰绰有余——而这正是 Linux 所做的。
+</p>
+
+<p>
+无论是哪种体系结构，每个 PTE 都足够大，可以存下一个 <tt>swp_entry_t</tt>。其在 &lt;<tt>linux/shmem_fs.h</tt>&gt; 中声明如下：
+</p>
+
+<pre> 16 typedef struct {
+ 17     unsigned long val;
+ 18 } swp_entry_t;
+</pre>
+
+<p>
+有两个宏分别用于在 PTE 与交换条目之间互相转换：<tt>pte_to_swp_entry()</tt> 和 <tt>swp_entry_to_pte()</tt>。
+</p>
+
+<p>
+每种体系结构都必须能够判断一个 PTE 是处于&ldquo;present&rdquo;状态还是已被换出。下面我们以 x86 为例说明其实现方式。在 <tt>swp_entry_t</tt> 中始终保留两位：x86 上的第 0 位用于 <tt>_PAGE_PRESENT</tt> 标志，第 7 位用于 <tt>_PAGE_PROTNONE</tt>。这两位的必要性已在<a href="understand006.html#sec: Describing a Page Table Entry">第 3.2 节</a>中说明。第 1&ndash;6 位用于<em>type</em>，即在 <tt>swap_info</tt> 数组中的下标，由 <tt>SWP_TYPE()</tt> 宏返回。
+</p>
+
+<p>
+第 8&ndash;31 位用于在 <tt>swp_entry_t</tt> 中存放 <tt>swap_map</tt> 内的<em>offset</em>。在 x86 上，这意味着有 24 位可用，&ldquo;把&rdquo;交换区大小&ldquo;限制&rdquo;在 64 GiB。<tt>SWP_OFFSET()</tt> 宏用于提取该偏移。
+</p>
+
+<p>
+为了把 type 与 offset 编码到 <tt>swp_entry_t</tt> 中，可使用 <tt>SWP_ENTRY()</tt> 宏，它只是执行相应的位移操作。这些宏之间的关系如<a href="#fig-swp-entry">图 11.1</a>所示。
+</p>
+
+<div class="figure" id="fig-swp-entry">
+  <img src="../original_html/figures/understand-html065.png" alt="图 11.1：在 swp_entry_t 中存储交换条目信息">
+  <div class="caption">图 11.1：在 <tt>swp_entry_t</tt> 中存储交换条目信息</div>
+</div>
+
+<p>
+应当注意，&ldquo;type&rdquo;占用的 6 位本来允许 32 位体系结构上存在多达 64 个交换区，而不是被限制为 <tt>MAX_SWAPFILES</tt>（即 32）。这个限制源自 vmalloc 地址空间的消耗。如果一个交换区取最大可能尺寸，则 <tt>swap_map</tt> 需要 32 MiB（2<sup>24</sup> * <i>sizeof</i>(<i>short</i>)）——记住每页占用一个 short 用作引用计数。哪怕仅仅是 <tt>MAX_SWAPFILES</tt> 个最大尺寸的交换区，也要 1 GiB 的虚拟 malloc 空间，鉴于用户/内核线性地址空间的划分，这是根本不可能的。
+</p>
+
+<p>
+这看起来似乎说明：支持 64 个交换区并不值得增加这点复杂度。然而，即使总交换容量并不增加，也存在希望拥有大量交换区的情形。一些现代机器<sup><a id="text16" href="#note16">2</a></sup>有多个独立磁盘，可在它们之间产生大量独立块设备。这种情况下，希望创建大量小交换区均匀分布在所有磁盘上。这样可以在分页行为上获得高度的并行性，这对交换密集型应用很重要。
+</p>
+
+<h2 id="sec-allocating-swap-slot">11.3　分配一个交换槽位</h2>
+
+<p>
+所有页大小的槽位都由数组 <tt>swap_info_struct</tt>&rarr;<tt>swap_map</tt>（类型为 <tt>unsigned short</tt>）追踪。每一项都是该槽位使用者数量的引用计数（在共享页的情形下会大于 1），为 0 表示空闲。如果某项等于 <tt>SWAP_MAP_MAX</tt>，则该页被永久保留给该槽。这种情形即便不是不可能，也极不可能发生，存在该值是为了避免引用计数溢出。如果该项等于 <tt>SWAP_MAP_BAD</tt>，则该槽不可用。
+</p>
+
+<div class="figure" id="fig-get-swap-page">
+  <img src="../original_html/figures/understand-html066.png" alt="图 11.2：调用图：get_swap_page()">
+  <div class="caption">图 11.2：调用图：<tt>get_swap_page()</tt></div>
+</div>
+
+<p>
+查找并分配一个交换条目的任务分为两个主要步骤。第一步由高层函数 <tt>get_swap_page()</tt> 完成。它从 <tt>swap_list</tt>&rarr;<tt>next</tt> 开始，在各交换区中搜索合适的槽位。找到后记录下一次应使用的交换区，并返回所分配的条目。
+</p>
+
+<p>
+搜索 swap_map 的工作由 <tt>scan_swap_map()</tt> 负责。原则上很简单——线性扫描数组找到一个空闲槽位然后返回；可以预见，实际实现要细致一些。
+</p>
+
+<p>
+Linux 试图把页在磁盘上组织成大小为 <tt>SWAPFILE_CLUSTER</tt> 的<em>簇（cluster）</em>。它在交换空间中连续分配 <tt>SWAPFILE_CLUSTER</tt> 个页，并在 <tt>swap_info_struct</tt>&rarr;<tt>cluster_nr</tt> 中记录连续分配的页数，在 <tt>swap_info_struct</tt>&rarr;<tt>cluster_next</tt> 中记录当前偏移。一旦一段连续块分配完毕，就再寻找 <tt>SWAPFILE_CLUSTER</tt> 大小的空闲段；若找到足够大的块，便作为下一个簇大小的连续序列使用。
+</p>
+
+<p>
+若在交换区中找不到足够大的空闲簇，则从 <tt>swap_info_struct</tt>&rarr;<tt>lowest_bit</tt> 开始执行简单的首次适应（first-free）搜索。其目标是让同时换出的页在磁盘上挨得近，前提是同时换出的页彼此相关。乍一看这个前提似乎奇怪，但考虑到页置换算法在交换空间使用最频繁时正是线性扫描进程地址空间换出页，这个前提就相当可靠了。如果不去寻找大块空闲段并加以利用，那么扫描就会退化为单纯的首次适应搜索，永远得不到改善。借助这种机制，进程退出时往往会释放出大块连续槽位。
+</p>
+
+<h2 id="sec-swap-cache">11.4　交换缓存</h2>
+
+<p>
+在多个进程之间共享的页很难简单地换出，因为如前所述，没有快速的方法把一个 <tt>struct page</tt> 映射回每个引用它的 PTE。这就会产生竞争条件：一个 PTE 中页仍然存在，而另一个 PTE 中页已被换出，更新后未同步到磁盘从而丢失更新。
+</p>
+
+<p>
+为解决该问题，那些在后备存储中已预留有槽位的共享页被视为<em>交换缓存（swap cache）</em>的一部分。交换缓存纯粹是概念性的，它实际上只是页缓存的一种特化。交换缓存中页与普通页缓存中页的首要差别是：交换缓存中页始终使用 <tt>swapper_space</tt> 作为其 <tt>page</tt>&rarr;<tt>mapping</tt> 中的 <tt>address_space</tt>。第二个差别是：页被加入交换缓存使用 <tt>add_to_swap_cache()</tt> 而不是 <tt>add_to_page_cache()</tt>。
+</p>
+
+<div class="figure" id="fig-add-to-swap-cache">
+  <img src="../original_html/figures/understand-html067.png" alt="图 11.3：调用图：add_to_swap_cache()">
+  <div class="caption">图 11.3：调用图：<tt>add_to_swap_cache()</tt></div>
+</div>
+
+<p>
+匿名页在试图被换出<em>之前</em>并不属于交换缓存。变量 <tt>swapper_space</tt> 在 <tt>swap_state.c</tt> 中声明如下：
+</p>
+
+<pre> 39 struct address_space swapper_space = {
+ 40     LIST_HEAD_INIT(swapper_space.clean_pages),
+ 41     LIST_HEAD_INIT(swapper_space.dirty_pages),
+ 42     LIST_HEAD_INIT(swapper_space.locked_pages),
+ 43     0,
+ 44     &amp;swap_aops,
+ 45 };
+</pre>
+
+<p>
+一旦 <tt>page</tt>&rarr;<tt>mapping</tt> 字段被设为 <tt>swapper_space</tt>，该页就被认为是交换缓存的一部分，这一点由 <tt>PageSwapCache()</tt> 宏来测试。Linux 用同一套代码维护&ldquo;交换与内存之间&rdquo;的同步以及&ldquo;文件后备页与内存之间&rdquo;的同步，二者共享页缓存代码，区别仅在于所用的具体函数。
+</p>
+
+<p>
+作为后备存储的地址空间 <tt>swapper_space</tt>，其 <tt>address_space</tt>&rarr;<tt>a_ops</tt> 使用 <tt>swap_ops</tt>。<tt>page</tt>&rarr;<tt>index</tt> 字段则不再像通常那样保存文件偏移，而是用于保存 <tt>swp_entry_t</tt> 结构。<tt>address_space_operations</tt> 结构 <tt>swap_aops</tt> 在 <tt>swap_state.c</tt> 中声明如下：
+</p>
+
+<pre> 34 static struct address_space_operations swap_aops = {
+ 35     writepage: swap_writepage,
+ 36     sync_page: block_sync_page,
+ 37 };
+</pre>
+
+<p>
+当一页被加入交换缓存时，先通过 <tt>get_swap_page()</tt> 分配一个槽位，再通过 <tt>add_to_swap_cache()</tt> 加入页缓存，然后标记为 dirty。下次该页被&ldquo;洗涤（laundered）&rdquo;时，会按照普通页缓存的方式被真正写到磁盘后备存储。整个过程如<a href="#fig-add-to-swap-cache-detail">图 11.4</a> 所示。
+</p>
+
+<div class="figure" id="fig-add-to-swap-cache-detail">
+  <img src="../original_html/figures/understand-html068.png" alt="图 11.4：把页加入交换缓存">
+  <div class="caption">图 11.4：把页加入交换缓存</div>
+</div>
+
+<p>
+后续若该页被从其他共享 PTE 中再次换出，会调用 <tt>swap_duplicate()</tt>，它只是把 <tt>swap_map</tt> 中对应槽位的引用计数加一。若该 PTE 因写入被硬件标记为 dirty，该位会被清除，并通过 <tt>set_page_dirty()</tt> 把 <tt>struct page</tt> 标记为 dirty，从而保证在页被丢弃前磁盘副本会被同步。这样可以确保：在对该页的所有引用都被释放之前，会进行检查以保证磁盘上的数据与页帧中的数据一致。
+</p>
+
+<p>
+当对该页的引用计数最终降为 0 时，该页就可以从页缓存中被丢弃；此时 swap_map 中的计数仍记录着磁盘槽位归属的 PTE 数量，因此该槽位不会被过早释放。该页随后按<a href="understand013_zh.html#chap-page-frame-reclamation">第 10 章</a>所述的同一套 LRU 老化和逻辑被洗涤并最终丢弃。
+</p>
+
+<p>
+反过来，如果对一个&ldquo;已换出&rdquo;页发生了缺页，<tt>do_swap_page()</tt> 中的逻辑会调用 <tt>lookup_swap_cache()</tt> 检查该页是否存在于交换缓存中。如果存在，PTE 会被更新为指向该页帧，页引用计数加一，并通过 <tt>swap_free()</tt> 把交换槽位计数减一。
+</p>
+
+<div class="table" id="tab-swap-cache-api">
+<table border="1" cellspacing="0" cellpadding="4">
+<tr><td><tt>swp_entry_t get_swap_page()</tt></td></tr>
+<tr><td>该函数通过搜索活动交换区，在某个 <tt>swap_map</tt> 中分配一个槽位。详细内容见<a href="#sec-allocating-swap-slot">第 11.3 节</a>。此处列出是因为它主要与交换缓存配合使用。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>int add_to_swap_cache(struct page *page, swp_entry_t entry)</tt></td></tr>
+<tr><td>该函数把一页加入交换缓存。它首先调用 <tt>swap_duplicate()</tt> 检查页是否已存在；若不存在，则通过普通的页缓存接口函数 <tt>add_to_page_cache_unique()</tt> 把它加入交换缓存。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>struct page * lookup_swap_cache(swp_entry_t entry)</tt></td></tr>
+<tr><td>该函数搜索交换缓存并返回与给定 <tt>entry</tt> 对应的 <tt>struct page</tt>。它的工作方式是基于 <tt>swapper_space</tt> 和 <tt>swap_map</tt> 偏移在普通页缓存中进行搜索。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>int swap_duplicate(swp_entry_t entry)</tt></td></tr>
+<tr><td>该函数校验一个交换条目是否有效，若有效则把其 swap_map 计数加一。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>void swap_free(swp_entry_t entry)</tt></td></tr>
+<tr><td><tt>swap_duplicate()</tt> 的对偶函数。它把 <tt>swap_map</tt> 中相应的计数减一。当计数降为 0 时，槽位实际上就空闲了。</td></tr>
+</table>
+<div class="caption">表 11.1：交换缓存 API</div>
+</div>
+
+<h2 id="sec-reading-pages">11.5　从后备存储读取页</h2>
+
+<p>
+在读入页时主要使用的函数是 <tt>read_swap_cache_async()</tt>，它主要在缺页处理过程中被调用。该函数首先用 <tt>find_get_page()</tt> 搜索交换缓存。通常对交换缓存的搜索由 <tt>lookup_swap_cache()</tt> 完成，但该函数会更新搜索次数统计；而由于缓存可能需要被多次搜索，这里改用 <tt>find_get_page()</tt>。
+</p>
+
+<div class="figure" id="fig-read-swap-cache-async">
+  <img src="../original_html/figures/understand-html069.png" alt="图 11.5：调用图：read_swap_cache_async()">
+  <div class="caption">图 11.5：调用图：<tt>read_swap_cache_async()</tt></div>
+</div>
+
+<p>
+若另一个进程也映射了同一页，或者多个进程同时对同一页缺页，则该页可能已经存在于交换缓存中。如果不在交换缓存中，则必须分配一页并用后备存储中的数据填充。
+</p>
+
+<p>
+页通过 <tt>alloc_page()</tt> 分配之后，会用 <tt>add_to_swap_cache()</tt> 加入交换缓存，因为交换缓存操作只能针对位于交换缓存中的页进行。若无法加入交换缓存，则再次搜索交换缓存以确认是否已有别的进程把数据放入了其中。
+</p>
+
+<p>
+为从后备存储读入信息，会调用 <tt>rw_swap_page()</tt>，详见<a href="#sec-rw-swap-area">第 11.7 节</a>。函数完成后，会调用 <tt>page_cache_release()</tt> 释放 <tt>find_get_page()</tt> 对该页的引用。
+</p>
+
+<h2 id="sec-writing-pages">11.6　把页写入后备存储</h2>
+
+<p>
+当任何一页被写到磁盘时，系统会查询 <tt>address_space</tt>&rarr;<tt>a_ops</tt> 以找到合适的写出函数。对后备存储而言，<tt>address_space</tt> 是 <tt>swapper_space</tt>，相关的交换操作包含在 <tt>swap_aops</tt> 中。结构 <tt>swap_aops</tt> 将 <tt>swap_writepage()</tt> 注册为其写出函数。
+</p>
+
+<div class="figure" id="fig-sys-writepage">
+  <img src="../original_html/figures/understand-html070.png" alt="图 11.6：调用图：sys_writepage()">
+  <div class="caption">图 11.6：调用图：<tt>sys_writepage()</tt></div>
+</div>
+
+<p>
+<tt>swap_writepage()</tt> 的行为取决于执行写入的进程是否是该交换缓存页的最后一个用户。它通过调用 <tt>remove_exclusive_swap_page()</tt> 判断这一点——后者在持有 <tt>pagecache_lock</tt> 的情况下检查页的计数。如果没有别的进程映射该页，则将其从交换缓存中移除并释放。
+</p>
+
+<p>
+如果 <tt>remove_exclusive_swap_page()</tt> 已经把页从交换缓存中移除并释放，<tt>swap_writepage()</tt> 会解锁该页，因为它已不再被使用。如果它仍存在于交换缓存中，则调用 <tt>rw_swap_page()</tt> 把数据写入后备存储。
+</p>
+
+<h2 id="sec-rw-swap-area">11.7　对交换区进行读写</h2>
+
+<p>
+对交换区进行读写的顶层函数是 <tt>rw_swap_page()</tt>。该函数确保所有操作都经过交换缓存，以防止丢失更新。<tt>rw_swap_page_base()</tt> 是真正执行工作的核心函数。
+</p>
+
+<p>
+它首先判断操作是否为读取。若是，则用 <tt>ClearPageUptodate()</tt> 清除 uptodate 标志——既然需要 I/O 来填充数据，页显然就不是最新的。读取成功之后，该标志会被再次置位。然后调用 <tt>get_swaphandle_info()</tt> 获取交换分区所属的设备，或者交换文件所属的 inode。这些信息是块层执行实际 I/O 所需要的。
+</p>
+
+<p>
+核心函数对交换分区和交换文件都能工作，因为它使用块层函数 <tt>brw_page()</tt> 来完成真正的磁盘 I/O。如果交换区是一个文件，则使用 <tt>bmap()</tt> 用文件系统中所有包含该页数据的块号填充一个本地数组。要记得，文件系统可能有自己存放文件和磁盘数据的方式，没有交换分区那么简单——交换分区里信息可以直接写到磁盘。如果后备存储是分区，那么只需要对一个页大小的块执行 I/O；且由于不涉及文件系统，<tt>bmap()</tt> 也就没必要。
+</p>
+
+<p>
+一旦确定了需要读写哪些块，就用 <tt>brw_page()</tt> 执行常规的块 I/O 操作。所有 I/O 都是异步的，因此函数会很快返回。一旦 I/O 完成，块层会解锁该页，所有等待该页的进程都会被唤醒。
+</p>
+
+<h2 id="sec-activating-swap">11.8　激活一个交换区</h2>
+
+<p>
+现在我们已经讨论了交换区是什么、如何表示、页如何被追踪，是时候看看它们是如何串起来以激活一个交换区的。激活一个交换区在概念上相当简单：打开文件、从磁盘读入头信息、填充一个 <tt>swap_info_struct</tt>、并把它加入交换链表。
+</p>
+
+<p>
+负责激活交换区的函数是 <tt>sys_swapon()</tt>，它接受两个参数：交换区特殊文件的路径，以及一组标志。在交换区被激活期间，<em>大内核锁（Big Kernel Lock，BKL）</em>会被持有，这阻止任何应用程序在此操作进行期间进入内核态。该函数相当庞大，但可分解为如下几个简单步骤：
+</p>
+
+<ul>
+  <li>在 <tt>swap_info</tt> 数组中找到一个空闲的 <tt>swap_info_struct</tt>，并用默认值初始化它；</li>
+  <li>调用 <tt>user_path_walk()</tt>，它会沿目录树遍历用户给定的 <tt>specialfile</tt>，并用关于该文件可用的数据（例如 <tt>dentry</tt> 以及文件所在文件系统的信息 <tt>vfsmount</tt>）填充一个 <tt>namidata</tt> 结构；</li>
+  <li>填充 <tt>swap_info_struct</tt> 中与交换区尺寸和寻址方式相关的字段。若交换区是一个分区，会先把块大小设置为 <tt>PAGE_SIZE</tt> 再计算大小；若是文件，则信息直接从 <tt>inode</tt> 中获得；</li>
+  <li>确保该区尚未被激活。如未被激活，则分配一页内存并读入交换区的第一个页大小的槽位。该页包含若干信息，例如可用槽位数，以及如何用坏槽位填充 <tt>swap_info_struct</tt>&rarr;<tt>swap_map</tt> 的依据；</li>
+  <li>用 <tt>vmalloc()</tt> 为 <tt>swap_info_struct</tt>&rarr;<tt>swap_map</tt> 分配内存，并把好槽位初始化为 0，其他槽位初始化为 <tt>SWAP_MAP_BAD</tt>。理想情况下头信息应为版本 2 的文件格式，因为版本 1 在 x86 这种 4 KiB 页大小的体系结构上把交换区大小限制在不到 128 MiB<sup><a id="text17" href="#note17">3</a></sup>；</li>
+  <li>在确认头中信息与实际交换区一致后，填好 <tt>swap_info_struct</tt> 中其余的信息，比如最大页数和可用好页数。更新全局统计变量 <tt>nr_swap_pages</tt> 和 <tt>total_swap_pages</tt>；</li>
+  <li>此时交换区已完全激活并初始化完成，根据其优先级把它插入到交换链表中正确的位置。</li>
+</ul>
+
+<p>
+函数结束时释放 BKL，系统就有了一个可供分页使用的新交换区。
+</p>
+
+<h2 id="sec-deactivating-swap">11.9　停用一个交换区</h2>
+
+<p>
+相比激活而言，停用交换区的开销极其高昂。主要问题在于：交换区不能简单地直接被移除，每个被换出的页都必须再次换入。正如没有快速方法把一个 <tt>struct page</tt> 映射回每一个引用它的 PTE 一样，也没有快速方法把一个交换条目映射回 PTE。这就要求遍历所有进程页表，找出引用要停用交换区的所有 PTE 并把它们换入。这当然也意味着：如果物理内存不足，停用就会失败。
+</p>
+
+<p>
+不出所料，负责停用一个交换区的函数叫做 <tt>sys_swapoff()</tt>。该函数主要关心更新 <tt>swap_info_struct</tt>。把每个已换出页换入的繁重任务则交给 <tt>try_to_unuse()</tt>，其代价<em>极为</em>高昂。对于 <tt>swap_map</tt> 中使用着的每一个槽位，都得遍历各进程的页表去寻找它。在最坏情况下，所有 <tt>mm_struct</tt> 所属的页表都得遍历。因此，停用一个交换区大致需要执行如下任务：
+</p>
+
+<ul>
+  <li>调用 <tt>user_path_walk()</tt> 获取要停用的特殊文件的信息，然后取得 BKL；</li>
+  <li>从交换链表中移除该 <tt>swap_info_struct</tt>，更新全局统计：可用交换页数（<tt>nr_swap_pages</tt>）和总交换条目数（<tt>total_swap_pages</tt>）。一旦完成，就可以释放 BKL；</li>
+  <li>调用 <tt>try_to_unuse()</tt>，它会把要停用交换区中的所有页换入。该函数通过 <tt>find_next_to_unuse()</tt> 在 swap_map 中循环查找下一个被使用的交换槽位。对每个已用槽位，执行如下操作：
+    <ul>
+      <li>调用 <tt>read_swap_cache_async()</tt> 为磁盘上保存的槽位分配一页。理想情况下它已经在交换缓存中，否则会调用页分配器；</li>
+      <li>等待该页被完全换入并锁定。锁定后，对每个引用该页的进程都调用 <tt>unuse_process()</tt>。该函数遍历页表搜索相关 PTE，并将其更新为指向该 <tt>struct page</tt>。若该页是已无其他引用的共享内存页，则改为调用 <tt>shmem_unuse()</tt>；</li>
+      <li>释放所有曾经被永久映射的槽位。这里假设槽位不会真的变为永久保留，所以承担这点风险；</li>
+      <li>把页从交换缓存中删除，防止 <tt>try_to_swap_out()</tt> 在该页仍可能于 swap_map 中存在引用的情况下再次去引用它。</li>
+    </ul>
+  </li>
+  <li>如果可用内存不足以换入全部条目，由于不能简单丢弃该交换区，就会把它重新插回到运行系统中。如果成功，则把 <tt>swap_info_struct</tt> 置为未初始化状态，并通过 <tt>vfree()</tt> 释放 <tt>swap_map</tt> 内存。</li>
+</ul>
+
+<h2 id="sec-whats-new-2-6">11.10　2.6 中的新变化</h2>
+
+<p>
+对 <tt>struct swap_info_struct</tt> 最重要的新增是加入了一个名为 <tt>extent_list</tt> 的链表，以及一个名为 <tt>curr_swap_extent</tt> 的缓存字段，用于实现&ldquo;扩展段（extent）&rdquo;。
+</p>
+
+<p>
+扩展段由 <tt>struct swap_extent</tt> 表示，把交换区中连续的一段页映射到磁盘上连续的一段块。这些扩展段在 swapon 时由 <tt>setup_swap_extents()</tt> 建立。对块设备而言，只会有一个交换扩展段，并不会带来性能提升；但仍然建立扩展段，以便后备为块设备或普通文件的交换区可以被同等对待。
+</p>
+
+<p>
+对交换文件来说，差别可能非常大——它会包含多个扩展段，每个段代表一组按块聚集在一起的页范围。当搜索某一偏移上的页时，会遍历扩展段链表。为加快搜索速度，最近一次被搜索的扩展段会缓存在 <tt>swap_extent</tt>&rarr;<tt>curr_swap_extent</tt> 中。
+</p>
+
+<hr>
+<div class="notes">
+  <h3>译注</h3>
+  <ul>
+    <li>&ldquo;swap area&rdquo;译为&ldquo;交换区&rdquo;，&ldquo;backing storage&rdquo;译为&ldquo;后备存储&rdquo;。</li>
+    <li>&ldquo;swap cache&rdquo;译为&ldquo;交换缓存&rdquo;，&ldquo;page cache&rdquo;译为&ldquo;页缓存&rdquo;。</li>
+    <li>&ldquo;swap entry&rdquo;译为&ldquo;交换条目&rdquo;，&ldquo;slot&rdquo;译为&ldquo;槽位&rdquo;。</li>
+    <li>&ldquo;cluster&rdquo;译为&ldquo;簇&rdquo;，&ldquo;extent&rdquo;译为&ldquo;扩展段&rdquo;。</li>
+    <li>&ldquo;swapping&rdquo;和&ldquo;paging&rdquo;在原文中虽有区别（前者指整个进程，后者指单个页），但 Linux 文档惯用前者，本文统一译为&ldquo;交换&rdquo;。</li>
+    <li>&ldquo;laundering&rdquo;沿用第 10 章&ldquo;洗涤&rdquo;的译法，指脏页被同步到磁盘的过程。</li>
+    <li>函数名、宏名、结构体名（如 <tt>swap_info_struct</tt>、<tt>swp_entry_t</tt>、<tt>swap_writepage</tt>、<tt>kswapd</tt> 等）均保留英文，便于查阅源码。</li>
+  </ul>
+</div>
+
+<hr class="footnoterule">
+<dl class="thefootnotes">
+  <dt><a id="note15" href="#text15">1</a></dt>
+  <dd>更不必说那些手头宽裕的读者。</dd>
+  <dt><a id="note16" href="#text16">2</a></dt>
+  <dd>例如 Sun E450 服务器可能装有约 20 块磁盘。</dd>
+  <dt><a id="note17" href="#text17">3</a></dt>
+  <dd>具体原因详见配套的代码注释（Code Commentary）。</dd>
+</dl>
+
+<nav>
+  [ <a href="understand013_zh.html">&laquo; 上一章</a> ]
+  [ <a href="index.html">&uarr; 返回目录</a> ]
+  [ <a href="../original_html/understand015.html">下一章 &raquo;</a> ]
+</nav>
+
+<p><small>原文来源：<a href="../original_html/understand014.html">understand014.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
+</body>
+</html>
