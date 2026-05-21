@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第十章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand012_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand014.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1 id="chap-page-frame-reclamation">第十章　页帧回收</h1>
+  <div class="meta">原文版本：Chapter 10 — Page Frame Reclamation</div>
+
+<p>
+一个长期运行的系统迟早会把所有可用的页帧用于磁盘缓冲区、目录项、inode 项、进程页等等用途。在物理内存被耗尽之前，Linux 需要选出可以释放并使其失效以便重新使用的旧页面。本章将专门讨论 Linux 如何实现其页置换策略，以及不同类型的页面是如何被作废的。
+</p>
+
+<p>
+Linux 选页所使用的方法相当经验化，其背后的理论也是由多种不同思想综合而来。实践中已经证明这套方法运作良好，并会根据用户反馈和基准测试持续调整。本章首先讨论的就是页置换策略的基本要点。
+</p>
+
+<p>
+第二个讨论主题是<em>页缓存（page cache）</em>。所有从磁盘读上来的数据都会被存入页缓存，以减少必须执行的磁盘 I/O 数量。严格说来这与页帧回收并无直接关系，但 LRU 链表与页缓存是紧密相关的。相关小节将聚焦于页是如何被加入页缓存以及如何被快速定位的。
+</p>
+
+<p>
+这样我们就引出了第三个主题——LRU 链表。除 slab 分配器外，系统所使用的所有页面都被保存在 LRU 链表上，并通过 <tt>page</tt>&rarr;<tt>lru</tt> 串联起来，以便能方便地扫描以进行置换。slab 页之所以不放在 LRU 链表上，是因为按 slab 所用的对象给一个页定义&ldquo;年龄&rdquo;要困难得多。相应章节将聚焦于页在被回收前如何在 LRU 链表之间迁移。
+</p>
+
+<p>
+接下来我们将介绍其他缓存——如 dcache 和 slab 分配器——中页面的回收方式，然后讨论进程映射页面的移除。进程映射的页面并不容易换出，因为除了搜索每张页表（这代价过于高昂）之外，没有别的办法把 <tt>struct page</tt> 映射回 PTE。如果页缓存中含有大量进程映射页，<tt>swap_out()</tt> 函数将遍历进程页表并把页换出，直到释放出足够多的页为止；但这一过程在面对共享页时仍然棘手。如果一个页是共享的，将为它分配一个换出表项（swap entry），把找到该页所必须的信息填入 PTE 并将引用计数减一。只有当计数降到 0 时，这个页才会被真正释放。这种页被认为存在于<em>交换缓存（swap cache）</em>中。
+</p>
+
+<p>
+最后，本章将讨论页换出守护进程 <b>kswapd</b>，包括它是如何实现的以及它的职责所在。
+</p>
+
+<h2 id="sec-page-replacement-policy">10.1　页置换策略</h2>
+
+<p>
+在讨论时人们常把页置换策略说成是基于<em>最近最少使用（Least Recently Used，LRU）</em>的算法，但严格来说这并不准确，因为这些链表并非严格按 LRU 顺序维护。Linux 中的 LRU 由两条链表组成，分别叫做 <tt>active_list</tt> 和 <tt>inactive_list</tt>。其目标是让 <tt>active_list</tt> 包含所有进程的<em>工作集（working set）</em>[<cite>Den70</cite>]，让 <tt>inactive_list</tt> 包含回收候选者。由于所有可回收页都仅存在于这两条链表中，且属于任意进程的页都可能被回收（而不仅限于属于触发缺页的那个进程），因此该置换策略是<em>全局性</em>的。
+</p>
+
+<p>
+这两条链表形似简化版的 LRU 2Q [<cite>JS94</cite>]，其中维护了两条名为 <tt>Am</tt> 和 <tt>A1</tt> 的链表。在 LRU 2Q 中，页首次分配时被放到一条名为 <tt>A1</tt> 的 FIFO 队列上；如果在该队列上被再次引用，则被放入名为 <tt>Am</tt> 的常规 LRU 链表。这大致相当于用 <tt>lru_cache_add()</tt> 把页放到名为 <tt>inactive_list</tt>（A1）的队列上，用 <tt>mark_page_accessed()</tt> 把它迁移到 <tt>active_list</tt>（Am）。该算法描述了如何调节两条链表的大小，而 Linux 采取了更为简单的做法——使用 <tt>refill_inactive()</tt> 把 <tt>active_list</tt> 末端的页移到 <tt>inactive_list</tt>，使 <tt>active_list</tt> 大致保持为整个页缓存大小的三分之二左右。图 10.1 展示了这两条链表的组织方式、页是如何被加入的，以及 <tt>refill_inactive()</tt> 如何在两条链表之间迁移页面。
+</p>
+
+<div class="figure" id="fig-page-cache-lru">
+  <img src="../original_html/figures/understand-html059.png" alt="图 10.1：页缓存的 LRU 链表">
+  <div class="caption">图 10.1：页缓存的 LRU 链表</div>
+</div>
+
+<p>
+2Q 所描述的链表假设 Am 是一条 LRU 链表，但 Linux 中的链表更像 Clock 算法 [<cite>Car84</cite>]，其指针的&ldquo;跨度&rdquo;就是 active 链表的大小。当页到达链表底端时，会检查它的 referenced 标志：若已置位则被清除并移到链表头部，再检查下一个页；若未置位则被移到 <tt>inactive_list</tt>。
+</p>
+
+<p>
+&ldquo;前移启发式（Move-To-Front heuristic）&rdquo;意味着这两条链表表现出近似 LRU 的行为，但 Linux 的置换策略与 LRU 之间差异过大，不能将其视为<em>栈算法</em> [<cite>MM87</cite>]。即便我们不去理会多道程序系统的分析问题 [<cite>CD80</cite>]，也不考虑每个进程的内存大小并非固定这一事实，该策略也并不满足<em>包含性质（inclusion property）</em>，因为页在链表中的位置在很大程度上取决于链表的大小而不是上次引用的时间。链表也不是按优先级排序的，否则每次引用都需要更新链表。最后一根钉子是：从进程换出页时，这些链表几乎被忽略，因为换页的决定与该页在进程虚拟地址空间中的位置有关，而不是它在页链表中的位置。
+</p>
+
+<p>
+总的来说，该算法表现出类似 LRU 的行为，且基准测试表明其实际性能良好。只有两种情况下该算法可能表现得相当糟糕。第一种是回收候选者主要是匿名页时。这种情况下 Linux 会反复检查大量页面，然后才线性扫描进程页表以寻找可回收页，但所幸这种情况很少见。
+</p>
+
+<p>
+第二种情形是只有一个进程，但其在 <tt>inactive_list</tt> 中有许多基于文件的常驻页正在被频繁写入。此时进程和 <b>kswapd</b> 可能陷入一个循环——不断&ldquo;洗涤（laundering）&rdquo;这些页面并把它们重新放到 <tt>inactive_list</tt> 顶端，而没有真正释放任何页。在这种情况下，从 <tt>active_list</tt> 移到 <tt>inactive_list</tt> 的页很少，因为两条链表大小的比例并未显著变化。
+</p>
+
+<h2 id="sec-page-cache">10.2　页缓存</h2>
+
+<p>
+页缓存是一组数据结构，其中包含由常规文件、块设备或交换区作为后备的页面。缓存中大致存在四种类型的页：
+</p>
+
+<ul>
+  <li>因读取一个内存映射文件而被缺页换入的页；</li>
+  <li>从块设备或文件系统读上来的块，被打包到名为<em>缓冲页（buffer pages）</em>的特殊页中。一个页可容纳多少块取决于块大小以及该体系结构的页大小；</li>
+  <li>匿名页存在于页缓存的一个特殊部分——<em>交换缓存</em>中——条件是它们在后备存储中已被分配了换出槽位，详情参见<a href="../original_html/understand014.html#chap: Swap Management">第 11 章</a>；</li>
+  <li>属于共享内存区域的页面处理方式与匿名页类似。唯一的区别是共享页在第一次写入后就立即被加入交换缓存并在后备存储中保留空间。</li>
+</ul>
+
+<p>
+该缓存存在的主要原因是为了消除不必要的磁盘读取。从磁盘读到的页被存放到一个<em>页哈希表（page hash）</em>中，该表以 <tt>struct address_space</tt> 和偏移量为键，访问磁盘前都会先查询此表。相应的 API 用于操作页缓存，列于<a href="#tab-page-cache-api">表 10.1</a>。
+</p>
+
+<div class="table" id="tab-page-cache-api">
+<table border="1" cellspacing="0" cellpadding="4">
+<tr><td><tt>void add_to_page_cache(struct page * page, struct address_space * mapping, unsigned long offset)</tt></td></tr>
+<tr><td>通过 <tt>lru_cache_add()</tt> 把页添加到 LRU，同时把它加入 inode 队列和页哈希表。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>void add_to_page_cache_unique(struct page * page, struct address_space *mapping, unsigned long offset, struct page **hash)</tt></td></tr>
+<tr><td>与 <tt>add_to_page_cache()</tt> 类似，但会检查该页是否已在页缓存中。当调用方没有持有 <tt>pagecache_lock</tt> 自旋锁时需要使用此函数。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>void remove_inode_page(struct page *page)</tt></td></tr>
+<tr><td>通过 <tt>remove_page_from_inode_queue()</tt> 与 <tt>remove_page_from_hash_queue()</tt> 把页从 inode 队列和哈希队列中移除，从而把页从页缓存中实质性地移除。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>struct page * page_cache_alloc(struct address_space *x)</tt></td></tr>
+<tr><td>对 <tt>alloc_pages()</tt> 的封装，使用 <tt>x</tt>&rarr;<tt>gfp_mask</tt> 作为 GFP 掩码。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>void page_cache_get(struct page *page)</tt></td></tr>
+<tr><td>把已在页缓存中的某个页的引用计数加一。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>int page_cache_read(struct file * file, unsigned long offset)</tt></td></tr>
+<tr><td>若 <tt>file</tt> 中偏移 <tt>offset</tt> 处对应的页尚未存在，则把该页加入页缓存。如有需要，会通过 <tt>address_space_operations</tt>&rarr;<tt>readpage</tt> 函数从磁盘读取该页。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>void page_cache_release(struct page *page)</tt></td></tr>
+<tr><td><tt>__free_page()</tt> 的别名。引用计数减一，若降到 0 则释放该页。</td></tr>
+</table>
+<div class="caption">表 10.1：页缓存 API</div>
+</div>
+
+<h3>10.2.1　页缓存哈希表</h3>
+
+<p>
+页缓存中的页必须能够被快速定位。为此，页被插入到一张名为 <tt>page_hash_table</tt> 的表中，并使用 <tt>page</tt>&rarr;<tt>next_hash</tt> 与 <tt>page</tt>&rarr;<tt>pprev_hash</tt> 字段处理冲突。
+</p>
+
+<p>
+该表在 <tt>mm/filemap.c</tt> 中声明如下：
+</p>
+
+<pre> 45 atomic_t page_cache_size = ATOMIC_INIT(0);
+ 46 unsigned int page_hash_bits;
+ 47 struct page **page_hash_table;
+</pre>
+
+<p>
+该表在系统初始化时由 <tt>page_cache_init()</tt> 分配，其参数是系统中的物理页数量。期望的表大小（<tt>htable_size</tt>）足以容纳系统中每个 <tt>struct page</tt> 的指针，计算公式为：
+</p>
+
+<pre>
+htable_size = num_physpages * sizeof(struct page *)
+</pre>
+
+<p>
+为分配该表，系统首先尝试分配一个足以容纳整张表的 <tt>order</tt> 阶数。它从 0 开始递增，直到 2<sup><i>order</i></sup> &gt; <i>htable</i>_<i>size</i> 为止。这大致可以表达为下式的整数部分：
+</p>
+
+<pre>
+order = log2(num_physpages * 2 - 1)
+</pre>
+
+<p>
+然后用 <tt>__get_free_pages()</tt> 尝试以该阶数分配。如果失败，会逐级降阶重试；若全部分配尝试都失败，系统将 panic。
+</p>
+
+<p>
+<tt>page_hash_bits</tt> 的值依据表的大小而定，用于哈希函数 <tt>_page_hashfn()</tt>。其值通过反复除 2 算得，实际等价于：
+</p>
+
+<pre>
+page_hash_bits =  log2( (PAGE_SIZE * 2^order) / (sizeof(struct page *)) )
+</pre>
+
+<p>
+这使得该表的大小为 2 的幂，从而免去通常哈希函数所采用的求模运算。
+</p>
+
+<h3>10.2.2　Inode 队列</h3>
+
+<p>
+<em>Inode 队列</em>是 <a href="../original_html/understand007.html#sec: File/Device backed memory regions">4.4.2 节</a>所介绍的 <tt>struct address_space</tt> 的一部分。该结构包含三条链表：<tt>clean_pages</tt> 是与该 inode 关联的干净页链表；<tt>dirty_pages</tt> 是自上次同步到磁盘之后被写过的页；<tt>locked_pages</tt> 是当前被加锁的页。对于给定的映射，这三条链表共同被视为它的 inode 队列，<tt>page</tt>&rarr;<tt>list</tt> 字段用于把页串到该队列上。页通过 <tt>add_page_to_inode_queue()</tt> 加入该队列（放到 <tt>clean_pages</tt> 上），通过 <tt>remove_page_from_inode_queue()</tt> 移除。
+</p>
+
+<h3>10.2.3　把页加入页缓存</h3>
+
+<p>
+从文件或块设备读上来的页一般都会被加入页缓存以避免后续磁盘 I/O。大多数文件系统使用高级函数 <tt>generic_file_read()</tt> 作为它们的 <tt>file_operations</tt>&rarr;<tt>read()</tt>。<a href="../original_html/understand015.html#chap: Shared Memory Virtual Filesystem">第 12 章</a>讨论的共享内存文件系统是一个值得注意的例外，但总的来说文件系统都通过页缓存执行其操作。在本节中，我们以 <tt>generic_file_read()</tt> 为例说明它如何工作以及如何把页加入页缓存。
+</p>
+
+<p>
+对于普通 I/O<sup><a id="text14" href="#note14">1</a></sup>，<tt>generic_file_read()</tt> 先做几项基本检查，然后调用 <tt>do_generic_file_read()</tt>。该函数在持有 <tt>pagecache_lock</tt> 的情况下调用 <tt>__find_page_nolock()</tt> 搜索页缓存，查看页是否已经存在。如果不存在，则用 <tt>page_cache_alloc()</tt>（其只是 <tt>alloc_pages()</tt> 的简单封装）分配新页，并通过 <tt>__add_to_page_cache()</tt> 加入页缓存。一旦页帧已在页缓存中，便调用 <tt>generic_file_readahead()</tt>，它通过 <tt>page_cache_read()</tt> 从磁盘读入该页。读取过程使用 <tt>mapping</tt>&rarr;<tt>a_ops</tt>&rarr;<tt>readpage()</tt>，其中 <tt>mapping</tt> 是管理该文件的 <tt>address_space</tt>。<tt>readpage()</tt> 是文件系统特有的、用于从磁盘读页的函数。
+</p>
+
+<div class="figure" id="fig-generic-file-read">
+  <img src="../original_html/figures/understand-html060.png" alt="图 10.2：调用图：generic_file_read()">
+  <div class="caption">图 10.2：调用图：<tt>generic_file_read()</tt></div>
+</div>
+
+<p>
+匿名页在被进程取消映射时会被加入交换缓存，详情见 <a href="../original_html/understand014.html#sec: Swap Cache">11.4 节</a>。在尝试换出它们之前，它们没有担任映射作用的 <tt>address_space</tt>，也没有任何文件内的偏移，没有可用于把它们哈希到页缓存的依据。不过要注意这些页依然存在于 LRU 链表上。进入交换缓存之后，匿名页与文件页之间唯一真正的区别就是匿名页使用 <tt>swapper_space</tt> 作为它们的 <tt>struct address_space</tt>。
+</p>
+
+<p>
+共享内存页在两种情形之一下被加入：第一种是 <tt>shmem_getpage_locked()</tt>，当页面需要从交换区取回，或因为是第一次引用而被分配时调用；第二种是当换出代码调用 <tt>shmem_unuse()</tt> 时。这发生在某个交换区被停用且发现一个由交换空间作为后备的页似乎不属于任何进程的时候。此时会穷尽搜索与共享内存相关的 inode，直到找到对应的页。两种情形下页都通过 <tt>add_to_page_cache()</tt> 加入。
+</p>
+
+<div class="figure" id="fig-add-to-page-cache">
+  <img src="../original_html/figures/understand-html061.png" alt="图 10.3：调用图：add_to_page_cache()">
+  <div class="caption">图 10.3：调用图：<tt>add_to_page_cache()</tt></div>
+</div>
+
+<h2 id="sec-lru-lists">10.3　LRU 链表</h2>
+
+<p>
+如<a href="#sec-page-replacement-policy">10.1 节</a>所述，LRU 链表由两条链表组成，分别叫做 <tt>active_list</tt> 和 <tt>inactive_list</tt>。它们在 <tt>mm/page_alloc.c</tt> 中声明，并由 <tt>pagemap_lru_lock</tt> 自旋锁保护。概括地说，它们分别存储&ldquo;热&rdquo;页和&ldquo;冷&rdquo;页；换言之，<tt>active_list</tt> 含有系统中所有的工作集，<tt>inactive_list</tt> 则含有回收候选者。处理 LRU 链表的 API 列于<a href="#tab-lru-list-api">表 10.2</a>。
+</p>
+
+<div class="table" id="tab-lru-list-api">
+<table border="1" cellspacing="0" cellpadding="4">
+<tr><td><tt>void lru_cache_add(struct page * page)</tt></td></tr>
+<tr><td>把一个冷页加到 <tt>inactive_list</tt>。如果已知该页是热的（例如缺页换入时），随后会调用 <tt>mark_page_accessed()</tt> 把它移至 <tt>active_list</tt>。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>void lru_cache_del(struct page *page)</tt></td></tr>
+<tr><td>把页从 LRU 链表上移除，根据情况调用 <tt>del_page_from_active_list()</tt> 或 <tt>del_page_from_inactive_list()</tt>。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>void mark_page_accessed(struct page *page)</tt></td></tr>
+<tr><td>标记某页被访问过。如果它最近没有被引用（位于 <tt>inactive_list</tt> 且 <tt>PG_referenced</tt> 未置位），则置位 referenced 标志。如果它被再次引用，则调用 <tt>activate_page()</tt> 将其标记为热页并清除 referenced 标志。</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td><tt>void activate_page(struct page * page)</tt></td></tr>
+<tr><td>把页从 <tt>inactive_list</tt> 移到 <tt>active_list</tt>。由于调用方必须确保该页位于 <tt>inactive_list</tt>，因此很少被直接调用。一般应使用 <tt>mark_page_accessed()</tt>。</td></tr>
+</table>
+<div class="caption">表 10.2：LRU 链表 API</div>
+</div>
+
+<h3>10.3.1　补充 <tt>inactive_list</tt></h3>
+
+<p>
+当缓存被收缩时，<tt>refill_inactive()</tt> 函数会把页从 <tt>active_list</tt> 移到 <tt>inactive_list</tt>。其参数为要迁移的页数，该值在 <tt>shrink_caches()</tt> 中按一定比例计算，依赖于 <tt>nr_pages</tt>、<tt>active_list</tt> 中的页数和 <tt>inactive_list</tt> 中的页数。要迁移的页数计算公式为：
+</p>
+
+<pre>
+nr_pages * nr_active_pages / ((nr_inactive_pages + 1) * 2)
+</pre>
+
+<p>
+这使得 <tt>active_list</tt> 大致保持为 <tt>inactive_list</tt> 大小的三分之二左右，要迁移的页数则是基于我们希望换出多少页（<tt>nr_pages</tt>）的比例。
+</p>
+
+<p>
+迁移时从 <tt>active_list</tt> 的尾端取页。如果 <tt>PG_referenced</tt> 标志被置位，则清除该标志并把页放回 <tt>active_list</tt> 顶端，因为它最近被访问过仍属&ldquo;热&rdquo;页。这有时被称为对链表进行&ldquo;轮转（rotating）&rdquo;。如果该标志未置位，则把页移到 <tt>inactive_list</tt> 并置位 <tt>PG_referenced</tt>，以便如有必要时可以迅速被提升回 <tt>active_list</tt>。
+</p>
+
+<h3 id="sec-reclaim-from-lru">10.3.2　从 LRU 链表回收页</h3>
+
+<p>
+<tt>shrink_cache()</tt> 是页置换算法中负责从 <tt>inactive_list</tt> 取页并决定如何将其换出的部分。两个起始参数 <tt>nr_pages</tt> 与 <tt>priority</tt> 决定该函数所做的工作量。<tt>nr_pages</tt> 起始值为 <tt>SWAP_CLUSTER_MAX</tt>，当前在 <tt>mm/vmscan.c</tt> 中定义为 32。变量 <tt>priority</tt> 起始值为 <tt>DEF_PRIORITY</tt>，当前在 <tt>mm/vmscan.c</tt> 中定义为 6。
+</p>
+
+<p>
+另外两个参数 <tt>max_scan</tt> 与 <tt>max_mapped</tt> 决定函数的工作量，受 <tt>priority</tt> 影响。每当 <tt>shrink_caches()</tt> 被调用却未能释放足够多的页时，<tt>priority</tt> 就会减小，直至达到最高优先级 1。
+</p>
+
+<p>
+变量 <tt>max_scan</tt> 是本函数最多会扫描的页数，简单地按下式计算：
+</p>
+
+<pre>max_scan = nr_inactive_pages / priority</pre>
+
+<p>
+其中 <tt>nr_inactive_pages</tt> 是 <tt>inactive_list</tt> 中的页数。这意味着在最低优先级 6 时，最多扫描 <tt>inactive_list</tt> 中的六分之一；而在最高优先级时则全部扫描。
+</p>
+
+<p>
+第二个参数 <tt>max_mapped</tt> 决定在整个进程被换出之前，页缓存中允许存在多少进程映射页。其值取 <tt>max_scan</tt> 的十分之一与下式之间的较小值：
+</p>
+
+<pre>nr_pages &lt;&lt; (10 - priority)</pre>
+
+<p>
+换言之，在最低优先级下，允许的最大映射页数是 <tt>max_scan</tt> 的十分之一或要换出页数（<tt>nr_pages</tt>）的 16 倍中的较小值；在高优先级下则是 <tt>max_scan</tt> 的十分之一或 <tt>nr_pages</tt> 的 512 倍中的较小值。
+</p>
+
+<p>
+此后该函数基本上是一个非常大的 for 循环，最多扫描 <tt>max_scan</tt> 个页，目的是从 <tt>inactive_list</tt> 的末端释放 <tt>nr_pages</tt> 个页，或直到 <tt>inactive_list</tt> 为空。每处理完一个页后，它会检查是否需要让出 CPU，以免换出进程独占 CPU。
+</p>
+
+<p>
+对于链表上发现的每种类型的页，做出的决定都不同。各页类型及其处理依次如下：
+</p>
+
+<p>
+<em>页被某个进程映射</em>。跳转到 <tt>page_mapped</tt> 标号，我们将在后续情况中再次遇到。<tt>max_mapped</tt> 计数递减。当其降到 0 时，将线性搜索进程的页表，并由 <tt>swap_out()</tt> 函数把页换出。
+</p>
+
+<p>
+<em>页被加锁且 PG_launder 位被置位</em>。该页因 I/O 被加锁，本可以跳过。但如果 <tt>PG_launder</tt> 已置位，说明这是第二次发现它被加锁，因而更值得等待其 I/O 完成并将其释放掉。先用 <tt>page_cache_get()</tt> 取得一个对该页的引用以防其被过早释放，然后调用 <tt>wait_on_page()</tt> 睡眠直到 I/O 完成。完成后用 <tt>page_cache_release()</tt> 把引用计数减一。当计数降到 0 时，该页将被回收。
+</p>
+
+<p>
+<em>页是脏的、不再被任何进程映射、没有缓冲区、且属于一个设备或文件映射</em>。由于该页属于文件或设备映射，因此通过 <tt>page</tt>&rarr;<tt>mapping</tt>&rarr;<tt>a_ops</tt>&rarr;<tt>writepage</tt> 可以获得一个有效的 <tt>writepage()</tt> 函数。清除 <tt>PG_dirty</tt> 位、置位 <tt>PG_launder</tt> 位以表示即将开始 I/O。先用 <tt>page_cache_get()</tt> 获取对该页的引用，再调用 <tt>writepage()</tt> 把页与后备文件同步，最后用 <tt>page_cache_release()</tt> 释放引用。请注意，这种情形同时也会同步那些属于交换缓存的匿名页（它们以 <tt>swapper_space</tt> 作为 <tt>page</tt>&rarr;<tt>mapping</tt>）。该页仍留在 LRU 上。当再次发现该页时，如果 I/O 已完成则将被简单释放并回收；如果 I/O 未完成，内核将像上一种情形那样等待 I/O 完成。
+</p>
+
+<p>
+<em>页有与磁盘上的数据相关联的缓冲区</em>。取得该页的引用并尝试用 <tt>try_to_release_page()</tt> 释放这些缓冲区。如果成功且该页是匿名页（没有 <tt>page</tt>&rarr;<tt>mapping</tt>），则把它从 LRU 上移除并调用 <tt>page_cache_release()</tt> 递减使用计数。匿名页带有关联缓冲区的情形只有一种：它由 swap 文件作为后备，因为页需要以块大小为单位写出。反之，如果它由文件或设备作为后备，则只需放下引用，待计数降到 0 时如往常那样释放。
+</p>
+
+<p>
+<em>页是匿名的且被多个进程映射</em>。解锁 LRU，先解锁页本身，然后落入第一种情况中遇到的同一 <tt>page_mapped</tt> 标号。换言之，<tt>max_mapped</tt> 计数递减，达到 0 时调用 <tt>swap_out</tt>。
+</p>
+
+<p>
+<em>页没有进程引用</em>。这是最后一种&ldquo;落入&rdquo;而非显式检查的情形。如果该页在交换缓存中，则将其从其中移除，因为页已经与后备存储同步且没有进程引用它。如果它属于某个文件，则把它从 inode 队列中移除，从页缓存中删除并释放之。
+</p>
+
+<h2 id="sec-shrinking-caches">10.4　收缩所有缓存</h2>
+
+<p>
+负责收缩各种缓存的函数是 <tt>shrink_caches()</tt>，它通过几个简单的步骤来释放一些内存。任一遍中写到磁盘的最大页数为 <tt>nr_pages</tt>，它由 <tt>try_to_free_pages_zone()</tt> 初始化为 <tt>SWAP_CLUSTER_MAX</tt>。设置这一限制是为了：如果 <b>kswapd</b> 调度了大量页写盘，它会偶尔睡眠以让 I/O 得以进行。随着页被释放，<tt>nr_pages</tt> 也会递减以保持计数。
+</p>
+
+<p>
+所做的工作量还取决于 <tt>priority</tt>，由 <tt>try_to_free_pages_zone()</tt> 初始化为 <tt>DEF_PRIORITY</tt>。每当一遍未能释放足够多页时，优先级就递减，直到最高优先级 1。
+</p>
+
+<p>
+函数首先调用 <tt>kmem_cache_reap()</tt>（参见 <a href="../original_html/understand011.html#Sec: Cache Reaping">8.1.7 节</a>），它会挑选一个 slab 缓存进行收缩。如果已释放出 <tt>nr_pages</tt> 个页，则工作完成函数返回；否则它将尝试从其他缓存释放 <tt>nr_pages</tt> 个页。
+</p>
+
+<p>
+若需影响其他缓存，<tt>refill_inactive()</tt> 会先把页从 <tt>active_list</tt> 移到 <tt>inactive_list</tt>，再通过 <tt>shrink_cache()</tt> 从 <tt>inactive_list</tt> 末端回收页，从而收缩页缓存。
+</p>
+
+<p>
+最后，它收缩三个特殊缓存：<em>dcache</em>（通过 <tt>shrink_dcache_memory()</tt>）、<em>icache</em>（通过 <tt>shrink_icache_memory()</tt>）和 <em>dqcache</em>（通过 <tt>shrink_dqcache_memory()</tt>）。这些对象本身相当小，但通过连锁效应，能以缓冲区与磁盘缓存的形式带来更多页面的释放。
+</p>
+
+<div class="figure" id="fig-shrink-caches">
+  <img src="../original_html/figures/understand-html062.png" alt="图 10.4：调用图：shrink_caches()">
+  <div class="caption">图 10.4：调用图：<tt>shrink_caches()</tt></div>
+</div>
+
+<h2 id="sec-swap-out">10.5　换出进程页</h2>
+
+<p>
+当在页缓存中发现达到 <tt>max_mapped</tt> 数量的映射页时，将调用 <tt>swap_out()</tt> 开始换出进程页。从 <tt>swap_mm</tt> 所指向的 <tt>mm_struct</tt> 及地址 <tt>mm</tt>&rarr;<tt>swap_address</tt> 起，向前搜索各页表，直到释放出 <tt>nr_pages</tt> 个页。
+</p>
+
+<div class="figure" id="fig-swap-out">
+  <img src="../original_html/figures/understand-html063.png" alt="图 10.5：调用图：swap_out()">
+  <div class="caption">图 10.5：调用图：<tt>swap_out()</tt></div>
+</div>
+
+<p>
+所有被进程映射的页都会被检查，与它们在链表中的位置或上次引用的时间无关；但若它们属于 <tt>active_list</tt> 或近期曾被引用，将被跳过。检查热页代价略高，但相比为找到引用某个 <tt>struct page</tt> 的 PTE 而线性搜索所有进程而言可以忽略。
+</p>
+
+<p>
+一旦决定从某个进程换出页面，将尝试至少换出 <tt>SWAP_CLUSTER_MAX</tt> 个页面，并且 <tt>mm_struct</tt> 的完整列表只会被检查一次，以避免在没有页可换时不停打转。批量写出页面也增加了进程地址空间中相邻的页被写到磁盘上相邻槽位的机会。
+</p>
+
+<p>
+标记 <tt>swap_mm</tt> 初始化为指向 <tt>init_mm</tt>，首次使用时 <tt>swap_address</tt> 初始化为 0。当 <tt>swap_address</tt> 等于 <tt>TASK_SIZE</tt> 时表明该任务已被完整搜索过。一旦选定某任务作为换出对象，就把其 <tt>mm_struct</tt> 的引用计数加一以防过早释放，然后以该 <tt>mm_struct</tt> 为参数调用 <tt>swap_out_mm()</tt>。该函数遍历进程持有的每个 VMA，并对其调用 <tt>swap_out_vma()</tt>，以避免遍历整张通常稀疏的页表。<tt>swap_out_pgd()</tt> 与 <tt>swap_out_pmd()</tt> 为给定 VMA 遍历页表，最后对实际的页和 PTE 调用 <tt>try_to_swap_out()</tt>。
+</p>
+
+<p>
+<tt>try_to_swap_out()</tt> 首先检查该页是否不在 <tt>active_list</tt> 中、近期未被引用、且不属于我们不感兴趣的某个 zone。一旦确认是要换出的页，便将其从进程页表中移除。然后检查新移除的 PTE 是否为脏；如果是，则会相应更新 <tt>struct page</tt> 的标志位以使其与后备存储同步。如果该页已经是交换缓存的一部分，仅更新 RSS 并放下对该页的引用；否则把它加入交换缓存。页是如何加入交换缓存并与后备存储同步的，将在<a href="../original_html/understand014.html#chap: Swap Management">第 11 章</a>中讨论。
+</p>
+
+<h2 id="sec-kswapd">10.6　换出守护进程（<b>kswapd</b>）</h2>
+
+<p>
+系统启动时，会从 <tt>kswapd_init()</tt> 启动一个名为 <b>kswapd</b> 的内核线程，它在 <tt>mm/vmscan.c</tt> 中持续执行 <tt>kswapd()</tt> 函数，通常处于睡眠状态。该守护进程负责在内存紧张时回收页面。历史上 <b>kswapd</b> 每 10 秒就被唤醒一次，但现在它只在物理页分配器发现某个 zone 中空闲页数达到 <tt>pages_low</tt> 时才被唤醒（见 <a href="../original_html/understand005.html#sec: Zone Watermarks">2.2.1 节</a>）。
+</p>
+
+<div class="figure" id="fig-kswapd">
+  <img src="../original_html/figures/understand-html064.png" alt="图 10.6：调用图：kswapd()">
+  <div class="caption">图 10.6：调用图：<tt>kswapd()</tt></div>
+</div>
+
+<p>
+正是这个守护进程承担了维护页缓存、收缩 slab 缓存以及在必要时换出进程的大多数任务。与 Solaris [<cite>MM01</cite>] 等随内存压力增大而被以更高频率唤醒的换出守护进程不同，<b>kswapd</b> 会一直释放页面，直到达到 <tt>pages_high</tt> 水位。在极端内存压力下，进程会通过调用 <tt>balance_classzone()</tt> 同步地完成 <b>kswapd</b> 的工作，该函数会调用 <tt>try_to_free_pages_zone()</tt>。如图 10.6 所示，正是在 <tt>try_to_free_pages_zone()</tt> 处，物理页分配器在 zone 处于重压下时同步执行与 <b>kswapd</b> 相同的任务。
+</p>
+
+<p>
+<b>kswapd</b> 被唤醒后，执行以下步骤：
+</p>
+
+<ul>
+  <li>调用 <tt>kswapd_can_sleep()</tt>，它会遍历所有 zone，检查 <tt>struct zone_t</tt> 中的 <tt>need_balance</tt> 字段。如果其中任意一个被置位，则不能睡眠；</li>
+  <li>如果不能睡眠，则把自己从 <tt>kswapd_wait</tt> 等待队列上移除；</li>
+  <li>调用 <tt>kswapd_balance()</tt>，它会遍历所有 zone。对于设置了 <tt>need_balance</tt> 的 zone，通过 <tt>try_to_free_pages_zone()</tt> 释放页面，并一直释放下去，直到达到 <tt>pages_high</tt> 水位；</li>
+  <li>执行 <tt>tq_disk</tt> 任务队列，把待写出的页面写出；</li>
+  <li>将 <b>kswapd</b> 重新加入 <tt>kswapd_wait</tt> 队列，回到第一步。</li>
+</ul>
+
+<h2 id="sec-whats-new-26">10.7　2.6 中的新变化</h2>
+
+<h5>kswapd</h5>
+
+<p>
+如 <a href="../original_html/understand005.html#new: Describing Physical Memory">2.6 节</a>所述，现在系统中每个内存节点都有一个 <b>kswapd</b>。这些守护进程仍由 <tt>kswapd()</tt> 启动，执行同样的代码，但工作被限制在它们各自所属的本地节点上。<b>kswapd</b> 实现的主要变化都与&ldquo;每节点 kswapd&rdquo;这一变化相关。
+</p>
+
+<p>
+<b>kswapd</b> 的基本工作流程保持不变。一旦被唤醒，它会为其负责的 <tt>pgdat</tt> 调用 <tt>balance_pgdat()</tt>。<tt>balance_pgdat()</tt> 有两种操作模式：在以 <tt>nr_pages == 0</tt> 调用时，它会持续尝试从本地 <tt>pgdat</tt> 的每个 zone 释放页面，直到达到 <tt>pages_high</tt>；当指定了 <tt>nr_pages</tt> 时，它将尝试释放 <tt>nr_pages</tt> 或 <tt>MAX_CLUSTER_MAX * 8</tt> 中的较小值。
+</p>
+
+<h5>平衡 zone</h5>
+
+<p>
+<tt>balance_pgdat()</tt> 用于释放页面的两个主要函数是 <tt>shrink_slab()</tt> 与 <tt>shrink_zone()</tt>。<tt>shrink_slab()</tt> 已在 <a href="../original_html/understand011.html#new: Slab Allocator">8.8 节</a>讨论过，这里不再赘述。<tt>shrink_zone()</tt> 函数根据释放页的紧迫程度释放一定数量的页。它的行为与 2.4 中非常相似。<tt>refill_inactive_zone()</tt> 会把若干页从 <tt>zone</tt>&rarr;<tt>active_list</tt> 移到 <tt>zone</tt>&rarr;<tt>inactive_list</tt>。请记得正如 <a href="../original_html/understand005.html#new: Describing Physical Memory">2.6 节</a>所述，LRU 链表现在是每 zone 一份，而不是 2.4 中的全局链表。然后调用 <tt>shrink_cache()</tt> 从 LRU 中移除并回收页面。
+</p>
+
+<h5>换出压力</h5>
+
+<p>
+在 2.4 中，pageout 优先级决定了将扫描多少页。在 2.6 中，则有一个由 <tt>zone_adj_pressure()</tt> 更新的衰减平均值。它调整 <tt>zone</tt>&rarr;<tt>pressure</tt> 字段以指示有多少页应被扫描以备置换。当需要更多页面时，该值会被推向 <tt>DEF_PRIORITY &lt;&lt; 10</tt> 这一最高值，然后随时间衰减。该平均值的值决定了在一个 zone 中将扫描多少页以备置换。其目标是让页置换平稳启动并优雅减缓，而不是呈突发式行为。
+</p>
+
+<h5>操作 LRU 链表</h5>
+
+<p>
+在 2.4 中，每当从 LRU 链表移除页时都要获取一个自旋锁，这使锁竞争非常激烈。为了缓解竞争，2.6 中涉及 LRU 链表的操作通过 <tt>struct</tt> <tt>pagevec</tt> 结构进行，这允许以最多 <tt>PAGEVEC_SIZE</tt> 个页为一批向 LRU 链表中添加或从中移除页面。
+</p>
+
+<p>
+举例来说，当 <tt>refill_inactive_zone()</tt> 与 <tt>shrink_cache()</tt> 要移除页时，它们先获取 <tt>zone</tt>&rarr;<tt>lru_lock</tt> 锁，把大批页面一次性取下并暂存到临时链表上。一旦待移除的页列表组装完毕，便调用 <tt>shrink_list()</tt> 来实际释放这些页，而这一步基本不再需要持有 <tt>zone</tt>&rarr;<tt>lru_lock</tt> 自旋锁。
+</p>
+
+<p>
+当把页加回去时，会用 <tt>pagevec_init()</tt> 初始化一个新的 page vector 结构。通过 <tt>pagevec_add()</tt> 向其中加页，最后用 <tt>pagevec_release()</tt> 批量提交，把它们放到 LRU 链表上。
+</p>
+
+<p>
+与 <tt>pagevec</tt> 结构相关的 API 数量相当可观，可在 &lt;<tt>linux/pagevec.h</tt>&gt; 中看到，主要实现位于 <tt>mm/swap.c</tt>。
+</p>
+
+<hr>
+<div class="notes">
+  <h3>译注</h3>
+  <ul>
+    <li>&ldquo;page frame reclamation&rdquo;译为&ldquo;页帧回收&rdquo;。</li>
+    <li>&ldquo;page cache&rdquo;译为&ldquo;页缓存&rdquo;，&ldquo;swap cache&rdquo;译为&ldquo;交换缓存&rdquo;。</li>
+    <li>&ldquo;working set&rdquo;译为&ldquo;工作集&rdquo;，&ldquo;inclusion property&rdquo;译为&ldquo;包含性质&rdquo;。</li>
+    <li>&ldquo;laundering&rdquo;字面意为&ldquo;洗涤&rdquo;，此处指反复写盘但未真正释放的循环过程。</li>
+    <li>&ldquo;Move-To-Front heuristic&rdquo;译为&ldquo;前移启发式&rdquo;。</li>
+    <li>函数名、宏名、结构体名（如 <tt>struct page</tt>、<tt>kswapd</tt>、<tt>pgdat</tt>、<tt>SWAP_CLUSTER_MAX</tt> 等）均保留英文，便于查阅源码。</li>
+  </ul>
+</div>
+
+<hr class="footnoterule">
+<dl class="thefootnotes">
+  <dt><a id="note14" href="#text14">1</a></dt>
+  <dd>直接 I/O（Direct IO）由 <tt>generic_file_direct_IO()</tt> 单独处理。</dd>
+</dl>
+
+<nav>
+  [ <a href="understand012_zh.html">&laquo; 上一章</a> ]
+  [ <a href="index.html">&uarr; 返回目录</a> ]
+  [ <a href="../original_html/understand014.html">下一章 &raquo;</a> ]
+</nav>
+
+<p><small>原文来源：<a href="../original_html/understand013.html">understand013.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
+</body>
+</html>
