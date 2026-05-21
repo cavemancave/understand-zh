@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第九章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand011_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand013.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1 id="chap-high-memory-management">第九章　高端内存管理</h1>
+  <div class="meta">原文版本：Chapter 9 — High Memory Management</div>
+
+<p>
+内核只能直接寻址那些已经为其建立了页表项的内存。在最常见的 3GiB/1GiB 用户/内核地址空间划分下，正如<a href="../original_html/understand007.html#sec: Linear Address Space">4.1 节</a>所介绍的，在 32 位机器上任何时刻内核最多只能直接访问 896MiB 的内存。在 64 位硬件上这并不是真正的问题，因为虚拟地址空间绰绰有余；运行 2.4 内核且内存超过若干 TB 的机器极不可能出现。
+</p>
+
+<p>
+然而许多高端 32 位机器拥有超过 1GiB 的内存，那些位置不便访问的内存并不能简单地被忽视。Linux 采用的解决方案是临时把高端内存中的页映射到低端页表中。这一点将在 <a href="#sec-mapping-high-memory-pages">9.2 节</a>中讨论。
+</p>
+
+<p>
+高端内存还与 I/O 有一个相关问题需要解决：并非所有设备都能寻址高端内存，也并非所有 CPU 可用的内存设备都能访问。当 CPU 启用了 PAE 扩展、设备的寻址范围被限制为有符号 32 位整数（2GiB），或者 32 位设备运行在 64 位架构上时，就会出现这种情况。让这种设备向高端内存写数据轻则失败，重则可能扰乱内核。该问题的解决方案是使用 <em>反弹缓冲区（bounce buffer）</em>，详见 <a href="#sec-bounce-buffers">9.4 节</a>。
+</p>
+
+<p>
+本章首先简要介绍如何管理 <em>持久内核映射（Persistent Kernel Map，PKMap）</em> 地址空间，然后讨论高端内存页的映射与解除映射；后续小节将讨论必须使用原子映射的情形，并深入分析反弹缓冲区；最后我们会谈到内存极度紧张时是如何利用应急池（emergency pool）的。
+</p>
+
+<h2 id="sec-managing-the-pkmap-address-space">9.1　管理 PKMap 地址空间</h2>
+
+<p>
+内核页表顶端为 PKMap 预留了从 <tt>PKMAP_BASE</tt> 到 <tt>FIXADDR_START</tt> 的一段空间，其大小略有不同。在 x86 上，<tt>PKMAP_BASE</tt> 位于 0xFE000000，而 <tt>FIXADDR_START</tt> 的地址是一个编译期常量，会随配置选项变化，但通常只是位于线性地址空间末尾附近的少数几页。这意味着用于将高端内存页映射进可用空间的页表区域略小于 32MiB。
+</p>
+
+<p>
+为了映射页，在 PKMap 区域的起始处放置了一整页的 PTE，可以通过函数 <tt>kmap()</tt> 将 1024 个高端页映射到低端内存中作短期使用，再通过 <tt>kunmap()</tt> 解除映射。这个池子看上去非常小，但每一页通过 <tt>kmap()</tt> 映射的时间也<em>非常</em>短。代码注释中提到曾计划分配一段连续的页表项来扩展这片区域，但这只停留在注释里，所以 PKMap 的大部分空间实际上并未被使用。
+</p>
+
+<p>
+与 <tt>kmap()</tt> 配合使用的页表项叫做 <tt>pkmap_page_table</tt>，位于 <tt>PKMAP_BASE</tt>，在系统初始化期间建立。在 x86 上，这一过程发生在 <tt>pagetable_init()</tt> 函数的末尾。PGD 与 PMD 项所需的页由启动期内存分配器分配以确保它们存在。
+</p>
+
+<p>
+页表项的当前状态由一个名为 <tt>pkmap_count</tt> 的简单数组管理，该数组含有 <tt>LAST_PKMAP</tt> 个元素。在未启用 PAE 的 x86 系统上，这个值为 1024；启用 PAE 时为 512。更准确地说，虽然在代码中没有这样表达，<tt>LAST_PKMAP</tt> 在效果上等价于 <tt>PTRS_PER_PTE</tt>。
+</p>
+
+<p>
+数组中的每个元素并不严格等同于引用计数，但非常接近。如果该项为 0，说明该页是空闲的，并且自上次 TLB 刷新以来没有被使用过；如果为 1，说明该槽位未被使用，但仍有一页映射在那里等待 TLB 刷新。刷新会被推迟，直到每个槽位都至少被使用过一次才进行，因为修改全局页表时需要对所有 CPU 进行一次全局刷新，开销极大。任何更高的值都是表示当前页有 <tt>n-1</tt> 个用户的引用计数。
+</p>
+
+<h2 id="sec-mapping-high-memory-pages">9.2　映射高端内存页</h2>
+
+<p>
+用于映射高端内存页的 API 列于<a href="#tab-high-memory-mapping-api">表 9.1</a>。映射一页的主函数是 <tt>kmap()</tt>。对于不希望阻塞的用户，可以使用 <tt>kmap_nonblock()</tt>；中断上下文的用户则使用 <tt>kmap_atomic()</tt>。由于 kmap 池本身相当小，<tt>kmap()</tt> 的调用者必须尽快调用 <tt>kunmap()</tt>，因为随着高端内存相对低端内存的不断扩大，这个小窗口所承受的压力也会逐渐变大。
+</p>
+
+<div class="figure" id="fig-kmap">
+  <img src="../original_html/figures/understand-html054.png" alt="图 9.1：kmap() 的调用图">
+  <div class="caption">图 9.1：<tt>kmap()</tt> 的调用图</div>
+</div>
+
+<p>
+<tt>kmap()</tt> 函数本身相当简单。它首先检查当前是否处于中断上下文（因为它可能会睡眠），若是则调用 <tt>out_of_line_bug()</tt>。中断处理程序中调用 <tt>BUG()</tt> 会导致系统 panic，所以 <tt>out_of_line_bug()</tt> 会打印 bug 信息后干净地退出。第二项检查是该页是否在 <tt>highmem_start_page</tt> 之下，低于此标记的页本来就可见，无需再映射。
+</p>
+
+<p>
+然后检查该页是否本就位于低端内存中；如果是，则直接返回它的地址。这样，需要 <tt>kmap()</tt> 的使用者就可以无条件地使用它，因为即便它已经是一个低端内存页，函数仍然是安全的。如果它确实是要映射的高端页，就调用 <tt>kmap_high()</tt> 来开始真正的工作。
+</p>
+
+<p>
+<tt>kmap_high()</tt> 函数首先检查 <tt>page</tt>&rarr;<tt>virtual</tt> 字段，如果该页已经被映射，这个字段就会被设置。如果它为 NULL，则由 <tt>map_new_virtual()</tt> 为该页提供一个映射。
+</p>
+
+<p>
+用 <tt>map_new_virtual()</tt> 创建一个新的虚拟映射其实就是对 <tt>pkmap_count</tt> 做线性扫描。扫描从 <tt>last_pkmap_nr</tt> 开始而不是从 0 开始，是为了避免在多次 <tt>kmap()</tt> 之间反复搜索同一片区域。当 <tt>last_pkmap_nr</tt> 回绕到 0 时，会调用 <tt>flush_all_zero_pkmaps()</tt> 把所有值为 1 的项重置为 0，然后再刷新 TLB。
+</p>
+
+<p>
+如果再次扫描后仍未找到空闲项，进程就会在 <tt>pkmap_map_wait</tt> 等待队列上睡眠，直到下一次 <tt>kunmap()</tt> 之后被唤醒。
+</p>
+
+<p>
+一旦建立了映射，<tt>pkmap_count</tt> 数组中对应的项就会递增，并返回低端内存中的虚拟地址。
+</p>
+
+<div class="table" id="tab-high-memory-mapping-api">
+  <table border="1" cellspacing="0" cellpadding="6">
+    <tr><td><tt>void * kmap(struct page *page)</tt></td></tr>
+    <tr><td>把一个来自高端内存的 struct page 映射到低端内存。返回的地址即该映射的虚拟地址。</td></tr>
+    <tr><td><tt>void * kmap_nonblock(struct page *page)</tt></td></tr>
+    <tr><td>与 <tt>kmap()</tt> 相同，但在没有可用槽位时不会阻塞，而是返回 NULL。这与 <tt>kmap_atomic()</tt> 不同，后者使用专门保留的槽位。</td></tr>
+    <tr><td><tt>void * kmap_atomic(struct page *page, enum km_type type)</tt></td></tr>
+    <tr><td>映射中保留了若干槽位供中断等场景作原子使用（见 <a href="#sec-mapping-high-memory-pages-atomically">9.3 节</a>）。强烈不建议使用它，且本函数的调用者既不能睡眠也不能被调度。该函数会为某一特定用途将一个高端内存页原子地映射进来。</td></tr>
+  </table>
+  <div class="caption">表 9.1：高端内存映射 API</div>
+</div>
+
+<h3 id="sec-unmapping-pages">9.2.1　解除页映射</h3>
+
+<p>
+解除高端内存页映射的 API 列于<a href="#tab-high-memory-unmapping-api">表 9.2</a>。<tt>kunmap()</tt> 函数与其对偶函数一样要做两项检查：第一项与 <tt>kmap()</tt> 完全相同，用于检查是否在中断上下文调用；第二项检查该页是否在 <tt>highmem_start_page</tt> 之下，如果是，则该页本就位于低端内存中，无需进一步处理。一旦确定它是要解除映射的页，就调用 <tt>kunmap_high()</tt> 完成解除映射。
+</p>
+
+<div class="figure" id="fig-kunmap">
+  <img src="../original_html/figures/understand-html055.png" alt="图 9.2：kunmap() 的调用图">
+  <div class="caption">图 9.2：<tt>kunmap()</tt> 的调用图</div>
+</div>
+
+<p>
+<tt>kunmap_high()</tt> 在原理上很简单：它将 <tt>pkmap_count</tt> 中该页对应的元素递减。如果递减到 1（回忆一下，这意味着已经没有用户但仍需要一次 TLB 刷新），任何等待在 <tt>pkmap_map_wait</tt> 上的进程都会被唤醒，因为现在有一个槽位变得可用。此时并不会立刻从页表中解除该页的映射，因为那会需要一次 TLB 刷新；这一步会推迟到 <tt>flush_all_zero_pkmaps()</tt> 被调用时才进行。
+</p>
+
+<div class="table" id="tab-high-memory-unmapping-api">
+  <table border="1" cellspacing="0" cellpadding="6">
+    <tr><td><tt>void kunmap(struct page *page)</tt></td></tr>
+    <tr><td>把一个 struct page 从低端内存中解除映射，并释放对应的页表项。</td></tr>
+    <tr><td><tt>void kunmap_atomic(void *kvaddr, enum km_type type)</tt></td></tr>
+    <tr><td>解除一个之前通过原子方式映射的页。</td></tr>
+  </table>
+  <div class="caption">表 9.2：高端内存解除映射 API</div>
+</div>
+
+<h2 id="sec-mapping-high-memory-pages-atomically">9.3　原子地映射高端内存页</h2>
+
+<p>
+虽然不建议使用 <tt>kmap_atomic()</tt>，但每个 CPU 仍然保留了若干槽位供必要时使用，例如设备在中断中使用反弹缓冲区的场景。各种架构对原子高端内存映射的需求数量不同，这些需求由 <tt>km_type</tt> 枚举。总用途数目为 <tt>KM_TYPE_NR</tt>。在 x86 上，原子 kmap 一共有六种不同的用途。
+</p>
+
+<p>
+启动时会为每个处理器在 <tt>FIX_KMAP_BEGIN</tt> 到 <tt>FIX_KMAP_END</tt> 的位置预留 <tt>KM_TYPE_NR</tt> 个槽位供原子映射使用。显然，原子 kmap 的使用者在调用 <tt>kunmap_atomic()</tt> 之前不能睡眠或退出，否则同一处理器上的下一个进程可能会尝试使用同一个槽位而失败。
+</p>
+
+<p>
+<tt>kmap_atomic()</tt> 函数的任务非常简单：将请求的页映射到页表中为相应用途和处理器预留的槽位。<tt>kunmap_atomic()</tt> 比较有意思，因为它只在启用了调试时才会用 <tt>pte_clear()</tt> 清除 PTE。一般认为没必要费心去解除原子页的映射，因为下次调用 <tt>kmap_atomic()</tt> 时只会直接替换它，从而无需 TLB 刷新。
+</p>
+
+<h2 id="sec-bounce-buffers">9.4　反弹缓冲区</h2>
+
+<p>
+对于无法访问 CPU 可用内存全部范围的设备，需要使用反弹缓冲区。一个明显的例子是：当设备的寻址位数少于 CPU 时，例如 64 位架构上的 32 位设备，或者启用了 PAE 的较新 Intel 处理器。
+</p>
+
+<p>
+其基本思想非常简单：反弹缓冲区位于足够低的内存中，便于设备从中读取和向其中写入数据；之后再将其内容复制到高端内存中所期望的用户页。这一额外的复制并不理想，但难以避免。我们在低端内存中分配若干页作为缓冲页，用于与设备之间的 DMA；I/O 完成之后，内核再将它们复制到高端内存中的缓冲页。这样反弹缓冲区就充当了一种桥梁。这一操作的开销不小，至少要复制整整一页，但与把低端内存中的页换出相比仍然微不足道。
+</p>
+
+<h3 id="sec-disk-buffering">9.4.1　磁盘缓冲</h3>
+
+<p>
+通常大小约为 1KiB 的块被打包到页中，并由 slab 分配器分配的 <tt>struct buffer_head</tt> 进行管理。buffer head 的使用者可以选择注册一个回调函数，存放在 <tt>buffer_head</tt>&rarr;<tt>b_end_io()</tt>，当 I/O 完成时调用。反弹缓冲区正是利用这一机制把数据从反弹缓冲区中复制出去。它注册的回调函数是 <tt>bounce_end_io_write()</tt>。
+</p>
+
+<p>
+buffer head 的其它特性，以及块层是如何使用它们的，超出了本文档的范围，更属于 I/O 层的话题。
+</p>
+
+<h3 id="sec-creating-bounce-buffers">9.4.2　创建反弹缓冲区</h3>
+
+<p>
+反弹缓冲区的创建过程很简单，由 <tt>create_bounce()</tt> 函数发起。原理非常简单：以传入的 buffer head 为模板创建一个新缓冲区。该函数接受两个参数：一个读/写参数（<tt>rw</tt>）和用作模板的 buffer head（<tt>bh_orig</tt>）。
+</p>
+
+<div class="figure" id="fig-create-bounce">
+  <img src="../original_html/figures/understand-html056.png" alt="图 9.3：create_bounce() 的调用图">
+  <div class="caption">图 9.3：<tt>create_bounce()</tt> 的调用图</div>
+</div>
+
+<p>
+缓冲区本身的页由 <tt>alloc_bounce_page()</tt> 函数分配，它是对 <tt>alloc_page()</tt> 的封装，但有一个重要的补充：如果分配失败，反弹缓冲区还备有一个由页和 buffer head 组成的应急池可用。详见 <a href="#sec-emergency-pools">9.5 节</a>。
+</p>
+
+<p>
+buffer head 不出意外地由 <tt>alloc_bounce_bh()</tt> 分配，其原理与 <tt>alloc_bounce_page()</tt> 类似，会调用 slab 分配器申请一个 <tt>buffer_head</tt>，若分配失败则使用应急池。此外，它还会唤醒 <b>bdflush</b> 开始将脏缓冲区刷写到磁盘，以便更快释放更多 buffer。
+</p>
+
+<p>
+一旦分配好页和 <tt>buffer_head</tt>，就将模板 <tt>buffer_head</tt> 中的信息复制到新的对象里。由于这一过程的部分操作可能使用 <tt>kmap_atomic()</tt>，所以反弹缓冲区只能在持有 IRQ 安全的 <tt>io_request_lock</tt> 时创建。I/O 完成回调被改为 <tt>bounce_end_io_write()</tt> 或 <tt>bounce_end_io_read()</tt>，取决于这是写缓冲区还是读缓冲区，以便数据能在高端内存与反弹缓冲区之间来回拷贝。
+</p>
+
+<p>
+关于这些分配，最值得注意的一点是 GFP 标志要求绝不能进行涉及高端内存的 I/O 操作。具体而言，对 slab 分配器使用 <tt>SLAB_NOHIGHIO</tt>，对伙伴分配器使用 <tt>GFP_NOHIGHIO</tt>。这一点很重要，因为反弹缓冲区本就是用于高端内存的 I/O 操作。如果分配器在分配时又尝试执行涉及高端内存的 I/O，就会递归，最终导致崩溃。
+</p>
+
+<h3 id="sec-copying-via-bounce-buffers">9.4.3　通过反弹缓冲区进行复制</h3>
+
+<div class="figure" id="fig-bounce-end-io-read">
+  <img src="../original_html/figures/understand-html057.png" alt="图 9.4：bounce_end_io_read/write() 的调用图">
+  <div class="caption">图 9.4：<tt>bounce_end_io_read/write()</tt> 的调用图</div>
+</div>
+
+<p>
+通过反弹缓冲区复制数据的方式取决于它是读缓冲区还是写缓冲区。如果缓冲区用于向设备写入数据，那么在创建反弹缓冲区时就会通过 <tt>copy_from_high_bh()</tt> 函数把高端内存中的数据填入缓冲区；之后当设备准备就绪时，回调函数 <tt>bounce_end_io_write()</tt> 会完成 I/O。
+</p>
+
+<p>
+如果缓冲区用于从设备读取数据，那么在设备准备好之前不会发生任何数据传输。当设备就绪时，设备的中断处理程序会调用回调函数 <tt>bounce_end_io_read()</tt>，由它通过 <tt>copy_to_high_bh_irq()</tt> 把数据复制到高端内存。
+</p>
+
+<p>
+无论哪种情况，一旦 I/O 完成，buffer head 和页都可以被 <tt>bounce_end_io()</tt> 回收，并调用模板 <tt>buffer_head()</tt> 的 I/O 完成函数。如果应急池未满，资源就会被放回应急池；否则就归还给相应的分配器。
+</p>
+
+<h2 id="sec-emergency-pools">9.5　应急池</h2>
+
+<p>
+专门为反弹缓冲区维护着两个应急池：一个用于 <tt>buffer_heads</tt>，一个用于页。如果内存紧张到连分配都无法完成，那么 I/O 请求若不能完成，情况只会进一步恶化，因为只有等到低端内存可用，高端内存中的缓冲区才能被释放，而进程因此停滞，反过来又无法释放它们自己持有的内存。
+</p>
+
+<p>
+应急池由 <tt>init_emergency_pool()</tt> 初始化，每个池最多包含 <tt>POOL_SIZE</tt> 个元素，目前该值定义为 32。页通过 <tt>page</tt>&rarr;<tt>list</tt> 字段链接在以 <tt>emergency_pages</tt> 为表头的链表上。<a href="#fig-emergency-pools">图 9.5</a> 展示了页在应急池中的存放方式以及在需要时如何取用。
+</p>
+
+<p>
+<tt>buffer_head</tt> 也非常类似，它们通过 <tt>buffer_head</tt>&rarr;<tt>inode_buffers</tt> 链接在以 <tt>emergency_bh</tt> 为表头的链表上。两个链表剩余条目的数量分别由计数器 <tt>nr_emergency_pages</tt> 和 <tt>nr_emergency_bhs</tt> 记录，链表本身由 <tt>emergency_lock</tt> 自旋锁保护。
+</p>
+
+<div class="figure" id="fig-emergency-pools">
+  <img src="../original_html/figures/understand-html058.png" alt="图 9.5：从应急池中获取页">
+  <div class="caption">图 9.5：从应急池中获取页</div>
+</div>
+
+<h2 id="sec-whats-new-in-2-6">9.6　2.6 中的新变化</h2>
+
+<h4>内存池</h4>
+
+<p>
+在 2.4 中，高端内存管理器是唯一维护应急页池的子系统。到了 2.6，内存池被作为一个通用概念实现：当内存紧张时，需要为某种东西预留一个最小数量的实例就可以使用内存池。这里所说的&ldquo;东西&rdquo;可以是任意类型的对象，比如高端内存管理器中的页，或者更常见的情形——由 slab 分配器管理的某类对象。池子通过 <tt>mempool_create()</tt> 初始化，该函数接受若干参数：应当预留的最少对象数（<tt>min_nr</tt>）、对应对象类型的分配函数（<tt>alloc_fn()</tt>）、释放函数（<tt>free_fn()</tt>），以及可选的私有数据，私有数据会被传给分配和释放函数。
+</p>
+
+<p>
+内存池 API 提供了两个通用的分配与释放函数：<tt>mempool_alloc_slab()</tt> 和 <tt>mempool_free_slab()</tt>。使用这些通用函数时，私有数据就是要从中分配和释放对象的 slab 缓存。
+</p>
+
+<p>
+就高端内存管理器而言，会创建两个页池：一个用于普通用途，另一个供必须从 <tt>ZONE_DMA</tt> 分配的 ISA 设备使用。分配函数是 <tt>page_pool_alloc()</tt>，传入的私有数据参数指出要使用的 GFP 标志；释放函数是 <tt>page_pool_free()</tt>。这些内存池取代了 2.4 中的应急池代码。
+</p>
+
+<p>
+要从内存池中分配或释放对象，可以使用 API 函数 <tt>mempool_alloc()</tt> 和 <tt>mempool_free()</tt>；通过 <tt>mempool_destroy()</tt> 可以销毁内存池。
+</p>
+
+<h4>映射高端内存页</h4>
+
+<p>
+在 2.4 中，<tt>page</tt>&rarr;<tt>virtual</tt> 字段用于存放该页在 <tt>pkmap_count</tt> 数组中的地址。考虑到高端内存系统中 <tt>struct page</tt> 的数量极其庞大，仅仅为了相对少量的、需要映射进 <tt>ZONE_NORMAL</tt> 的页而付出这种代价是非常昂贵的。2.6 仍然保留了 <tt>pkmap_count</tt> 数组，但其管理方式发生了很大变化。
+</p>
+
+<p>
+在 2.6 中创建了一个名为 <tt>page_address_htable</tt> 的哈希表，它以 <tt>struct page</tt> 的地址作为哈希键，链表中存放的是 <tt>struct page_address_slot</tt>。该结构体有两个关键字段：一个 <tt>struct page</tt> 和一个虚拟地址。当内核需要查找一个被映射页所使用的虚拟地址时，就遍历相应的哈希桶来定位它。页实际上是如何映射到低端内存的，与 2.4 基本相同，只是现在不再需要 <tt>page</tt>&rarr;<tt>virtual</tt> 了。
+</p>
+
+<h4>执行 I/O</h4>
+
+<p>
+最后一项重要变化是：在执行 I/O 时，现在用 <tt>struct bio</tt> 取代了 <tt>struct buffer_head</tt>。<tt>bio</tt> 结构体的工作方式超出了本书的范围。不过，引入 <tt>bio</tt> 结构体的主要原因是：这样 I/O 可以按照底层设备所支持的任意大小的块进行，而在 2.4 中，无论底层设备的传输速率如何，所有 I/O 都必须被切分成页大小的块。
+</p>
+
+<hr>
+<div class="notes">
+  <h3>译注</h3>
+  <ul>
+    <li>&ldquo;high memory&rdquo;译为&ldquo;高端内存&rdquo;，与&ldquo;低端内存&rdquo;（low memory）对应；指内核无法通过线性映射直接访问的物理内存。</li>
+    <li>&ldquo;Persistent Kernel Map / PKMap&rdquo;译为&ldquo;持久内核映射&rdquo;，保留缩写 PKMap。</li>
+    <li>&ldquo;bounce buffer&rdquo;译为&ldquo;反弹缓冲区&rdquo;，指为不能直接访问高端内存的设备所设置的中转缓冲区。</li>
+    <li>&ldquo;emergency pool&rdquo;译为&ldquo;应急池&rdquo;。</li>
+    <li>函数名、结构体名、宏名以及 <tt>ZONE_DMA</tt>、<tt>ZONE_NORMAL</tt> 等术语均保留英文，便于查阅源码。</li>
+  </ul>
+</div>
+
+<nav>
+  [ <a href="understand011_zh.html">&laquo; 上一章</a> ]
+  [ <a href="index.html">&uarr; 返回目录</a> ]
+  [ <a href="../original_html/understand013.html">下一章 &raquo;</a> ]
+</nav>
+
+<p><small>原文来源：<a href="../original_html/understand012.html">understand012.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
+</body>
+</html>
