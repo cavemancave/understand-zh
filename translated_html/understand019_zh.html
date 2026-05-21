@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>附录 B 描述物理内存 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand018_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand020.html">下一章 &raquo;</a> ]
+  </nav>
+
+<h1 id="chap-describing-physical-memory"><a name="htoc107">附录 B</a>　描述物理内存</h1>
+<div class="meta">原文版本：Appendix B — Describing Physical Memory</div>
+
+<h2><a name="toc98"></a><a name="htoc108">B.1</a>　初始化各内存区</h2>
+
+<h3><a name="htoc109">B.1.1</a>　函数：<tt>setup_memory</tt></h3>
+<p><em>源码位置：arch/i386/kernel/setup.c</em> <a name="func: setup_memory"></a> <a name="@codeindex0"></a></p>
+
+<p>本函数的调用图如<a href="../original_html/understand005.html#fig: setup_memory">图 2.3</a> 所示。该函数会收集必要的信息，提供给引导阶段内存分配器（boot memory allocator）用以完成自身的初始化。整个流程可拆分为若干不同的任务：</p>
+<ul>
+<li>找出低端内存（low memory）的起始与结束 PFN（<tt>min_low_pfn</tt>、<tt>max_low_pfn</tt>），高端内存（high memory）的起始与结束 PFN（<tt>highstart_pfn</tt>、<tt>highend_pfn</tt>），以及系统中最后一个物理页的 PFN（<tt>max_pfn</tt>）。</li>
+<li>初始化 <tt>bootmem_data</tt> 结构，并声明哪些页面可以被引导阶段内存分配器使用。</li>
+<li>把系统可用的所有页面标记为&ldquo;空闲（free）&rdquo;，然后保留那些用于存放表示页面状态位图（bitmap）所占用的页面。</li>
+<li>保留 SMP 配置使用的页面，以及 initrd 镜像（若存在）所占用的页面。</li>
+</ul>
+<PRE CLASS="verbatim">991 static unsigned long __init setup_memory(void)
+992 {
+993       unsigned long bootmap_size, start_pfn, max_low_pfn;
+994 
+995       /*
+996        * partially used pages are not usable - thus
+997        * we are rounding upwards:
+998        */
+999       start_pfn = PFN_UP(__pa(&amp;_end));
+1000 
+1001      find_max_pfn();
+1002 
+1003      max_low_pfn = find_max_low_pfn();
+1004 
+1005 #ifdef CONFIG_HIGHMEM
+1006      highstart_pfn = highend_pfn = max_pfn;
+1007      if (max_pfn &gt; max_low_pfn) {
+1008            highstart_pfn = max_low_pfn;
+1009      }
+1010      printk(KERN_NOTICE "%ldMB HIGHMEM available.\n",
+1011            pages_to_mb(highend_pfn - highstart_pfn));
+1012 #endif
+1013      printk(KERN_NOTICE "%ldMB LOWMEM available.\n",
+1014                  pages_to_mb(max_low_pfn));
+</PRE>
+<dl>
+<dt><b>999</b></dt><dd><tt>PFN_UP()</tt><a name="@codeindex1"></a> 接受一个物理地址，将其向上对齐到下一个页的边界，并返回对应的页帧号（page frame number，PFN）。<tt>_end</tt><a name="@codeindex2"></a> 是已加载内核镜像的结束地址，因此 <tt>start_pfn</tt><a name="@codeindex3"></a> 就是可用的第一个物理页帧的偏移。</dd>
+<dt><b>1001</b></dt><dd><tt>find_max_pfn()</tt><a name="@codeindex4"></a> 遍历 e820 内存映射表，找出系统中可用的最高 PFN。</dd>
+<dt><b>1003</b></dt><dd><tt>find_max_low_pfn()</tt><a name="@codeindex5"></a> 找出 <tt>ZONE_NORMAL</tt> 中可寻址的最高页帧。</dd>
+<dt><b>1005-1011</b></dt><dd>如果启用了高端内存，则初始时把高端内存区域置为 0。若实际存在位于 <tt>max_low_pfn</tt><a name="@codeindex6"></a> 之上的内存，则将高端内存的起始位置（<tt>highstart_pfn</tt><a name="@codeindex7"></a>）置于此处，结束位置则置于 <tt>max_pfn</tt><a name="@codeindex8"></a>。同时打印一条关于高端内存可用情况的提示信息。</dd>
+<dt><b>1013-1014</b></dt><dd>打印一条关于低端内存可用容量的提示信息。</dd>
+</dl>
+<PRE CLASS="verbatim">1018      bootmap_size = init_bootmem(start_pfn, max_low_pfn);
+1019 
+1020      register_bootmem_low_pages(max_low_pfn);
+1021 
+1028      reserve_bootmem(HIGH_MEMORY, (PFN_PHYS(start_pfn) +
+1029                  bootmap_size + PAGE_SIZE-1) - (HIGH_MEMORY));
+1030 
+1035      reserve_bootmem(0, PAGE_SIZE);
+1036 
+1037 #ifdef CONFIG_SMP
+1043       reserve_bootmem(PAGE_SIZE, PAGE_SIZE);
+1044 #endif
+1045 #ifdef CONFIG_ACPI_SLEEP
+1046         /*
+1047          * Reserve low memory region for sleep support.
+1048          */
+1049         acpi_reserve_bootmem();
+1050 #endif
+</PRE>
+<dl>
+<dt><b>1018</b></dt><dd><tt>init_bootmem()</tt>（参见 <a href="../original_html/understand022.html#func: init_bootmem">E.1.1 节</a>）会为 <tt>config_page_data</tt> 节点初始化其 <tt>bootmem_data</tt> 结构。它设置该节点的物理内存起止位置，分配用于表示各页面的位图，并将所有页面初始都标记为已保留。</dd>
+<dt><b>1020</b></dt><dd><tt>register_bootmem_low_pages()</tt><a name="@codeindex9"></a> 读取 e820 内存映射表，对运行中系统的所有可用页调用 <tt>free_bootmem()</tt>（参见 <a href="../original_html/understand022.html#func: free_bootmem">E.3.1 节</a>）。这一步会把初始化时标记为已保留的页释放为空闲页。</dd>
+<dt><b>1028-1029</b></dt><dd>保留那些用于存放表示页面状态位图的页面本身。</dd>
+<dt><b>1035</b></dt><dd>保留第 0 页，因为它常被 BIOS 用作特殊用途。</dd>
+<dt><b>1043</b></dt><dd>额外保留一个 trampoline 代码所需的页面。trampoline 代码用于处理用户空间进入内核空间的过程。</dd>
+<dt><b>1045-1050</b></dt><dd>如果启用了 sleep 支持，则为其保留所需内存。这只对希望挂起的笔记本电脑有意义，超出本书讨论范围。</dd>
+</dl>
+<PRE CLASS="verbatim">1051 #ifdef CONFIG_X86_LOCAL_APIC
+1052       /*
+1053        * Find and reserve possible boot-time SMP configuration:
+1054        */
+1055       find_smp_config();
+1056 #endif
+1057 #ifdef CONFIG_BLK_DEV_INITRD
+1058       if (LOADER_TYPE &amp;&amp; INITRD_START) {
+1059             if (INITRD_START + INITRD_SIZE &lt;= 
+1060                     (max_low_pfn &lt;&lt; PAGE_SHIFT)) {
+1060                   reserve_bootmem(INITRD_START, INITRD_SIZE);
+1061                   initrd_start =
+1062                    INITRD_START ? INITRD_START + PAGE_OFFSET : 0;
+1063                   initrd_end = initrd_start+INITRD_SIZE;
+1064             }
+1065             else {
+1066                   printk(KERN_ERR 
+1067                            "initrd extends beyond end of memory "
+1068                       "(0x%08lx &gt; 0x%08lx)\ndisabling initrd\n",
+1069                       INITRD_START + INITRD_SIZE,
+1070                       max_low_pfn &lt;&lt; PAGE_SHIFT);
+1070                   initrd_start = 0;
+1071             }
+1072       }
+1073 #endif
+1074 
+1075       return max_low_pfn;
+1076 }
+</PRE>
+<dl>
+<dt><b>1055</b></dt><dd>该函数保留存放 SMP 配置信息所需的内存。</dd>
+<dt><b>1057-1073</b></dt><dd>如果启用了 initrd，则保留承载其镜像的内存。initrd 提供了一个极小的文件系统镜像，用于引导系统。</dd>
+<dt><b>1075</b></dt><dd>返回 <tt>ZONE_NORMAL</tt> 中可寻址内存的上界。</dd>
+</dl>
+
+<h3><a name="htoc110">B.1.2</a>　函数：<tt>zone_sizes_init</tt></h3>
+<p><em>源码位置：arch/i386/mm/init.c</em> <a name="func: zone_sizes_init"></a> <a name="@codeindex10"></a></p>
+<p>这是用于初始化每个内存区（zone）的顶层函数。各 zone 以 PFN 为单位的大小已在 <tt>setup_memory()</tt>（参见 <a href="#func: setup_memory">B.1.1 节</a>）中确定。该函数填充一个 zone 大小数组，并将其传递给 <tt>free_area_init()</tt>。</p>
+<PRE CLASS="verbatim">323 static void __init zone_sizes_init(void)
+324 {
+325     unsigned long zones_size[MAX_NR_ZONES] = {0, 0, 0};
+326     unsigned int max_dma, high, low;
+327 
+328     max_dma = virt_to_phys((char *)MAX_DMA_ADDRESS) &gt;&gt; PAGE_SHIFT;
+329     low = max_low_pfn;
+330     high = highend_pfn;
+331 
+332     if (low &lt; max_dma)
+333         zones_size[ZONE_DMA] = low;
+334     else {
+335         zones_size[ZONE_DMA] = max_dma;
+336         zones_size[ZONE_NORMAL] = low - max_dma;
+337 #ifdef CONFIG_HIGHMEM
+338         zones_size[ZONE_HIGHMEM] = high - low;
+339 #endif
+340     }
+341     free_area_init(zones_size);
+342 }
+</PRE>
+<dl>
+<dt><b>325</b></dt><dd>将各 zone 的大小初始化为 0。</dd>
+<dt><b>328</b></dt><dd>计算可能的最大 DMA 地址所对应的 PFN，这也就是 <tt>ZONE_DMA</tt> 中可能存在的最大页面数。</dd>
+<dt><b>329</b></dt><dd><tt>max_low_pfn</tt> 是 <tt>ZONE_NORMAL</tt> 可用的最高 PFN。</dd>
+<dt><b>330</b></dt><dd><tt>highend_pfn</tt> 是 <tt>ZONE_HIGHMEM</tt> 可用的最高 PFN。</dd>
+<dt><b>332-333</b></dt><dd>如果 <tt>ZONE_NORMAL</tt> 中的最高 PFN 低于 <tt>MAX_DMA_ADDRESS</tt>，就把 <tt>ZONE_DMA</tt> 的大小直接设为该值。其他 zone 保持为 0。</dd>
+<dt><b>335</b></dt><dd>设置 <tt>ZONE_DMA</tt> 中的页面数。</dd>
+<dt><b>336</b></dt><dd><tt>ZONE_NORMAL</tt> 的大小为 <tt>max_low_pfn</tt> 减去 <tt>ZONE_DMA</tt> 中的页面数。</dd>
+<dt><b>338</b></dt><dd><tt>ZONE_HIGHMEM</tt> 的大小为系统最高 PFN 减去 <tt>ZONE_NORMAL</tt> 中可能存在的最高 PFN（即 <tt>max_low_pfn</tt>）。</dd>
+</dl>
+
+<h3><a name="htoc111">B.1.3</a>　函数：<tt>free_area_init</tt></h3>
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: free_area_init"></a> <a name="@codeindex11"></a></p>
+<p>这是用于初始化 UMA 架构的与体系结构无关的函数。它只是调用核心函数，并把静态的 <tt>contig_page_data</tt> 作为节点传入。NUMA 架构则会改用 <tt>free_area_init_node()</tt><a name="@codeindex12"></a>。</p>
+<PRE CLASS="verbatim">838 void __init free_area_init(unsigned long *zones_size)
+839 {
+840     free_area_init_core(0, &amp;contig_page_data, &amp;mem_map, zones_size, 
+841                             0, 0, 0);
+841 }
+</PRE>
+<dl>
+<dt><b>838</b></dt><dd>传递给 <tt>free_area_init_core()</tt> 的参数依次为：
+  <dl>
+  <dt><b>0</b></dt><dd>节点的标识符（Node Identifier），这里是 0。</dd>
+  <dt><b>contig_page_data</b></dt><dd>静态全局 <tt>pg_data_t</tt>。</dd>
+  <dt><b>mem_map</b></dt><dd>用于追踪 <tt>struct page</tt> 的全局 <tt>mem_map</tt>。<tt>free_area_init_core()</tt> 函数会为该数组分配内存。</dd>
+  <dt><b>zones_sizes</b></dt><dd>由 <tt>zone_sizes_init()</tt> 填充好的 zone 大小数组。</dd>
+  <dt><b>0</b></dt><dd>第一个 0 是起始物理地址。</dd>
+  <dt><b>0</b></dt><dd>第二个 0 是各 zone 内的内存空洞大小数组，对 UMA 架构不适用。</dd>
+  <dt><b>0</b></dt><dd>最后一个 0 是指向该节点本地 <tt>mem_map</tt> 的指针，由 NUMA 架构使用。</dd>
+  </dl>
+</dd>
+</dl>
+
+<h3><a name="htoc112">B.1.4</a>　函数：<tt>free_area_init_node</tt></h3>
+<p><em>源码位置：mm/numa.c</em> <a name="func: free_area_init_node"></a> <a name="@codeindex13"></a></p>
+<p>该函数有两个版本。第一个版本几乎与 <tt>free_area_init()</tt> 完全相同，只是采用了不同的起始物理地址。它适用于那些只有一个节点（因此使用 <tt>contig_page_data</tt>）但物理地址并非从 0 开始的架构。</p>
+<p>这里展示的版本则是在页表初始化之后被调用，用于初始化系统中的每一个 <tt>pgdat</tt>。调用者可以选择自行分配 <tt>mem_map</tt> 中属于本节点的部分，并以参数形式传入，以便针对所在架构优化它的位置。如果调用者选择不这么做，则稍后会由 <tt>free_area_init_core()</tt> 来分配。</p>
+<PRE CLASS="verbatim"> 61 void __init free_area_init_node(int nid, 
+        pg_data_t *pgdat, struct page *pmap,
+ 62     unsigned long *zones_size, unsigned long zone_start_paddr, 
+ 63     unsigned long *zholes_size)
+ 64 {
+ 65     int i, size = 0;
+ 66     struct page *discard;
+ 67 
+ 68     if (mem_map == (mem_map_t *)NULL)
+ 69         mem_map = (mem_map_t *)PAGE_OFFSET;
+ 70 
+ 71     free_area_init_core(nid, pgdat, &amp;discard, zones_size, 
+                        zone_start_paddr,
+ 72                     zholes_size, pmap);
+ 73     pgdat-&gt;node_id = nid;
+ 74 
+ 75     /*
+ 76      * Get space for the valid bitmap.
+ 77      */
+ 78     for (i = 0; i &lt; MAX_NR_ZONES; i++)
+ 79         size += zones_size[i];
+ 80     size = LONG_ALIGN((size + 7) &gt;&gt; 3);
+ 81     pgdat-&gt;valid_addr_bitmap = 
+                     (unsigned long *)alloc_bootmem_node(pgdat, size);
+ 82     memset(pgdat-&gt;valid_addr_bitmap, 0, size);
+ 83 }
+</PRE>
+<dl>
+<dt><b>61</b></dt><dd>该函数的参数为：
+  <dl>
+  <dt><b>nid</b></dt><dd>传入的 <tt>pgdat</tt> 对应的节点标识符（NID）。</dd>
+  <dt><b>pgdat</b></dt><dd>待初始化的节点。</dd>
+  <dt><b>pmap</b></dt><dd>指向该节点所使用的 <tt>mem_map</tt> 子区段的指针，经常传入 NULL，稍后再分配。</dd>
+  <dt><b>zones_size</b></dt><dd>该节点中各 zone 的大小数组。</dd>
+  <dt><b>zone_start_paddr</b></dt><dd>该节点的起始物理地址。</dd>
+  <dt><b>zholes_size</b></dt><dd>各 zone 内的内存空洞大小数组。</dd>
+  </dl>
+</dd>
+<dt><b>68-69</b></dt><dd>如果全局 <tt>mem_map</tt> 尚未设置，则将其设为线性地址空间中内核部分的起始位置。记住，在 NUMA 架构下，<tt>mem_map</tt> 是一个虚拟数组，其中的部分由各节点使用的本地 map 来填充。</dd>
+<dt><b>71</b></dt><dd>调用 <tt>free_area_init_core()</tt>。注意第三个参数传入的是 <tt>discard</tt>，因为在 NUMA 中不需要设置全局 <tt>mem_map</tt>。</dd>
+<dt><b>73</b></dt><dd>记录 <tt>pgdat</tt> 的 NID。</dd>
+<dt><b>78-79</b></dt><dd>计算该节点的总大小。</dd>
+<dt><b>80</b></dt><dd>重新计算大小，得到的是&ldquo;为每字节大小用一位表示&rdquo;所需要的位数。</dd>
+<dt><b>81</b></dt><dd>分配一个位图，用于表示该节点中哪些区域是有效的。实际上这只被 sparc 架构使用，因此对其他每一种架构而言都是在白白浪费内存。</dd>
+<dt><b>82</b></dt><dd>初始时所有区域都被视为无效。有效区域稍后会在 sparc 的 <tt>mem_init()</tt> 函数中被标记。其他架构则直接忽略这个位图。</dd>
+</dl>
+
+<h3><a name="htoc113">B.1.5</a>　函数：<tt>free_area_init_core</tt></h3>
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: free_area_init_core"></a> <a name="@codeindex14"></a></p>
+<p>该函数负责初始化一个节点中的所有 zone，并为它们分配本地的 <tt>lmem_map</tt>。在 UMA 架构下，本函数被以会初始化全局 <tt>mem_map</tt> 数组的方式调用。在 NUMA 架构下，该数组被视为一个稀疏填充的虚拟数组。</p>
+<PRE CLASS="verbatim">684 void __init free_area_init_core(int nid, 
+        pg_data_t *pgdat, struct page **gmap,
+685     unsigned long *zones_size, unsigned long zone_start_paddr, 
+686     unsigned long *zholes_size, struct page *lmem_map)
+687 {
+688     unsigned long i, j;
+689     unsigned long map_size;
+690     unsigned long totalpages, offset, realtotalpages;
+691     const unsigned long zone_required_alignment = 
+                                              1UL &lt;&lt; (MAX_ORDER-1);
+692 
+693     if (zone_start_paddr &amp; ~PAGE_MASK)
+694         BUG();
+695 
+696     totalpages = 0;
+697     for (i = 0; i &lt; MAX_NR_ZONES; i++) {
+698         unsigned long size = zones_size[i];
+699         totalpages += size;
+700     }
+701     realtotalpages = totalpages;
+702     if (zholes_size)
+703         for (i = 0; i &lt; MAX_NR_ZONES; i++)
+704             realtotalpages -= zholes_size[i];
+705             
+706     printk("On node %d totalpages: %lu\n", nid, realtotalpages);
+</PRE>
+<p>这一段主要负责计算各 zone 的大小。</p>
+<dl>
+<dt><b>691</b></dt><dd>zone 必须与伙伴分配器可以分配的最大块大小对齐，才能保证按位运算正确工作。</dd>
+<dt><b>693-694</b></dt><dd>如果物理地址未按页对齐，则属于 bug。</dd>
+<dt><b>696</b></dt><dd>将该节点的 <tt>totalpages</tt> 计数初始化为 0。</dd>
+<dt><b>697-700</b></dt><dd>通过遍历 <tt>zone_sizes</tt> 累加得到该节点的总大小。</dd>
+<dt><b>701-704</b></dt><dd>从总大小中减去 <tt>zholes_size</tt> 中各空洞的大小，得到真实可用的内存量。</dd>
+<dt><b>706</b></dt><dd>打印一条信息，告知用户该节点可用的内存数量。</dd>
+</dl>
+<PRE CLASS="verbatim">708     /*
+709      * Some architectures (with lots of mem and discontinous memory
+710      * maps) have to search for a good mem_map area:
+711      * For discontigmem, the conceptual mem map array starts from 
+712      * PAGE_OFFSET, we need to align the actual array onto a mem map 
+713      * boundary, so that MAP_NR works.
+714      */
+715     map_size = (totalpages + 1)*sizeof(struct page);
+716     if (lmem_map == (struct page *)0) {
+717         lmem_map = (struct page *) alloc_bootmem_node(pgdat, map_size);
+718         lmem_map = (struct page *)(PAGE_OFFSET + 
+719             MAP_ALIGN((unsigned long)lmem_map - PAGE_OFFSET));
+720     }
+721     *gmap = pgdat-&gt;node_mem_map = lmem_map;
+722     pgdat-&gt;node_size = totalpages;
+723     pgdat-&gt;node_start_paddr = zone_start_paddr;
+724     pgdat-&gt;node_start_mapnr = (lmem_map - mem_map);
+725     pgdat-&gt;nr_zones = 0;
+726
+727     offset = lmem_map - mem_map;    
+</PRE>
+<p>这一段在必要时分配本地的 <tt>lmem_map</tt>，并设置 <tt>gmap</tt>。在 UMA 架构下，<tt>gmap</tt> 其实就是 <tt>mem_map</tt>，所以这里也就是为它分配内存的地方。</p>
+<dl>
+<dt><b>715</b></dt><dd>计算数组所需的内存大小，即总页面数乘以 <tt>struct page</tt> 的大小。</dd>
+<dt><b>716</b></dt><dd>如果尚未分配 map，则在这里分配。</dd>
+<dt><b>717</b></dt><dd>通过引导阶段内存分配器分配内存。</dd>
+<dt><b>718</b></dt><dd><tt>MAP_ALIGN()</tt><a name="@codeindex15"></a> 会把数组按 <tt>struct page</tt> 大小的边界对齐，以便基于物理地址通过 <tt>MAP_NR()</tt> 宏在 <tt>mem_map</tt> 中定位偏移的计算能够正确进行。</dd>
+<dt><b>721</b></dt><dd>把 <tt>gmap</tt> 和 <tt>pgdat</tt>→<tt>node_mem_map</tt> 都设为已分配的 <tt>lmem_map</tt>。在 UMA 架构下，这其实就是设置 <tt>mem_map</tt>。</dd>
+<dt><b>722</b></dt><dd>记录该节点的大小。</dd>
+<dt><b>723</b></dt><dd>记录起始物理地址。</dd>
+<dt><b>724</b></dt><dd>记录该节点在 <tt>mem_map</tt> 中所占据的偏移位置。</dd>
+<dt><b>725</b></dt><dd>将 zone 计数初始化为 0，本函数稍后会更新它。</dd>
+<dt><b>727</b></dt><dd><tt>offset</tt> 现在就是本地 <tt>lmem_map</tt> 起始位置在 <tt>mem_map</tt> 中的偏移。</dd>
+</dl>
+<PRE CLASS="verbatim">728     for (j = 0; j &lt; MAX_NR_ZONES; j++) {
+729         zone_t *zone = pgdat-&gt;node_zones + j;
+730         unsigned long mask;
+731         unsigned long size, realsize;
+732 
+733         zone_table[nid * MAX_NR_ZONES + j] = zone;
+734         realsize = size = zones_size[j];
+735         if (zholes_size)
+736             realsize -= zholes_size[j];
+737 
+738         printk("zone(%lu): %lu pages.\n", j, size);
+739         zone-&gt;size = size;
+740         zone-&gt;name = zone_names[j];
+741         zone-&gt;lock = SPIN_LOCK_UNLOCKED;
+742         zone-&gt;zone_pgdat = pgdat;
+743         zone-&gt;free_pages = 0;
+744         zone-&gt;need_balance = 0;
+745         if (!size)
+746             continue;
+</PRE>
+<p>这一段开始一个循环，对节点中的每一个 <tt>zone_t</tt> 进行初始化。初始化首先从那些已有现成值的简单字段开始。</p>
+<dl>
+<dt><b>728</b></dt><dd>遍历节点中所有 zone。</dd>
+<dt><b>733</b></dt><dd>把指向该 zone 的指针记录到 <tt>zone_table</tt> 中。参见 <a href="../original_html/understand005.html#sec: Mapping Pages to Zones">2.4.1 节</a>。</dd>
+<dt><b>734-736</b></dt><dd>根据 <tt>zones_size</tt> 中的总大小减去 <tt>zholes_size</tt> 中的空洞大小，计算 zone 的真实大小。</dd>
+<dt><b>738</b></dt><dd>打印一条信息，告知该 zone 中有多少页。</dd>
+<dt><b>739</b></dt><dd>记录该 zone 的大小。</dd>
+<dt><b>740</b></dt><dd><tt>zone_names</tt> 是该 zone 用于打印的名字字符串。</dd>
+<dt><b>741-744</b></dt><dd>初始化该 zone 的其他一些字段，例如它所属的 <tt>pgdat</tt>。</dd>
+<dt><b>745-746</b></dt><dd>如果该 zone 没有内存，则跳过，不再做后续处理。</dd>
+</dl>
+<PRE CLASS="verbatim">752         zone-&gt;wait_table_size = wait_table_size(size);
+753         zone-&gt;wait_table_shift =
+754             BITS_PER_LONG - wait_table_bits(zone-&gt;wait_table_size);
+755         zone-&gt;wait_table = (wait_queue_head_t *)
+756             alloc_bootmem_node(pgdat, zone-&gt;wait_table_size
+757                         * sizeof(wait_queue_head_t));
+758 
+759         for(i = 0; i &lt; zone-&gt;wait_table_size; ++i)
+760             init_waitqueue_head(zone-&gt;wait_table + i);
+</PRE>
+<p>初始化该 zone 的等待队列（waitqueue）。等待该 zone 中页面的进程会通过这个哈希表来选择一条等待队列。这样当某个页面被解锁时，并不需要唤醒所有在该 zone 上等待的进程，只需唤醒其中较小的一个子集。</p>
+<dl>
+<dt><b>752</b></dt><dd><tt>wait_table_size()</tt> 根据 zone 中的页面数以及&ldquo;队列数与页面数&rdquo;的目标比例来计算等待表的大小，该表永远不会超过 4 KiB。</dd>
+<dt><b>753-754</b></dt><dd>计算哈希算法所用的移位量。</dd>
+<dt><b>755</b></dt><dd>分配一张可容纳 <tt>zone</tt>→<tt>wait_table_size</tt> 个 <tt>wait_queue_head_t</tt> 表项的表。</dd>
+<dt><b>759-760</b></dt><dd>初始化其中所有等待队列。</dd>
+</dl>
+<PRE CLASS="verbatim">762         pgdat-&gt;nr_zones = j+1;
+763 
+764         mask = (realsize / zone_balance_ratio[j]);
+765         if (mask &lt; zone_balance_min[j])
+766             mask = zone_balance_min[j];
+767         else if (mask &gt; zone_balance_max[j])
+768             mask = zone_balance_max[j];
+769         zone-&gt;pages_min = mask;
+770         zone-&gt;pages_low = mask*2;
+771         zone-&gt;pages_high = mask*3;
+772 
+773         zone-&gt;zone_mem_map = mem_map + offset;
+774         zone-&gt;zone_start_mapnr = offset;
+775         zone-&gt;zone_start_paddr = zone_start_paddr;
+776 
+777         if ((zone_start_paddr &gt;&gt; PAGE_SHIFT) &amp; 
+                                          (zone_required_alignment-1))
+778             printk("BUG: wrong zone alignment, it will crash\n");
+779 
+</PRE>
+<p>计算该 zone 的水位线（watermark），并记录该 zone 的位置。水位线是按 zone 大小的某些比例计算得到的。</p>
+<dl>
+<dt><b>762</b></dt><dd>首先，由于新增了一个有效 zone，更新该节点中的 zone 数量。</dd>
+<dt><b>764</b></dt><dd>用 zone 大小除以该 zone 的平衡比率（balance ratio）计算 mask（将作为 <tt>pages_min</tt> 水位线）。<tt>mm/page_alloc.c</tt> 文件开头声明：所有 zone 的平衡比率均为 128。</dd>
+<dt><b>765-766</b></dt><dd><tt>zone_balance_min</tt> 对所有 zone 都为 20，因此 <tt>pages_min</tt> 不会低于 20。</dd>
+<dt><b>767-768</b></dt><dd>同样，<tt>zone_balance_max</tt> 对所有 zone 都为 255，因此 <tt>pages_min</tt> 不会高于 255。</dd>
+<dt><b>769</b></dt><dd>把 <tt>pages_min</tt> 设为 <tt>mask</tt>。</dd>
+<dt><b>770</b></dt><dd><tt>pages_low</tt> 设为 <tt>pages_min</tt> 的两倍。</dd>
+<dt><b>771</b></dt><dd><tt>pages_high</tt> 设为 <tt>pages_min</tt> 的三倍。</dd>
+<dt><b>773</b></dt><dd>记录该 zone 在 <tt>mem_map</tt> 中第一个 <tt>struct page</tt> 的位置。</dd>
+<dt><b>774</b></dt><dd>记录该 zone 在 <tt>mem_map</tt> 中起始的下标。</dd>
+<dt><b>775</b></dt><dd>记录起始物理地址。</dd>
+<dt><b>777-778</b></dt><dd>确保该 zone 与伙伴分配器要求的对齐方式正确，否则伙伴分配器中所用的按位运算将无法正常工作。</dd>
+</dl>
+<PRE CLASS="verbatim">780         /*
+781          * Initially all pages are reserved - free ones are freed
+782          * up by free_all_bootmem() once the early boot process is
+783          * done. Non-atomic initialization, single-pass.
+784          */
+785         for (i = 0; i &lt; size; i++) {
+786             struct page *page = mem_map + offset + i;
+787             set_page_zone(page, nid * MAX_NR_ZONES + j);
+788             set_page_count(page, 0);
+789             SetPageReserved(page);
+790             INIT_LIST_HEAD(&amp;page-&gt;list);
+791             if (j != ZONE_HIGHMEM)
+792                 set_page_address(page, __va(zone_start_paddr));
+793             zone_start_paddr += PAGE_SIZE;
+794         }
+795 
+</PRE>
+<dl>
+<dt><b>785-794</b></dt><dd>初始时该 zone 中的所有页都被标记为已保留，因为无法得知哪些页正被引导阶段内存分配器使用。等到引导阶段内存分配器在 <tt>free_all_bootmem()</tt> 中退出舞台时，未被使用的页将被清除 <tt>PG_reserved</tt> 位。</dd>
+<dt><b>786</b></dt><dd>取得该偏移处的页。</dd>
+<dt><b>787</b></dt><dd>将该页所属 zone 信息编码到页标志中。参见 <a href="../original_html/understand005.html#sec: Mapping Pages to Zones">2.4.1 节</a>。</dd>
+<dt><b>788</b></dt><dd>将引用计数（count）设为 0，因为目前没有任何人在使用它。</dd>
+<dt><b>789</b></dt><dd>设置 reserved 标志。稍后如果该页未被使用，引导阶段内存分配器会清除该标志。</dd>
+<dt><b>790</b></dt><dd>初始化该页的 list head。</dd>
+<dt><b>791-792</b></dt><dd>如果可用且该页位于低端内存中，则设置 <tt>page</tt>→<tt>virtual</tt> 字段。</dd>
+<dt><b>793</b></dt><dd>将 <tt>zone_start_paddr</tt> 增加一个页大小，因为该变量会被用来记录下一个 zone 的起始位置。</dd>
+</dl>
+<PRE CLASS="verbatim">796         offset += size;
+797         for (i = 0; ; i++) {
+798             unsigned long bitmap_size;
+799 
+800             INIT_LIST_HEAD(&amp;zone-&gt;free_area[i].free_list);
+801             if (i == MAX_ORDER-1) {
+802                 zone-&gt;free_area[i].map = NULL;
+803                 break;
+804             }
+805 
+829             bitmap_size = (size-1) &gt;&gt; (i+4);
+830             bitmap_size = LONG_ALIGN(bitmap_size+1);
+831             zone-&gt;free_area[i].map = 
+832               (unsigned long *) alloc_bootmem_node(pgdat, 
+                                                       bitmap_size);
+833         }
+834     }
+835     build_zonelists(pgdat);
+836 }
+</PRE>
+<p>这一段初始化该 zone 的空闲链表（free list），并分配伙伴分配器用来记录页伙伴状态的位图。</p>
+<dl>
+<dt><b>797</b></dt><dd>该循环从 0 一直到 <tt>MAX_ORDER-1</tt>。</dd>
+<dt><b>800</b></dt><dd>初始化当前阶数 <tt>i</tt> 对应的 <tt>free_list</tt> 链表。</dd>
+<dt><b>801-804</b></dt><dd>如果到达最后一个阶数，则将该 free area 的 map 设为 NULL，这是 free 链表数组结束的标志。</dd>
+<dt><b>829</b></dt><dd>计算 <tt>bitmap_size</tt>，即用每位表示 2<sup><i>i</i></sup> 大小一对伙伴页的位图所需要的字节数。</dd>
+<dt><b>830</b></dt><dd>用 <tt>LONG_ALIGN()</tt> 把大小对齐到 long，因为所有按位运算都是按 long 进行的。</dd>
+<dt><b>831-832</b></dt><dd>分配存放位图所需的内存。</dd>
+<dt><b>834</b></dt><dd>循环回去处理下一个 zone。</dd>
+<dt><b>835</b></dt><dd>调用 <tt>build_zonelists()</tt> 为该节点构建 zone 的回退（fallback）列表。</dd>
+</dl>
+
+<h3><a name="htoc114">B.1.6</a>　函数：<tt>build_zonelists</tt></h3>
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: build_zonelists"></a> <a name="@codeindex16"></a></p>
+<p>该函数为请求节点中的每个 zone 构建一份回退 zone 列表。这适用于某次分配在当前 zone 无法满足、需要去咨询其他 zone 的情形。完成之后，从 <tt>ZONE_HIGHMEM</tt> 的分配会回退到 <tt>ZONE_NORMAL</tt>；从 <tt>ZONE_NORMAL</tt> 的分配会回退到 <tt>ZONE_DMA</tt>；而 <tt>ZONE_DMA</tt> 则没有可回退的目标。</p>
+<PRE CLASS="verbatim">589 static inline void build_zonelists(pg_data_t *pgdat)
+590 {
+591     int i, j, k;
+592 
+593     for (i = 0; i &lt;= GFP_ZONEMASK; i++) {
+594         zonelist_t *zonelist;
+595         zone_t *zone;
+596 
+597         zonelist = pgdat-&gt;node_zonelists + i;
+598         memset(zonelist, 0, sizeof(*zonelist));
+599 
+600         j = 0;
+601         k = ZONE_NORMAL;
+602         if (i &amp; __GFP_HIGHMEM)
+603             k = ZONE_HIGHMEM;
+604         if (i &amp; __GFP_DMA)
+605             k = ZONE_DMA;
+606 
+607         switch (k) {
+608             default:
+609                 BUG();
+610             /*
+611              * fallthrough:
+612              */
+613             case ZONE_HIGHMEM:
+614                 zone = pgdat-&gt;node_zones + ZONE_HIGHMEM;
+615                 if (zone-&gt;size) {
+616 #ifndef CONFIG_HIGHMEM
+617                     BUG();
+618 #endif
+619                     zonelist-&gt;zones[j++] = zone;
+620                 }
+621             case ZONE_NORMAL:
+622                 zone = pgdat-&gt;node_zones + ZONE_NORMAL;
+623                 if (zone-&gt;size)
+624                     zonelist-&gt;zones[j++] = zone;
+625             case ZONE_DMA:
+626                 zone = pgdat-&gt;node_zones + ZONE_DMA;
+627                 if (zone-&gt;size)
+628                     zonelist-&gt;zones[j++] = zone;
+629         }
+630         zonelist-&gt;zones[j++] = NULL;
+631     } 
+632 }
+</PRE>
+<dl>
+<dt><b>593</b></dt><dd>遍历最大可能的 zone 数量。</dd>
+<dt><b>597</b></dt><dd>取出当前 zone 的 zonelist 并清零。</dd>
+<dt><b>600</b></dt><dd>把 <tt>j</tt> 初始化为 0，对应 <tt>ZONE_DMA</tt>。</dd>
+<dt><b>601-605</b></dt><dd>把 <tt>k</tt> 设为当前正在考察的 zone 类型。</dd>
+<dt><b>614</b></dt><dd>取得 <tt>ZONE_HIGHMEM</tt>。</dd>
+<dt><b>615-620</b></dt><dd>如果该 zone 有内存，则 <tt>ZONE_HIGHMEM</tt> 是高端内存分配的首选 zone。如果 <tt>ZONE_HIGHMEM</tt> 没有内存，则由于此处不会对空 zone 递增 <tt>j</tt>，当落入下一个 case 时 <tt>ZONE_NORMAL</tt> 将成为首选 zone。</dd>
+<dt><b>621-624</b></dt><dd>把下一个首选 zone 设为 <tt>ZONE_NORMAL</tt>。同样地，如果该 zone 没有内存，则不使用它。</dd>
+<dt><b>626-628</b></dt><dd>把最终的回退 zone 设为 <tt>ZONE_DMA</tt>。由于 NUMA 架构下并非所有节点都会有 <tt>ZONE_DMA</tt>，这里仍要检查它是否含有内存。</dd>
+</dl>
+
+<h2><a name="toc99"></a><a name="htoc115">B.2</a>　页面操作</h2>
+
+<h3>目录</h3>
+<table cellspacing="6" cellpadding="0">
+<tr><td class="hbar" colspan="2"></td></tr>
+<tr><td valign="top" align="left"> B.2 页面操作</td><td valign="top" align="right" nowrap>216</td></tr>
+<tr><td valign="top" align="left"> B.2.1 给页面加锁</td><td valign="top" align="right" nowrap>216</td></tr>
+<tr><td valign="top" align="left">  B.2.1.1 函数：<tt>lock_page()</tt></td><td valign="top" align="right" nowrap>216</td></tr>
+<tr><td valign="top" align="left">  B.2.1.2 函数：<tt>__lock_page()</tt></td><td valign="top" align="right" nowrap>216</td></tr>
+<tr><td valign="top" align="left">  B.2.1.3 函数：<tt>sync_page()</tt></td><td valign="top" align="right" nowrap>217</td></tr>
+<tr><td valign="top" align="left"> B.2.2 给页面解锁</td><td valign="top" align="right" nowrap>218</td></tr>
+<tr><td valign="top" align="left">  B.2.2.1 函数：<tt>unlock_page()</tt></td><td valign="top" align="right" nowrap>218</td></tr>
+<tr><td valign="top" align="left"> B.2.3 在页面上等待</td><td valign="top" align="right" nowrap>219</td></tr>
+<tr><td valign="top" align="left">  B.2.3.1 函数：<tt>wait_on_page()</tt></td><td valign="top" align="right" nowrap>219</td></tr>
+<tr><td valign="top" align="left">  B.2.3.2 函数：<tt>___wait_on_page()</tt></td><td valign="top" align="right" nowrap>219</td></tr>
+<tr><td class="hbar" colspan="2"></td></tr>
+</table>
+
+<h3><a name="htoc116">B.2.1</a>　给页面加锁</h3>
+
+<h4><a name="htoc117">B.2.1.1</a>　函数：<tt>lock_page</tt></h4>
+<p><em>源码位置：mm/filemap.c</em> <a name="func: lock_page"></a> <a name="@codeindex17"></a></p>
+<p>该函数尝试为页面加锁。如果页面无法加锁，则会让当前进程睡眠，直到该页面可用为止。</p>
+<PRE CLASS="verbatim">921 void lock_page(struct page *page)
+922 {
+923     if (TryLockPage(page))
+924         __lock_page(page);
+925 }
+</PRE>
+<dl>
+<dt><b>923</b></dt><dd><tt>TryLockPage()</tt><a name="@codeindex18"></a> 只是对 <tt>page</tt>→<tt>flags</tt> 中 <tt>PG_locked</tt> 位调用 <tt>test_and_set_bit()</tt> 的一个简单封装。如果原先该位为 0，函数会立即返回，因为此时页面已被锁定。</dd>
+<dt><b>924</b></dt><dd>否则调用 <tt>__lock_page()</tt>（参见 <a href="#func: __lock_page">B.2.1.2 节</a>）将进程置于睡眠状态。</dd>
+</dl>
+
+<h4><a name="htoc118">B.2.1.2</a>　函数：<tt>__lock_page</tt></h4>
+<p><em>源码位置：mm/filemap.c</em> <a name="func: __lock_page"></a> <a name="@codeindex19"></a></p>
+<p>该函数在 <tt>TryLockPage()</tt> 失败后被调用。它会定位该页面对应的等待队列，并在其上睡眠直到能成功获得锁。</p>
+<PRE CLASS="verbatim">897 static void __lock_page(struct page *page)
+898 {
+899     wait_queue_head_t *waitqueue = page_waitqueue(page);
+900     struct task_struct *tsk = current;
+901     DECLARE_WAITQUEUE(wait, tsk);
+902 
+903     add_wait_queue_exclusive(waitqueue, &amp;wait);
+904     for (;;) {
+905         set_task_state(tsk, TASK_UNINTERRUPTIBLE);
+906         if (PageLocked(page)) {
+907             sync_page(page);
+908             schedule();
+909         }
+910         if (!TryLockPage(page))
+911             break;
+912     }
+913     __set_task_state(tsk, TASK_RUNNING);
+914     remove_wait_queue(waitqueue, &amp;wait);
+915 }
+</PRE>
+<dl>
+<dt><b>899</b></dt><dd><tt>page_waitqueue()</tt><a name="@codeindex20"></a> 是哈希算法的实现，它决定该页面属于 <tt>zone</tt>→<tt>wait_table</tt> 中的哪一条等待队列。</dd>
+<dt><b>900-901</b></dt><dd>为当前任务初始化等待队列项。</dd>
+<dt><b>903</b></dt><dd>把当前进程加入 <tt>page_waitqueue()</tt> 返回的等待队列中。</dd>
+<dt><b>904-912</b></dt><dd>在此循环，直到成功获得锁。</dd>
+<dt><b>905</b></dt><dd>把进程状态设为不可中断睡眠。当调用 <tt>schedule()</tt> 时，进程会进入睡眠，直到该队列被显式唤醒为止。</dd>
+<dt><b>906</b></dt><dd>如果页面仍处于锁定状态，则调用 <tt>sync_page()</tt> 函数，安排把页面与其后备存储进行同步。调用 <tt>schedule()</tt> 进入睡眠，直到队列被唤醒（例如页面上的 IO 完成时）。</dd>
+<dt><b>910-1001</b></dt><dd>再次尝试为页面加锁。成功则退出循环；否则继续在队列上睡眠。</dd>
+<dt><b>913-914</b></dt><dd>此时已获得锁，将进程状态设为 <tt>TASK_RUNNING</tt>，并将其从等待队列中移除。函数随即在持有锁的状态下返回。</dd>
+</dl>
+
+<h4><a name="htoc119">B.2.1.3</a>　函数：<tt>sync_page</tt></h4>
+<p><em>源码位置：mm/filemap.c</em> <a name="func: sync_page"></a> <a name="@codeindex21"></a></p>
+<p>该函数调用文件系统特定的 <tt>sync_page()</tt>，把页面与其后备存储进行同步。</p>
+<PRE CLASS="verbatim">140 static inline int sync_page(struct page *page)
+141 {
+142     struct address_space *mapping = page-&gt;mapping;
+143 
+144     if (mapping &amp;&amp; mapping-&gt;a_ops &amp;&amp; mapping-&gt;a_ops-&gt;sync_page)
+145         return mapping-&gt;a_ops-&gt;sync_page(page);
+146     return 0;
+147 }
+</PRE>
+<dl>
+<dt><b>142</b></dt><dd>取得该页面的 <tt>address_space</tt>（如果存在）。</dd>
+<dt><b>144-145</b></dt><dd>如果存在后备存储，且其关联的 <tt>address_space_operations</tt> 提供了 <tt>sync_page()</tt> 函数，则调用之。</dd>
+</dl>
+
+<h3><a name="htoc120">B.2.2</a>　给页面解锁</h3>
+
+<h4><a name="htoc121">B.2.2.1</a>　函数：<tt>unlock_page</tt></h4>
+<p><em>源码位置：mm/filemap.c</em> <a name="func: unlock_page"></a> <a name="@codeindex22"></a></p>
+<p>该函数为页面解锁，并唤醒可能正在等待该页面的进程。</p>
+<PRE CLASS="verbatim">874 void unlock_page(struct page *page)
+875 {
+876     wait_queue_head_t *waitqueue = page_waitqueue(page);
+877     ClearPageLaunder(page);
+878     smp_mb__before_clear_bit();
+879     if (!test_and_clear_bit(PG_locked, &amp;(page)-&gt;flags))
+880         BUG();
+881     smp_mb__after_clear_bit(); 
+882 
+883     /*
+884      * Although the default semantics of wake_up() are
+885      * to wake all, here the specific function is used
+886      * to make it even more explicit that a number of
+887      * pages are being waited on here.
+888      */
+889     if (waitqueue_active(waitqueue))
+890         wake_up_all(waitqueue);
+891 }
+</PRE>
+<dl>
+<dt><b>876</b></dt><dd><tt>page_waitqueue()</tt><a name="@codeindex23"></a> 是哈希算法的实现，它决定该页面属于 <tt>zone</tt>→<tt>wait_table</tt> 中的哪一条等待队列。</dd>
+<dt><b>877</b></dt><dd>清除 launder 标志位，因为该页面上的 IO 此时已经完成。</dd>
+<dt><b>878</b></dt><dd>这是一个内存屏障操作，必须在执行可能被多处理器看到的位操作之前调用。</dd>
+<dt><b>879-880</b></dt><dd>清除 <tt>PG_locked</tt> 位。如果该位原本就已被清除，则属于 <tt>BUG()</tt>。</dd>
+<dt><b>881</b></dt><dd>完成 SMP 内存屏障操作。</dd>
+<dt><b>889-890</b></dt><dd>如果有进程正在该页面的等待队列上等待，将它们唤醒。</dd>
+</dl>
+
+<h3><a name="htoc122">B.2.3</a>　在页面上等待</h3>
+
+<h4><a name="htoc123">B.2.3.1</a>　函数：<tt>wait_on_page</tt></h4>
+<p><em>源码位置：include/linux/pagemap.h</em> <a name="func: wait_on_page"></a> <a name="@codeindex24"></a></p>
+<PRE CLASS="verbatim"> 94 static inline void wait_on_page(struct page * page)
+ 95 {
+ 96     if (PageLocked(page))
+ 97         ___wait_on_page(page);
+ 98 }
+</PRE>
+<dl>
+<dt><b>96-97</b></dt><dd>如果该页面当前被锁定，就调用 <tt>___wait_on_page()</tt> 一直睡眠到它被解锁为止。</dd>
+</dl>
+
+<h4><a name="htoc124">B.2.3.2</a>　函数：<tt>___wait_on_page</tt></h4>
+<p><em>源码位置：mm/filemap.c</em> <a name="func: ___wait_on_page"></a> <a name="@codeindex25"></a></p>
+<p>调用本函数时，已经通过 <tt>PageLocked()</tt> 确认该页面处于锁定状态。调用进程通常会睡眠，直到 <tt>page</tt> 被解锁为止。</p>
+<PRE CLASS="verbatim">849 void ___wait_on_page(struct page *page)
+850 {
+851     wait_queue_head_t *waitqueue = page_waitqueue(page);
+852     struct task_struct *tsk = current;
+853     DECLARE_WAITQUEUE(wait, tsk);
+854 
+855     add_wait_queue(waitqueue, &amp;wait);
+856     do {
+857         set_task_state(tsk, TASK_UNINTERRUPTIBLE);
+858         if (!PageLocked(page))
+859             break;
+860         sync_page(page);
+861         schedule();
+862     } while (PageLocked(page));
+863     __set_task_state(tsk, TASK_RUNNING);
+864     remove_wait_queue(waitqueue, &amp;wait);
+865 }
+</PRE>
+<dl>
+<dt><b>851</b></dt><dd><tt>page_waitqueue()</tt><a name="@codeindex26"></a> 是哈希算法的实现，它决定该页面属于 <tt>zone</tt>→<tt>wait_table</tt> 中的哪一条等待队列。</dd>
+<dt><b>852-853</b></dt><dd>为当前任务初始化等待队列项。</dd>
+<dt><b>855</b></dt><dd>把当前任务加入 <tt>page_waitqueue()</tt> 返回的等待队列。</dd>
+<dt><b>857</b></dt><dd>将进程状态设为不可中断睡眠。当调用 <tt>schedule()</tt> 时，进程会进入睡眠。</dd>
+<dt><b>858-859</b></dt><dd>再次检查，确认上一次检查之后页面没有已被解锁。</dd>
+<dt><b>860</b></dt><dd>调用 <tt>sync_page()</tt>（参见 <a href="#func: sync_page">B.2.1.3 节</a>），通过文件系统特定的函数把页面与其后备存储进行同步。</dd>
+<dt><b>861</b></dt><dd>调用 <tt>schedule()</tt> 进入睡眠。当页面被解锁时进程会被唤醒。</dd>
+<dt><b>862</b></dt><dd>检查该页面是否仍被锁定。注意：可能有多个页面共用同一条等待队列，所以可能存在希望锁定该页面的其他睡眠进程。</dd>
+<dt><b>863-864</b></dt><dd>页面已被解锁。将进程状态置为 <tt>TASK_RUNNING</tt>，并将其从等待队列中移除。</dd>
+</dl>
+
+<hr>
+  <nav>
+    [ <a href="understand018_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand020.html">下一章 &raquo;</a> ]
+  </nav>
+</body>
+</html>
