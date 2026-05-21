@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第五章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand007_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="understand009_zh.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1>第五章　启动内存分配器</h1>
+  <div class="meta">原文版本：Chapter 5 — Boot Memory Allocator</div>
+
+  <p>由于硬件配置组合实在太多，在编译期就静态初始化所有核心内核内存结构是不现实的。但即便要建立这些最基本的结构也需要内存——即便是下一章讨论的物理页分配器，要初始化自己也需要分配内存。那么物理页分配器又是如何为自己分配初始化所需的内存呢？</p>
+
+  <p>为解决这个问题，内核使用了一个专门的分配器：<em>启动内存分配器（Boot Memory Allocator）</em>。它基于最基本的分配器——<em>首次适配（First Fit）</em>分配器，用位图而非空闲块链表来表示内存 [Tan01]。位为 1 表示该页已分配，0 表示未分配。为了满足小于一页的分配请求，分配器会记录上一次分配的<em>页帧号（Page Frame Number，PFN）</em>以及该次分配结束的偏移量。后续的小分配会与上次"合并"，存放在同一页中。</p>
+
+  <p>读者也许会问：为什么不直接用这个分配器作为运行期的分配器？一个有力的理由是：尽管首次适配分配器不会因碎片问题而严重恶化 [JW98]，但它常常要线性扫描内存以满足分配请求。由于扫描的是位图，代价非常高；而且首次适配算法倾向于在物理内存起始处留下许多小空闲块，这些小块在大分配时仍会被扫描，使整个过程非常浪费 [WJNB95]。</p>
+
+  <h4>表 5.1：UMA 架构下的启动内存分配器 API</h4>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><tt>unsigned long init_bootmem(unsigned long start, unsigned long page)</tt></td><td>初始化 0 与 PFN <tt>page</tt> 之间的内存。可用内存的起始位于 PFN <tt>start</tt>。</td></tr>
+    <tr><td><tt>void reserve_bootmem(unsigned long addr, unsigned long size)</tt></td><td>把地址 <tt>addr</tt> 与 <tt>addr+size</tt> 之间的页标记为保留。对页的部分保留请求会导致整页被保留。</td></tr>
+    <tr><td><tt>void free_bootmem(unsigned long addr, unsigned long size)</tt></td><td>把地址 <tt>addr</tt> 与 <tt>addr+size</tt> 之间的页标记为空闲。</td></tr>
+    <tr><td><tt>void * alloc_bootmem(unsigned long size)</tt></td><td>从 <tt>ZONE_NORMAL</tt> 分配 <tt>size</tt> 字节。分配按 L1 硬件缓存对齐，以充分利用硬件缓存。</td></tr>
+    <tr><td><tt>void * alloc_bootmem_low(unsigned long size)</tt></td><td>从 <tt>ZONE_DMA</tt> 分配 <tt>size</tt> 字节，按 L1 硬件缓存对齐。</td></tr>
+    <tr><td><tt>void * alloc_bootmem_pages(unsigned long size)</tt></td><td>从 <tt>ZONE_NORMAL</tt> 分配 <tt>size</tt> 字节，按页大小对齐，使返回的是整页。</td></tr>
+    <tr><td><tt>void * alloc_bootmem_low_pages(unsigned long size)</tt></td><td>从 <tt>ZONE_NORMAL</tt> 分配 <tt>size</tt> 字节，按页大小对齐，使返回的是整页。</td></tr>
+    <tr><td><tt>unsigned long bootmem_bootmap_pages(unsigned long pages)</tt></td><td>计算用于存放表示 <tt>pages</tt> 个页面分配状态的位图所需的页数。</td></tr>
+    <tr><td><tt>unsigned long free_all_bootmem()</tt></td><td>在启动分配器寿终正寝时使用。它遍历位图中所有页面，对每个空闲页清除其标志位，并把页交给物理页分配器（见下一章），使运行期分配器能建立自己的空闲链表。</td></tr>
+  </table>
+
+  <p>该分配器有两套非常相似但不同的 API：一套用于 UMA 架构，列于表 5.1；另一套用于 NUMA，列于表 5.2。主要区别在于 NUMA 版本必须提供操作所影响的节点；但因为这些 API 的调用者位于架构相关层，这一点不算大问题。</p>
+
+  <p>本章首先描述分配器用来表示各节点可用物理内存的结构，再说明如何探明物理内存的边界与各 zone 的大小，然后讨论这些信息如何用于初始化启动内存分配器结构。接着讨论分配与释放例程，最后讲启动内存分配器如何退役。</p>
+
+  <h4>表 5.2：NUMA 架构下的启动内存分配器 API</h4>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><tt>unsigned long init_bootmem_node(pg_data_t *pgdat, unsigned long freepfn, unsigned long startpfn, unsigned long endpfn)</tt></td><td>用于 NUMA 架构。初始化 PFN <tt>startpfn</tt> 到 <tt>endpfn</tt> 之间的内存，第一个可用 PFN 为 <tt>freepfn</tt>。初始化完成后，节点 <tt>pgdat</tt> 被插入 <tt>pgdat_list</tt>。</td></tr>
+    <tr><td><tt>void reserve_bootmem_node(pg_data_t *pgdat, unsigned long physaddr, unsigned long size)</tt></td><td>把指定节点 <tt>pgdat</tt> 上地址 <tt>addr</tt> 与 <tt>addr+size</tt> 之间的页标记为保留。部分保留请求会导致整页被保留。</td></tr>
+    <tr><td><tt>void free_bootmem_node(pg_data_t *pgdat, unsigned long physaddr, unsigned long size)</tt></td><td>把指定节点 <tt>pgdat</tt> 上地址 <tt>addr</tt> 与 <tt>addr+size</tt> 之间的页标记为空闲。</td></tr>
+    <tr><td><tt>void * alloc_bootmem_node(pg_data_t *pgdat, unsigned long size)</tt></td><td>从指定节点 <tt>pgdat</tt> 的 <tt>ZONE_NORMAL</tt> 分配 <tt>size</tt> 字节，按 L1 硬件缓存对齐。</td></tr>
+    <tr><td><tt>void * alloc_bootmem_pages_node(pg_data_t *pgdat, unsigned long size)</tt></td><td>从指定节点 <tt>pgdat</tt> 的 <tt>ZONE_NORMAL</tt> 分配 <tt>size</tt> 字节，按页大小对齐，使返回的是整页。</td></tr>
+    <tr><td><tt>void * alloc_bootmem_low_pages_node(pg_data_t *pgdat, unsigned long size)</tt></td><td>从指定节点 <tt>pgdat</tt> 的 <tt>ZONE_NORMAL</tt> 分配 <tt>size</tt> 字节，按页大小对齐，使返回的是整页。</td></tr>
+    <tr><td><tt>unsigned long free_all_bootmem_node(pg_data_t *pgdat)</tt></td><td>在启动分配器寿终正寝时使用。遍历指定节点位图中所有页面，对每个空闲页清除其标志位，并把页交给物理页分配器（见下一章），使运行期分配器能建立自己的空闲链表。</td></tr>
+  </table>
+
+  <h2 class="section">5.1　表示启动 Bootmap</h2>
+  <p>系统中每个内存节点都对应一个 <tt>bootmem_data</tt> 结构。它包含启动内存分配器为该节点分配内存所需的信息，例如表示已分配页的位图以及该内存的位置。其在 <tt>&lt;linux/bootmem.h&gt;</tt> 中声明如下：</p>
+  <pre> 25 typedef struct bootmem_data {
+ 26     unsigned long node_boot_start;
+ 27     unsigned long node_low_pfn;
+ 28     void *node_bootmem_map;
+ 29     unsigned long last_offset;
+ 30     unsigned long last_pos;
+ 31 } bootmem_data_t;</pre>
+
+  <p>各字段含义如下：</p>
+  <ul>
+    <li><tt>node_boot_start</tt>：所表示内存块的起始物理地址；</li>
+    <li><tt>node_low_pfn</tt>：结束物理地址，即该节点 <tt>ZONE_NORMAL</tt> 的末端；</li>
+    <li><tt>node_bootmem_map</tt>：表示页面分配/空闲状态的位图所在位置，每页对应 1 位；</li>
+    <li><tt>last_offset</tt>：上次分配结束位置在所用页内的偏移。为 0 表示该页已用满；</li>
+    <li><tt>last_pos</tt>：上次分配所用页的 PFN。结合 <tt>last_offset</tt> 可判断本次分配是否能与上次合并到同一页，而无需占用新的整页。</li>
+  </ul>
+
+  <h2 class="section">5.2　初始化启动内存分配器</h2>
+  <p>每个架构都必须提供 <tt>setup_arch()</tt> 函数，它的任务之一就是获取初始化启动内存分配器所需的参数。</p>
+
+  <p>各架构有各自的函数来取得所需参数。x86 上叫 <tt>setup_memory()</tt>（详见 2.2.2 节），MIPS、Sparc 上叫 <tt>bootmem_init()</tt>，PPC 上叫 <tt>do_init_bootmem()</tt>。无论架构如何，任务本质相同。它要计算的参数有：</p>
+  <ul>
+    <li><tt>min_low_pfn</tt>：系统中可用的最低 PFN；</li>
+    <li><tt>max_low_pfn</tt>：低端内存（<tt>ZONE_NORMAL</tt>）可寻址的最高 PFN；</li>
+    <li><tt>highstart_pfn</tt>：高端内存（<tt>ZONE_HIGHMEM</tt>）起始的 PFN；</li>
+    <li><tt>highend_pfn</tt>：高端内存的最末 PFN；</li>
+    <li><tt>max_pfn</tt>：系统可用的最末 PFN。</li>
+  </ul>
+
+  <h3>5.2.1　初始化 <tt>bootmem_data</tt></h3>
+  <p>一旦 <tt>setup_memory()</tt> 探明了可用物理内存的边界，就会选择两个启动内存初始化函数之一，并传入待初始化节点的起止 PFN。<tt>init_bootmem()</tt> 用于 UMA 架构，初始化 <tt>contig_page_data</tt>；<tt>init_bootmem_node()</tt> 用于 NUMA，初始化指定节点。两者都很简短，依赖 <tt>init_bootmem_core()</tt> 完成真正的工作。</p>
+
+  <p>该核心函数的第一项任务是把 <tt>pgdat_data_t</tt> 插入 <tt>pgdat_list</tt>——函数结束时该节点便准备就绪。接着，它在相关联的 <tt>bootmem_data_t</tt> 中记录此节点的起止地址，并分配表示页面分配状态的位图。位图的大小（按字节计，所以除以 8）按以下公式算出：</p>
+  <pre>mapsize = ((end_pfn - start_pfn) + 7) / 8</pre>
+
+  <p>位图存放在 <tt>bootmem_data_t&rarr;node_boot_start</tt> 指向的物理地址，其虚拟地址存入 <tt>bootmem_data_t&rarr;node_bootmem_map</tt>。由于没有架构无关的方法检测内存"空洞"，整张位图被初始化为 1，等于把所有页面都标记为已分配。然后由架构相关代码把可用页对应的位清零；但实际上只有 Sparc 架构利用了这一位图。在 x86 上，<tt>register_bootmem_low_pages()</tt> 函数遍历 e820 映射表，对每个可用页调用 <tt>free_bootmem()</tt> 把位清零，随后用 <tt>reserve_bootmem()</tt> 把位图自身所占页面保留下来。</p>
+
+  <h2 class="section">5.3　分配内存</h2>
+  <p><tt>reserve_bootmem()</tt> 可用于保留页供调用方使用，但用作一般分配并不方便。UMA 架构上提供了四个便于分配的函数：<tt>alloc_bootmem()</tt>、<tt>alloc_bootmem_low()</tt>、<tt>alloc_bootmem_pages()</tt> 和 <tt>alloc_bootmem_low_pages()</tt>，详见表 5.1。它们都用不同参数调用 <tt>__alloc_bootmem()</tt>。调用图见图 5.1。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html026.png" alt="图 5.1">
+    <div class="caption">图 5.1：函数调用图：<tt>alloc_bootmem()</tt></div>
+  </div>
+
+  <p>NUMA 上也有类似函数，需额外传入节点参数，见表 5.2，分别为 <tt>alloc_bootmem_node()</tt>、<tt>alloc_bootmem_pages_node()</tt> 与 <tt>alloc_bootmem_low_pages_node()</tt>，都以不同参数调用 <tt>__alloc_bootmem_node()</tt>。</p>
+
+  <p><tt>__alloc_bootmem()</tt> 与 <tt>__alloc_bootmem_node()</tt> 的参数基本相同：</p>
+  <ul>
+    <li><tt>pgdat</tt>：要分配的节点。UMA 情形省略，默认假定为 <tt>contig_page_data</tt>；</li>
+    <li><tt>size</tt>：以字节计的请求大小；</li>
+    <li><tt>align</tt>：分配应对齐的字节数。小分配通常按 <tt>SMP_CACHE_BYTES</tt> 对齐，在 x86 上即 L1 硬件缓存大小；</li>
+    <li><tt>goal</tt>：希望的起始物理地址。"low" 系列函数从物理地址 0 起，其它从 <tt>MAX_DMA_ADDRESS</tt>（该架构可做 DMA 传输的最大地址）起。</li>
+  </ul>
+
+  <p>所有分配 API 的核心函数是 <tt>__alloc_bootmem_core()</tt>。它较大，但步骤简单，可拆分讨论。它从 <tt>goal</tt> 地址起线性扫描内存，寻找足够大的连续块来满足分配。从 API 而言，该地址要么是 0（DMA 友好分配），要么是 <tt>MAX_DMA_ADDRESS</tt>。</p>
+
+  <p>函数中较精巧、占篇幅最大的部分是判断本次分配能否与上次合并。满足以下条件即可合并：</p>
+  <ul>
+    <li>上次分配所用页（<tt>bootmem_data&rarr;pos</tt>）与本次分配找到的页相邻；</li>
+    <li>上一页还有剩余空间（<tt>bootmem_data&rarr;offset</tt> != 0）；</li>
+    <li>对齐要求小于 <tt>PAGE_SIZE</tt>。</li>
+  </ul>
+
+  <p>不论是否合并，<tt>pos</tt> 与 <tt>offset</tt> 都会被更新，记录最后一次分配所用页以及该页已使用多少。整页用满时 <tt>offset</tt> 为 0。</p>
+
+  <h2 class="section">5.4　释放内存</h2>
+  <p>与分配函数相对，只有两个释放函数：UMA 上的 <tt>free_bootmem()</tt> 与 NUMA 上的 <tt>free_bootmem_node()</tt>，二者都调用 <tt>free_bootmem_core()</tt>，差别只在 NUMA 多传一个 <tt>pgdat</tt>。</p>
+
+  <p>核心函数相比分配那套要简单很多。对受释放影响的每个<em>完整</em>页面，位图中对应位被清 0；若该位本就是 0，则调用 <tt>BUG()</tt> 报告重复释放。<tt>BUG()</tt> 在发生内核 bug 导致不可恢复的错误时调用，它会终止运行中的进程并触发 kernel oops，输出栈回溯和调试信息以便开发者定位问题。</p>
+
+  <p>释放函数有一个重要限制：只能释放整页。分配时不会记录某页是否被部分占用，因此若只释放部分内容，整页仍处于保留状态。这并不像看上去那样严重，因为这些分配在系统运行期间一直存在；但启动期间的开发者仍需注意这一限制。</p>
+
+  <h2 class="section">5.5　退役启动内存分配器</h2>
+  <p>引导过程后期会调用 <tt>start_kernel()</tt>，此时可以安全地销毁启动分配器及其相关结构。每个架构都必须提供 <tt>mem_init()</tt> 函数，负责销毁启动内存分配器及其相关结构。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html027.png" alt="图 5.2">
+    <div class="caption">图 5.2：函数调用图：<tt>mem_init()</tt></div>
+  </div>
+
+  <p>该函数职责很明确：计算低端、高端内存的尺寸，向用户打印信息，并在必要时完成硬件的最终初始化。在 x86 上，VM 关心的主要函数是 <tt>free_pages_init()</tt>。</p>
+
+  <p>它首先让启动内存分配器退役：UMA 上调用 <tt>free_all_bootmem()</tt>，NUMA 上调用 <tt>free_all_bootmem_node()</tt>。两者都以不同参数调用核心函数 <tt>free_all_bootmem_core()</tt>。该核心函数原理简单，做以下工作：</p>
+  <ul>
+    <li>对该节点上分配器所知的所有未分配页：
+      <ul>
+        <li>清除其 <tt>struct page</tt> 中的 <tt>PG_reserved</tt> 标志；</li>
+        <li>把计数置为 1；</li>
+        <li>调用 <tt>__free_pages()</tt>，使下一章讨论的伙伴分配器能建立自己的空闲链表。</li>
+      </ul>
+    </li>
+    <li>把所有用于位图的页释放给伙伴分配器。</li>
+  </ul>
+
+  <p>此时伙伴分配器已接管低端内存中的所有页，只剩高端内存的页待处理。<tt>free_all_bootmem()</tt> 返回后，先统计保留页数量用于记账。<tt>free_pages_init()</tt> 的余下部分负责高端内存。到此应已能看出全局 <tt>mem_map</tt> 数组是如何被分配、初始化并将页面交给主分配器的。单节点系统中低端内存页面的初始化基本流程见图 5.3。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html028.png" alt="图 5.3">
+    <div class="caption">图 5.3：初始化 <tt>mem_map</tt> 与主物理页分配器</div>
+  </div>
+
+  <p><tt>free_all_bootmem()</tt> 返回后，<tt>ZONE_NORMAL</tt> 中所有页都已交给伙伴分配器。为初始化高端内存的页，<tt>free_pages_init()</tt> 对 <tt>highstart_pfn</tt> 到 <tt>highend_pfn</tt> 之间的每一页调用 <tt>one_highpage_init()</tt>。后者只是简单地清除 <tt>PG_reserved</tt>、置位 <tt>PG_highmem</tt>、把计数设为 1，并以与 <tt>free_all_bootmem_core()</tt> 相同的方式调用 <tt>__free_pages()</tt> 释放给伙伴分配器。</p>
+
+  <p>至此启动内存分配器已不再需要，伙伴分配器成为系统的主物理页分配器。一个有趣之处是：被移除的不仅是启动分配器的数据，连用于引导的代码也一并移除。所有只在系统启动期间需要的初始化函数都被打上 <tt>__init</tt> 标记，例如：</p>
+  <pre>321 unsigned long __init free_all_bootmem (void)</pre>
+  <p>链接器会把这些函数集中放进 <tt>.init</tt> 段。在 x86 上，<tt>free_initmem()</tt> 函数遍历 <tt>__init_begin</tt> 到 <tt>__init_end</tt> 之间所有页，把它们释放给伙伴分配器。借此 Linux 能回收大量仅在引导期间使用的代码所占内存。例如，本文撰写所用机器在启动内核时就释放出 27 页。</p>
+
+  <h2 class="section">5.6　2.6 内核中的新变化</h2>
+  <p>启动内存分配器自 2.4 以来没有显著变化，主要是若干优化和与 NUMA 相关的小改动。第一个优化是给 <tt>bootmem_data_t</tt> 加了 <tt>last_success</tt> 字段。顾名思义，它记录上次成功分配的位置以减少搜索时间。若某地址在 <tt>last_success</tt> 之前被释放，该字段会更新为该被释放位置。</p>
+
+  <p>第二个优化也与线性搜索相关。2.4 在搜索空闲页时逐位测试，代价较高；2.6 改为先测试 <tt>BITS_PER_LONG</tt> 个位组成的块是否全为 1，若非则再单独测试该块内每一位。为配合线性搜索，<tt>init_bootmem()</tt> 还把节点按物理地址排序。</p>
+
+  <p>最后一项变化与 NUMA 及连续架构相关。连续架构现在定义自己的 <tt>init_bootmem()</tt>，任何架构也可选地定义自己的 <tt>reserve_bootmem()</tt>。</p>
+
+  <div class="notes">
+    <h3>译注</h3>
+    <ul>
+      <li>"启动内存分配器（boot memory allocator）"在内核引导早期为各核心结构提供内存，伙伴分配器初始化后即退役。</li>
+      <li>"首次适配（first fit）"：从前向后扫描，找到第一个满足大小要求的空闲块即用之。</li>
+      <li>函数名、结构体名、宏名等保留英文，便于查阅源码。</li>
+    </ul>
+  </div>
+
+  <nav>
+    [ <a href="understand007_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="understand009_zh.html">下一章 &raquo;</a> ]
+  </nav>
+</body>
+</html>

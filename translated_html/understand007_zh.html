@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第四章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand006_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="understand008_zh.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1>第四章　进程地址空间</h1>
+  <div class="meta">原文版本：Chapter 4 — Process Address Space</div>
+
+  <p>虚拟内存的主要优势之一是每个进程都有自己的虚拟地址空间，由操作系统将其映射到物理内存。本章将讨论进程地址空间以及 Linux 如何管理它。</p>
+
+  <p>内核对地址空间的用户空间部分与内核部分的处理方式截然不同。例如，内核的分配请求会立刻满足，并且无论 CPU 上正在运行哪个进程都全局可见。<tt>vmalloc()</tt> 算是个部分例外——它会触发一次轻量缺页以把进程页表与参考页表同步，但页本身仍是请求时立刻分配的。对于进程而言，仅仅是在线性地址空间中保留空间——把页表项指向一个只读的、全局可见的、填满零的页。写入时会触发缺页异常，从而分配一张新页，填零后放入页表项并标记为可写。之所以填零，是为了让新页与全局零页看起来完全一致。</p>
+
+  <p>用户空间部分既不可信，也不被假定为常量。每次上下文切换后，线性地址空间的用户空间部分都可能改变——除非使用了<em>惰性 TLB</em>切换（详见 4.3 节）。因此，内核必须做好准备捕获用户空间触发的所有异常和寻址错误，这一点将在 4.5 节讨论。</p>
+
+  <p>本章首先介绍线性地址空间如何划分以及各部分的用途；然后介绍用于描述每个进程的结构，以及它们的分配、初始化与销毁；接下来介绍进程地址空间中各个内存区域的创建以及与之相关的各种函数；之后讨论与进程地址空间相关的异常处理、缺页以及满足缺页的各种情形；最后介绍内核如何在用户空间与内核之间安全地复制数据。</p>
+
+  <h2 class="section">4.1　线性地址空间</h2>
+  <p>从用户视角看，地址空间是平坦的线性地址空间，但内核视角则大不相同。地址空间被划分为两部分：用户空间部分会随每次完全的上下文切换而改变，内核地址空间则保持不变。两者的分界由 <tt>PAGE_OFFSET</tt> 决定，在 x86 上是 <tt>0xC0000000</tt>。这意味着 3 GiB 供进程使用，剩下 1 GiB 一直由内核映射。内核所见的线性虚拟地址空间如图 4.1 所示。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html010.png" alt="图 4.1">
+    <div class="caption">图 4.1：内核地址空间</div>
+  </div>
+
+  <p>在 <tt>PAGE_OFFSET</tt> 处保留了 8 MiB（两个 PGD 可寻址的内存量）用于加载内核映像，8 MiB 只是用于加载内核映像而保留的合理空间量。内核映像在初始化页表时就被放入这段保留区（详见 3.6.1 节）。紧随其后存放的是 UMA 架构下的 <tt>mem_map</tt>（见第 2 章），其位置通常在 16 MiB 处以避免使用 <tt>ZONE_DMA</tt>，但并非总是如此。在 NUMA 架构下，虚拟 <tt>mem_map</tt> 的各部分会散布在这一区域中，具体位置依架构而定。</p>
+
+  <p><tt>PAGE_OFFSET</tt> 与 <tt>VMALLOC_START - VMALLOC_OFFSET</tt> 之间是物理内存映射，其大小取决于可用 RAM 的数量。如 3.6 节所述，存在页表项将物理内存映射到 <tt>PAGE_OFFSET</tt> 之后的虚拟地址范围。物理内存映射与 vmalloc 地址空间之间留有 <tt>VMALLOC_OFFSET</tt> 大小的间隔（x86 上为 8 MiB），用于防止越界错误。举例：在 32 MiB RAM 的 x86 上，<tt>VMALLOC_START</tt> 位于 <tt>PAGE_OFFSET + 0x02000000 + 0x00800000</tt>。</p>
+
+  <p>在低端内存系统上，剩余的虚拟地址空间（去除 2 页间隔）由 <tt>vmalloc()</tt> 用来在连续虚拟地址空间中表示不连续的内存分配。在高端内存系统上，vmalloc 区一直延伸到 <tt>PKMAP_BASE</tt> 减去两页间隔的位置，并引入两个额外区域：第一个从 <tt>PKMAP_BASE</tt> 开始，是用 <tt>kmap()</tt> 把高端内存页映射到低端的保留区（见第 9 章）；第二个用于固定虚拟地址映射，从 <tt>FIXADDR_START</tt> 延伸到 <tt>FIXADDR_TOP</tt>。固定虚拟地址供需要在编译期就知道虚拟地址的子系统使用，例如<em>高级可编程中断控制器（APIC）</em>。在 x86 上 <tt>FIXADDR_TOP</tt> 静态定义为 <tt>0xFFFFE000</tt>，即虚拟地址空间末端前一页。固定映射区大小在编译期由 <tt>__FIXADDR_SIZE</tt> 决定，用于从 <tt>FIXADDR_TOP</tt> 倒推出 <tt>FIXADDR_START</tt>。</p>
+
+  <p><tt>vmalloc()</tt>、<tt>kmap()</tt> 与固定虚拟地址映射所需的区域是限制 <tt>ZONE_NORMAL</tt> 大小的原因。由于运行中的内核需要这些功能，会在地址空间顶端保留至少 <tt>VMALLOC_RESERVE</tt> 大小的区域。<tt>VMALLOC_RESERVE</tt> 与架构相关，在 x86 上定义为 128 MiB。这就是为什么 <tt>ZONE_NORMAL</tt> 一般被称为只有 896 MiB：线性地址空间上 1 GiB 减去给 vmalloc 区保留的最少 128 MiB。</p>
+
+  <h2 class="section">4.2　管理地址空间</h2>
+  <p>进程可用的地址空间由一个上层结构 <tt>mm_struct</tt> 管理，大致相当于 BSD 中的 <tt>vmspace</tt> [McK96]。</p>
+
+  <p>每个地址空间由若干页对齐、使用中的内存区域组成。这些区域永不重叠，每个区域表示一组保护方式与用途相同的页所在的地址集合。它们由 <tt>struct vm_area_struct</tt> 表示，大致相当于 BSD 的 <tt>vm_map_entry</tt>。比如，一个区域可以代表 <tt>malloc()</tt> 使用的进程堆、通过 <tt>mmap()</tt> 分配的匿名内存块，或某个内存映射文件（如共享库）。该区域的页可能还未分配，可能正在被使用、驻留在内存，也可能被换出。</p>
+
+  <p>若区域由文件支撑，其 <tt>vm_file</tt> 字段会被设置。通过 <tt>vm_file&rarr;f_dentry&rarr;d_inode&rarr;i_mapping</tt> 可获得对应的 <tt>address_space</tt>，其中包含执行基于页的磁盘操作所需的文件系统专有信息。</p>
+
+  <p>这些地址空间相关结构间的关系如图 4.2 所示。还提供了一些影响地址空间与区域的系统调用，见表 4.1。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html011.png" alt="图 4.2">
+    <div class="caption">图 4.2：与地址空间相关的数据结构</div>
+  </div>
+
+  <h4>表 4.1：内存区域相关的系统调用</h4>
+  <table>
+    <tr><th>系统调用</th><th>说明</th></tr>
+    <tr><td><tt>fork()</tt></td><td>创建一个具有新地址空间的新进程。所有页被标记为 COW，并在两个进程间共享，直到发生缺页才复制出私有副本。</td></tr>
+    <tr><td><tt>clone()</tt></td><td>允许创建与父进程共享部分上下文的新进程；这是 Linux 实现线程的方式。如果 <tt>clone()</tt> 不带 <tt>CLONE_VM</tt>，将创建新的地址空间，本质上与 <tt>fork()</tt> 等同。</td></tr>
+    <tr><td><tt>mmap()</tt></td><td>在进程线性地址空间内创建新区域。</td></tr>
+    <tr><td><tt>mremap()</tt></td><td>重新映射或调整某段内存大小。如果可用虚拟地址空间不够，可能会移动该区域（除非调用方禁止移动）。</td></tr>
+    <tr><td><tt>munmap()</tt></td><td>销毁全部或部分区域。如果被解除映射的部分位于现有区域中间，原区域会被拆分为两个独立区域。</td></tr>
+    <tr><td><tt>shmat()</tt></td><td>把共享内存段附加到进程地址空间。</td></tr>
+    <tr><td><tt>shmdt()</tt></td><td>从地址空间移除共享内存段。</td></tr>
+    <tr><td><tt>execve()</tt></td><td>加载新可执行文件，替换当前地址空间。</td></tr>
+    <tr><td><tt>exit()</tt></td><td>销毁地址空间及所有区域。</td></tr>
+  </table>
+
+  <h2 class="section">4.3　进程地址空间描述符</h2>
+  <p>进程地址空间由 <tt>mm_struct</tt> 描述，意味着每个进程仅有一个，由用户线程共享。事实上，线程是通过在任务列表中找出所有指向同一 <tt>mm_struct</tt> 的 <tt>task_struct</tt> 来识别的。</p>
+
+  <p>内核线程不需要独立的 <tt>mm_struct</tt>，因为它们永远不会缺页或访问用户空间——唯一的例外是 vmalloc 空间内的缺页。缺页处理代码将此视为特例，使用主页表中的信息更新当前页表。由于内核线程不需要 <tt>mm_struct</tt>，其 <tt>task_struct&rarr;mm</tt> 字段始终为 NULL。某些任务（如启动空闲任务）从未设置 <tt>mm_struct</tt>，但对内核线程而言，调用 <tt>daemonize()</tt> 会调用 <tt>exit_mm()</tt> 来递减使用计数。</p>
+
+  <p>由于 TLB 刷新极为昂贵（特别是在 PPC 等架构上），Linux 采用<em>惰性 TLB</em>技术：在不会访问用户空间页表的进程间避免不必要的 TLB 刷新——因为地址空间的内核部分始终可见。通过"借用"前一任务的 <tt>mm_struct</tt> 放在 <tt>task_struct&rarr;active_mm</tt> 中，避免调用导致 TLB 刷新的 <tt>switch_mm()</tt>。该技术大幅改善了上下文切换时间。</p>
+
+  <p>进入惰性 TLB 时调用 <tt>enter_lazy_tlb()</tt>，确保在 SMP 机器上 <tt>mm_struct</tt> 不会在处理器间共享，在 UP 机器上则是空操作。第二次使用惰性 TLB 是在进程退出时，用 <tt>start_lazy_tlb()</tt> 短暂使用——此时进程正等待被父进程回收。</p>
+
+  <p>该结构体有两种"用户"的引用计数：<tt>mm_users</tt> 和 <tt>mm_count</tt>。<tt>mm_users</tt> 是访问该 <tt>mm_struct</tt> 用户空间部分（如页表与文件映射）的进程计数。线程以及 <tt>swap_out()</tt> 之类的代码会递增该计数，确保 <tt>mm_struct</tt> 不会过早销毁。当其降为 0 时，<tt>exit_mmap()</tt> 删除全部映射、销毁页表，然后递减 <tt>mm_count</tt>。</p>
+
+  <p><tt>mm_count</tt> 是 <tt>mm_struct</tt> "匿名用户"的计数，初始为 1（代表"真实"用户）。匿名用户不关心用户空间部分，仅仅是借用 <tt>mm_struct</tt>，例如使用惰性 TLB 切换的内核线程。该计数为 0 时即可安全销毁 <tt>mm_struct</tt>。之所以同时存在两种引用计数，是因为匿名用户即便用户空间映射已销毁，仍需要 <tt>mm_struct</tt> 存在，而推迟拆除页表也没有意义。</p>
+
+  <p><tt>mm_struct</tt> 在 <tt>&lt;linux/sched.h&gt;</tt> 中定义如下：</p>
+  <pre>206 struct mm_struct {
+207     struct vm_area_struct * mmap;
+208     rb_root_t mm_rb;
+209     struct vm_area_struct * mmap_cache;
+210     pgd_t * pgd;
+211     atomic_t mm_users;
+212     atomic_t mm_count;
+213     int map_count;
+214     struct rw_semaphore mmap_sem;
+215     spinlock_t page_table_lock;
+216 
+217     struct list_head mmlist;
+221 
+222     unsigned long start_code, end_code, start_data, end_data;
+223     unsigned long start_brk, brk, start_stack;
+224     unsigned long arg_start, arg_end, env_start, env_end;
+225     unsigned long rss, total_vm, locked_vm;
+226     unsigned long def_flags;
+227     unsigned long cpu_vm_mask;
+228     unsigned long swap_address;
+229 
+230     unsigned dumpable:1;
+231 
+232     /* Architecture-specific MM context */
+233     mm_context_t context;
+234 };</pre>
+
+  <p>各字段含义：</p>
+  <ul>
+    <li><b>mmap</b>：地址空间内所有 VMA 区域链表的表头；</li>
+    <li><b>mm_rb</b>：VMA 既串在链表上，也存在红黑树中以便快速查找。本字段是该树的根；</li>
+    <li><b>mmap_cache</b>：上一次调用 <tt>find_vma()</tt> 找到的 VMA 缓存于此（假定该区域很快会再被使用）；</li>
+    <li><b>pgd</b>：本进程的 PGD（页全局目录）；</li>
+    <li><b>mm_users</b>：访问用户空间部分的用户数，如本节开头所述；</li>
+    <li><b>mm_count</b>：匿名用户引用计数，初值为 1 代表"真实"用户；</li>
+    <li><b>map_count</b>：使用中的 VMA 数；</li>
+    <li><b>mmap_sem</b>：长期持有的锁，保护 VMA 链表的读者与写者。由于持锁时间长且可能睡眠，不适合自旋锁。读者用 <tt>down_read()</tt>，写者用 <tt>down_write()</tt>，写者修改 VMA 链表时还会再获取 <tt>page_table_lock</tt> 自旋锁；</li>
+    <li><b>page_table_lock</b>：保护 <tt>mm_struct</tt> 中大多数字段。除页表外，还保护 RSS 计数与 VMA 不被修改；</li>
+    <li><b>mmlist</b>：所有 <tt>mm_struct</tt> 通过该字段串成链表；</li>
+    <li><b>start_code、end_code</b>：代码段的起止地址；</li>
+    <li><b>start_data、end_data</b>：数据段的起止地址；</li>
+    <li><b>start_brk、brk</b>：堆的起止地址；</li>
+    <li><b>start_stack</b>：栈区起始地址；</li>
+    <li><b>arg_start、arg_end</b>：命令行参数的起止地址；</li>
+    <li><b>env_start、env_end</b>：环境变量的起止地址；</li>
+    <li><b>rss</b>：<em>常驻集大小（RSS）</em>，本进程驻留页数。注意全局零页不计入 RSS；</li>
+    <li><b>total_vm</b>：进程所有 VMA 占用的总内存空间；</li>
+    <li><b>locked_vm</b>：驻留且被锁定在内存中的页数；</li>
+    <li><b>def_flags</b>：仅有一个取值 <tt>VM_LOCKED</tt>，决定后续映射是否默认锁定；</li>
+    <li><b>cpu_vm_mask</b>：表示 SMP 系统中所有可能 CPU 的位掩码，<em>处理器间中断（IPI）</em>用它决定哪个处理器执行特定函数。对每 CPU 的 TLB 刷新很重要；</li>
+    <li><b>swap_address</b>：换页守护进程换出整个进程时，记录上次换出的地址；</li>
+    <li><b>dumpable</b>：由 <tt>prctl()</tt> 设置，仅对跟踪进程时重要；</li>
+    <li><b>context</b>：架构相关的 MMU 上下文。</li>
+  </ul>
+
+  <p>处理 <tt>mm_struct</tt> 的函数不多，见表 4.2。</p>
+
+  <h4>表 4.2：与内存区描述符相关的函数</h4>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><tt>mm_init()</tt></td><td>设置 <tt>mm_struct</tt> 各字段的初始值、分配 PGD、初始化自旋锁等。</td></tr>
+    <tr><td><tt>allocate_mm()</tt></td><td>从 slab 分配器分配 <tt>mm_struct</tt>。</td></tr>
+    <tr><td><tt>mm_alloc()</tt></td><td>用 <tt>allocate_mm()</tt> 分配 <tt>mm_struct</tt>，再调用 <tt>mm_init()</tt> 初始化。</td></tr>
+    <tr><td><tt>exit_mmap()</tt></td><td>遍历 <tt>mm_struct</tt>，解除其所有 VMA 的映射。</td></tr>
+    <tr><td><tt>copy_mm()</tt></td><td>为新任务精确复制当前任务的 <tt>mm_struct</tt>，仅在 fork 中使用。</td></tr>
+    <tr><td><tt>free_mm()</tt></td><td>将 <tt>mm_struct</tt> 归还 slab 分配器。</td></tr>
+  </table>
+
+  <h3>4.3.1　分配描述符</h3>
+  <p>提供两个看似相同但略有区别的函数：<tt>allocate_mm()</tt> 是预处理宏，仅从 <em>slab 分配器</em>（见第 8 章）分配 <tt>mm_struct</tt>；<tt>mm_alloc()</tt> 先从 slab 分配，再调用 <tt>mm_init()</tt> 初始化。</p>
+
+  <h3>4.3.2　初始化描述符</h3>
+  <p>系统中初始的 <tt>mm_struct</tt> 称为 <tt>init_mm</tt>，由宏 <tt>INIT_MM()</tt> 在编译期静态初始化：</p>
+  <pre>238 #define INIT_MM(name) \
+239 {                                                       \
+240     mm_rb:          RB_ROOT,                            \
+241     pgd:            swapper_pg_dir,                     \
+242     mm_users:       ATOMIC_INIT(2),                     \
+243     mm_count:       ATOMIC_INIT(1),                     \
+244     mmap_sem:       __RWSEM_INITIALIZER(name.mmap_sem), \
+245     page_table_lock: SPIN_LOCK_UNLOCKED,                \
+246     mmlist:         LIST_HEAD_INIT(name.mmlist),        \
+247 }</pre>
+  <p>一旦建立，新的 <tt>mm_struct</tt> 以父 <tt>mm_struct</tt> 为模板创建。负责复制操作的函数是 <tt>copy_mm()</tt>，它使用 <tt>init_mm()</tt> 初始化与进程相关的字段。</p>
+
+  <h3>4.3.3　销毁描述符</h3>
+  <p>新用户用 <tt>atomic_inc(&amp;mm-&gt;mm_users)</tt> 递增计数，对应递减则调用 <tt>mmput()</tt>。当 <tt>mm_users</tt> 降为 0 时，<tt>exit_mmap()</tt> 销毁所有映射区域并销毁页表（因为用户空间部分已没有用户）。<tt>mm_count</tt> 由 <tt>mmdrop()</tt> 递减——所有使用页表与 VMA 的用户共计为一个 <tt>mm_struct</tt> 用户。当 <tt>mm_count</tt> 为 0 时，<tt>mm_struct</tt> 可被销毁。</p>
+
+  <h2 class="section">4.4　内存区域</h2>
+  <p>进程的完整地址空间很少被全部使用，只有稀疏的区域才会使用。每个区域由 <tt>vm_area_struct</tt> 表示，永不重叠，代表一组具有相同保护方式与用途的地址。例如加载到地址空间的只读共享库或进程堆。一个进程已映射区域的完整列表可通过 <tt>/proc/PID/maps</tt> 查看（PID 为目标进程号）。</p>
+
+  <p>如图 4.2 所示，一个区域可能关联多个不同结构。最顶层是 <tt>vm_area_struct</tt>，单凭它即可表示匿名内存。</p>
+
+  <p>若区域由文件支撑，则 <tt>vm_file</tt> 字段给出 <tt>struct file</tt>，其中含指向 <tt>struct inode</tt> 的指针。通过 inode 可获得 <tt>struct address_space</tt>，包含文件全部的私有信息——其中含一组指向文件系统函数的指针，用于读写页到磁盘等文件系统专有操作。</p>
+
+  <p><tt>vm_area_struct</tt> 在 <tt>&lt;linux/mm.h&gt;</tt> 中声明如下：</p>
+  <pre> 44 struct vm_area_struct {
+ 45     struct mm_struct * vm_mm;
+ 46     unsigned long vm_start;
+ 47     unsigned long vm_end;
+ 49 
+ 50     /* linked list of VM areas per task, sorted by address */
+ 51     struct vm_area_struct *vm_next;
+ 52 
+ 53     pgprot_t vm_page_prot;
+ 54     unsigned long vm_flags;
+ 55 
+ 56     rb_node_t vm_rb;
+ 57 
+ 63     struct vm_area_struct *vm_next_share;
+ 64     struct vm_area_struct **vm_pprev_share;
+ 65 
+ 66     /* Function pointers to deal with this struct. */
+ 67     struct vm_operations_struct * vm_ops;
+ 68 
+ 69     /* Information about our backing store: */
+ 70     unsigned long vm_pgoff;
+ 72     struct file * vm_file;
+ 73     unsigned long vm_raend;
+ 74     void * vm_private_data;
+ 75 };</pre>
+
+  <ul>
+    <li><b>vm_mm</b>：本 VMA 所属的 <tt>mm_struct</tt>；</li>
+    <li><b>vm_start</b>：区域起始地址；</li>
+    <li><b>vm_end</b>：区域结束地址；</li>
+    <li><b>vm_next</b>：地址空间中所有 VMA 按地址顺序通过此字段串成一条单向链表。值得一提的是，这是内核中极少数使用单链表的场景之一；</li>
+    <li><b>vm_page_prot</b>：为此 VMA 中每个 PTE 设置的保护标志，各位含义见表 4.3；</li>
+    <li><b>vm_flags</b>：描述 VMA 保护与属性的标志，定义于 <tt>&lt;linux/mm.h&gt;</tt>，见表 4.3；</li>
+    <li><b>vm_rb</b>：除链表外，所有 VMA 还组织在<em>红黑树</em>中以便快速查找，对缺页处理时迅速找到合适区域很重要——尤其在映射区域很多时；</li>
+    <li><b>vm_next_share</b>：基于文件映射的共享 VMA（如共享库）通过此字段串联；</li>
+    <li><b>vm_pprev_share</b>：<tt>vm_next_share</tt> 的对偶；</li>
+    <li><b>vm_ops</b>：含 <tt>open()</tt>、<tt>close()</tt> 与 <tt>nopage()</tt> 函数指针，用于与磁盘信息同步；</li>
+    <li><b>vm_pgoff</b>：被映射文件内的页对齐偏移量；</li>
+    <li><b>vm_file</b>：指向被映射文件的 <tt>struct file</tt>；</li>
+    <li><b>vm_raend</b>：预读窗口结束地址。缺页时会预读所需页之后的若干页，由此字段决定预读多少页；</li>
+    <li><b>vm_private_data</b>：某些设备驱动用其存储私有信息，内存管理器不关心。</li>
+  </ul>
+
+  <h4>表 4.3：内存区域标志</h4>
+  <table>
+    <tr><th colspan="2"><b>保护标志</b></th></tr>
+    <tr><th>标志</th><th>说明</th></tr>
+    <tr><td><tt>VM_READ</tt></td><td>页可读</td></tr>
+    <tr><td><tt>VM_WRITE</tt></td><td>页可写</td></tr>
+    <tr><td><tt>VM_EXEC</tt></td><td>页可执行</td></tr>
+    <tr><td><tt>VM_SHARED</tt></td><td>页可共享</td></tr>
+    <tr><td><tt>VM_DONTCOPY</tt></td><td>fork 时不复制此 VMA</td></tr>
+    <tr><td><tt>VM_DONTEXPAND</tt></td><td>禁止区域被调整大小（未被使用）</td></tr>
+  </table>
+  <table>
+    <tr><th colspan="2"><b>mmap 相关标志</b></th></tr>
+    <tr><td><tt>VM_MAYREAD</tt></td><td>允许设置 <tt>VM_READ</tt></td></tr>
+    <tr><td><tt>VM_MAYWRITE</tt></td><td>允许设置 <tt>VM_WRITE</tt></td></tr>
+    <tr><td><tt>VM_MAYEXEC</tt></td><td>允许设置 <tt>VM_EXEC</tt></td></tr>
+    <tr><td><tt>VM_MAYSHARE</tt></td><td>允许设置 <tt>VM_SHARE</tt></td></tr>
+    <tr><td><tt>VM_GROWSDOWN</tt></td><td>共享段（可能是栈）可向下扩展</td></tr>
+    <tr><td><tt>VM_GROWSUP</tt></td><td>共享段（可能是堆）可向上扩展</td></tr>
+    <tr><td><tt>VM_SHM</tt></td><td>页用于 SHM 共享内存段</td></tr>
+    <tr><td><tt>VM_DENYWRITE</tt></td><td>对应 <tt>mmap()</tt> 的 <tt>MAP_DENYWRITE</tt>（现已不用）</td></tr>
+    <tr><td><tt>VM_EXECUTABLE</tt></td><td>对应 <tt>mmap()</tt> 的 <tt>MAP_EXECUTABLE</tt>（现已不用）</td></tr>
+    <tr><td><tt>VM_STACK_FLAGS</tt></td><td><tt>setup_arg_flags()</tt> 用于建立栈的标志</td></tr>
+  </table>
+  <table>
+    <tr><th colspan="2"><b>锁定标志</b></th></tr>
+    <tr><td><tt>VM_LOCKED</tt></td><td>置位时页不会被换出。由 <tt>mlock()</tt> 设置</td></tr>
+    <tr><td><tt>VM_IO</tt></td><td>区域是 IO 设备的 mmap 区，且不会被 core dump</td></tr>
+    <tr><td><tt>VM_RESERVED</tt></td><td>区域不换出，设备驱动使用</td></tr>
+  </table>
+  <table>
+    <tr><th colspan="2"><b>madvise() 标志</b></th></tr>
+    <tr><td><tt>VM_SEQ_READ</tt></td><td>提示页将被顺序访问</td></tr>
+    <tr><td><tt>VM_RAND_READ</tt></td><td>提示对该区域的预读没有用</td></tr>
+  </table>
+
+  <p>所有区域通过 <tt>vm_next</tt> 字段按地址有序连成单向链表。查找空闲区域时只需遍历链表；但更常见的操作是查找某地址对应的 VMA（如缺页时），此时遍历红黑树——平均 <i>O</i>(log <i>N</i>) 时间。树按地址有序，地址小于当前节点的在左叶，大于的在右叶。</p>
+
+  <h3>4.4.1　内存区操作</h3>
+  <p>VMA 可支持三种操作：<tt>open()</tt>、<tt>close()</tt> 与 <tt>nopage()</tt>，通过 <tt>vma&rarr;vm_ops</tt> 指向的 <tt>vm_operations_struct</tt> 提供。该结构在 <tt>&lt;linux/mm.h&gt;</tt> 中声明：</p>
+  <pre>133 struct vm_operations_struct {
+134     void (*open)(struct vm_area_struct * area);
+135     void (*close)(struct vm_area_struct * area);
+136     struct page * (*nopage)(struct vm_area_struct * area, 
+                                unsigned long address, 
+                                int unused);
+137 };</pre>
+
+  <p><tt>open()</tt> 与 <tt>close()</tt> 在区域创建或删除时被调用。只有少数设备、一个文件系统以及 System V 共享区在打开/关闭区域时需要额外操作。例如 System V 的 <tt>open()</tt> 回调会递增使用共享段的 VMA 数（<tt>shp&rarr;shm_nattch</tt>）。</p>
+
+  <p>真正重要的是 <tt>nopage()</tt> 回调，由 <tt>do_no_page()</tt> 在缺页时调用，负责在 page cache 中定位页或分配新页并填充数据后返回。</p>
+
+  <p>大多数被映射的文件使用通用的 <tt>vm_operations_struct</tt>：<tt>generic_file_vm_ops</tt>。它仅注册一个 <tt>nopage()</tt>，即 <tt>filemap_nopage()</tt>。该 <tt>nopage()</tt> 要么在 page cache 找到该页，要么从磁盘读取。其声明位于 <tt>mm/filemap.c</tt>：</p>
+  <pre>2243 static struct vm_operations_struct generic_file_vm_ops = {
+2244     nopage:         filemap_nopage,
+2245 };</pre>
+
+  <h3>4.4.2　文件/设备支撑的内存区</h3>
+  <p>当区域由文件支撑时，<tt>vm_file</tt> 指向关联的 <tt>address_space</tt>（图 4.2），该结构含文件系统相关信息（如必须刷盘的脏页数）。声明位于 <tt>&lt;linux/fs.h&gt;</tt>：</p>
+  <pre>406 struct address_space {
+407     struct list_head        clean_pages;    
+408     struct list_head        dirty_pages;    
+409     struct list_head        locked_pages;   
+410     unsigned long           nrpages;        
+411     struct address_space_operations *a_ops; 
+412     struct inode            *host;          
+413     struct vm_area_struct   *i_mmap;        
+414     struct vm_area_struct   *i_mmap_shared; 
+415     spinlock_t              i_shared_lock;  
+416     int                     gfp_mask;       
+417 };</pre>
+
+  <ul>
+    <li><b>clean_pages</b>：无需与后备存储同步的干净页链表；</li>
+    <li><b>dirty_pages</b>：需要与后备存储同步的脏页链表；</li>
+    <li><b>locked_pages</b>：锁定在内存中的页链表；</li>
+    <li><b>nrpages</b>：该地址空间正在使用的驻留页数；</li>
+    <li><b>a_ops</b>：操作文件系统的函数集合。每种文件系统自带 <tt>address_space_operations</tt>，有时也会用通用函数；</li>
+    <li><b>host</b>：文件所属的 host inode；</li>
+    <li><b>i_mmap</b>：使用此 <tt>address_space</tt> 的私有映射列表；</li>
+    <li><b>i_mmap_shared</b>：共享映射的 VMA 列表；</li>
+    <li><b>i_shared_lock</b>：保护本结构的自旋锁；</li>
+    <li><b>gfp_mask</b>：调用 <tt>__alloc_pages()</tt> 分配新页时的掩码。</li>
+  </ul>
+
+  <p>内存管理器需定期把信息写回磁盘，但它不关心如何写——通过 <tt>a_ops</tt> 调用相关函数。声明位于 <tt>&lt;linux/fs.h&gt;</tt>：</p>
+  <pre>385 struct address_space_operations {
+386     int (*writepage)(struct page *);
+387     int (*readpage)(struct file *, struct page *);
+388     int (*sync_page)(struct page *);
+389     /*
+390      * ext3 requires that a successful prepare_write() call be
+391      * followed by a commit_write() call - they must be balanced
+392      */
+393     int (*prepare_write)(struct file *, struct page *, 
+                             unsigned, unsigned);
+394     int (*commit_write)(struct file *, struct page *, 
+                             unsigned, unsigned);
+395     /* Unfortunately this kludge is needed for FIBMAP. 
+         * Don't use it */
+396     int (*bmap)(struct address_space *, long);
+397     int (*flushpage) (struct page *, unsigned long);
+398     int (*releasepage) (struct page *, int);
+399 #define KERNEL_HAS_O_DIRECT
+400     int (*direct_IO)(int, struct inode *, struct kiobuf *, 
+                         unsigned long, int);
+401 #define KERNEL_HAS_DIRECT_FILEIO
+402     int (*direct_fileIO)(int, struct file *, struct kiobuf *, 
+                             unsigned long, int);
+403     void (*removepage)(struct page *);
+404 };</pre>
+
+  <ul>
+    <li><b>writepage</b>：把页写入磁盘。文件内偏移存于 page 结构中，具体如何找块由文件系统代码决定。参见 <tt>buffer.c:block_write_full_page()</tt>；</li>
+    <li><b>readpage</b>：从磁盘读取页。参见 <tt>buffer.c:block_read_full_page()</tt>；</li>
+    <li><b>sync_page</b>：把脏页同步到磁盘。参见 <tt>buffer.c:block_sync_page()</tt>；</li>
+    <li><b>prepare_write</b>：用户空间数据复制到将要写入磁盘的页之前调用。日志文件系统中保证日志最新，普通文件系统则确保所需 buffer 页已分配。参见 <tt>buffer.c:block_prepare_write()</tt>；</li>
+    <li><b>commit_write</b>：用户空间数据复制完成后调用，把信息提交到磁盘。参见 <tt>buffer.c:block_commit_write()</tt>；</li>
+    <li><b>bmap</b>：映射块以便进行裸 IO，主要供文件系统代码使用，也在换出由 swap 文件（而非 swap 分区）支撑的页时使用；</li>
+    <li><b>flushpage</b>：释放页之前确保没有未完成的 IO。参见 <tt>buffer.c:discard_bh_page()</tt>；</li>
+    <li><b>releasepage</b>：释放页本身之前尝试刷新所有相关 buffer。参见 <tt>try_to_free_buffers()</tt>；</li>
+    <li><b>direct_IO</b>：对 inode 进行直接 IO 时使用。<tt>#define</tt> 让外部模块编译期可检测——它在 2.4.21 才引入；</li>
+    <li><b>direct_fileIO</b>：通过 <tt>struct file</tt> 进行直接 IO，类似地 2.4.22 引入；</li>
+    <li><b>removepage</b>：可选回调，在 <tt>remove_page_from_inode_queue()</tt> 中将页从 page cache 移除时使用。</li>
+  </ul>
+
+  <h3>4.4.3　创建内存区</h3>
+  <p>提供 <tt>mmap()</tt> 系统调用以在进程内创建新内存区。x86 上该函数会调用 <tt>sys_mmap2()</tt>，后者用相同参数直接调用 <tt>do_mmap2()</tt>。<tt>do_mmap2()</tt> 负责为 <tt>do_mmap_pgoff()</tt>（各架构创建新区域的核心函数）准备参数。</p>
+
+  <p><tt>do_mmap2()</tt> 首先清除 <tt>flags</tt> 参数中的 <tt>MAP_DENYWRITE</tt> 与 <tt>MAP_EXECUTABLE</tt> 位（Linux 会忽略它们，<tt>mmap()</tt> 手册页有说明）。若映射的是文件，<tt>do_mmap2()</tt> 据描述符查到 <tt>struct file</tt>，获取 <tt>mm_struct&rarr;mmap_sem</tt> 信号量后再调用 <tt>do_mmap_pgoff()</tt>。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html012.png" alt="图 4.4">
+    <div class="caption">图 4.4：函数调用图：<tt>sys_mmap2()</tt></div>
+  </div>
+
+  <p><tt>do_mmap_pgoff()</tt> 先做基本检查：若映射文件或设备则检查相应的文件系统/设备函数是否可用；确保映射大小按页对齐、且不在内核地址空间；确保大小不溢出 <tt>pgoff</tt> 范围；以及进程已映射区域不超限。</p>
+
+  <p>函数主体很长，大致流程为：</p>
+  <ul>
+    <li>参数合法性检查；</li>
+    <li>找到足够大的空闲线性地址。若文件系统或设备提供 <tt>get_unmapped_area()</tt> 则用其，否则调用 <tt>arch_get_unmapped_area()</tt>；</li>
+    <li>计算 VM 标志并与文件访问权限比对；</li>
+    <li>若该位置已有区域，做修整以适合新映射；</li>
+    <li>从 slab 分配器分配 <tt>vm_area_struct</tt> 并填充字段；</li>
+    <li>将新 VMA 链入；</li>
+    <li>调用文件系统或设备专有的 mmap 函数；</li>
+    <li>更新统计并退出。</li>
+  </ul>
+
+  <h3>4.4.4　查找已映射的内存区</h3>
+  <p>常见操作是找出某地址所属的 VMA（如缺页时），由 <tt>find_vma()</tt> 完成。<tt>find_vma()</tt> 及其它影响内存区的 API 见表 4.3。</p>
+
+  <p><tt>find_vma()</tt> 首先检查 <tt>mmap_cache</tt> 字段（缓存上次查询结果，因为同一区域很可能连续被需要）。若不匹配，则遍历 <tt>mm_rb</tt> 红黑树。若所求地址不在任何 VMA 内，函数会返回<em>最接近</em>请求地址的 VMA，所以调用方需确认返回 VMA 是否真的包含目标地址。</p>
+
+  <p>第二个函数 <tt>find_vma_prev()</tt> 与 <tt>find_vma()</tt> 类似，但还返回目标 VMA 之前的 VMA 指针——单链表需要它。它使用较少，常用于比较两个 VMA 是否可合并；或在删除某区域时更新单链表。</p>
+
+  <p>最后的 <tt>find_vma_intersection()</tt> 用于查找与指定地址范围相交的 VMA，最显著的使用场景在 <tt>do_brk()</tt> 中——区域向上扩展时需确保不与已有区域重叠。</p>
+
+  <h4>表 4.3：内存区 VMA API</h4>
+  <table>
+    <tr><td><tt>struct vm_area_struct * find_vma(struct mm_struct * mm, unsigned long addr)</tt></td></tr>
+    <tr><td>查找覆盖指定地址的 VMA。若不存在，则返回最接近指定地址的 VMA。</td></tr>
+    <tr><td><tt>struct vm_area_struct * find_vma_prev(struct mm_struct * mm, unsigned long addr, struct vm_area_struct **pprev)</tt></td></tr>
+    <tr><td>同 <tt>find_vma()</tt>，但同时返回前一个 VMA。使用不多，<tt>sys_mprotect()</tt> 是显著例外；通常更需要 <tt>find_vma_prepare()</tt>。</td></tr>
+    <tr><td><tt>struct vm_area_struct * find_vma_prepare(struct mm_struct * mm, unsigned long addr, struct vm_area_struct ** pprev, rb_node_t *** rb_link, rb_node_t ** rb_parent)</tt></td></tr>
+    <tr><td>同 <tt>find_vma()</tt>，但还返回单链表中前一个 VMA 及插入红黑树所需的节点。</td></tr>
+    <tr><td><tt>struct vm_area_struct * find_vma_intersection(struct mm_struct * mm, unsigned long start_addr, unsigned long end_addr)</tt></td></tr>
+    <tr><td>返回与指定地址范围相交的 VMA，便于检查某段线性地址是否被使用。</td></tr>
+    <tr><td><tt>int vma_merge(struct mm_struct * mm, struct vm_area_struct * prev, rb_node_t * rb_parent, unsigned long addr, unsigned long end, unsigned long vm_flags)</tt></td></tr>
+    <tr><td>尝试扩展给定 VMA 以覆盖新地址范围。若不能前向扩展，则检查下一个 VMA 能否后向扩展。无文件/设备映射且权限相同时可合并。</td></tr>
+    <tr><td><tt>unsigned long get_unmapped_area(struct file *file, unsigned long addr, unsigned long len, unsigned long pgoff, unsigned long flags)</tt></td></tr>
+    <tr><td>返回足够容纳请求大小的空闲内存区域地址，主要用于创建新 VMA。</td></tr>
+    <tr><td><tt>void insert_vm_struct(struct mm_struct *, struct vm_area_struct *)</tt></td></tr>
+    <tr><td>把新 VMA 插入线性地址空间。</td></tr>
+  </table>
+
+  <h3>4.4.5　查找空闲内存区</h3>
+  <p>新建映射时需找到足够大的空闲区域，由 <tt>get_unmapped_area()</tt> 完成。其调用图如图 4.5 所示。函数参数包括：被映射的文件/设备 <tt>struct file</tt>、文件内偏移 <tt>pgoff</tt>、请求地址 <tt>address</tt>、长度 <tt>length</tt>，以及保护标志 <tt>flags</tt>。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html013.png" alt="图 4.5">
+    <div class="caption">图 4.5：函数调用图：<tt>get_unmapped_area()</tt></div>
+  </div>
+
+  <p>若映射的是设备（如显卡），使用其 <tt>f_op&rarr;get_unmapped_area()</tt>，因为通用代码无法知道设备对映射的特殊需求（如必须对齐到特定虚拟地址）。</p>
+
+  <p>无特殊需求时，调用架构相关的 <tt>arch_get_unmapped_area()</tt>。并非所有架构都实现该函数，对未实现的，<tt>mm/mmap.c</tt> 中有通用版本。</p>
+
+  <h3>4.4.6　插入内存区</h3>
+  <p>插入新内存区的核心函数是 <tt>insert_vm_struct()</tt>，调用图见图 4.6。先调用 <tt>find_vma_prepare()</tt> 找到新区域应插入位置的相邻 VMA 与红黑树节点，再调用 <tt>__vma_link()</tt> 实际链入。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html014.png" alt="图 4.6">
+    <div class="caption">图 4.6：函数调用图：<tt>insert_vm_struct()</tt></div>
+  </div>
+
+  <p><tt>insert_vm_struct()</tt> 较少使用，因为它不递增 <tt>map_count</tt>。更常用的是 <tt>__insert_vm_struct()</tt>，会递增 <tt>map_count</tt>。</p>
+
+  <p>有两类链入函数：<tt>vma_link()</tt> 与 <tt>__vma_link()</tt>。<tt>vma_link()</tt> 在未持锁时使用，会获取所有必需锁（若是文件映射还锁文件），再调用 <tt>__vma_link()</tt> 把 VMA 加入相关链表。</p>
+
+  <p>注意，许多函数不调 <tt>insert_vm_struct()</tt>，而是自己调用 <tt>find_vma_prepare()</tt> 后再用 <tt>vma_link()</tt>，以避免多次遍历树。</p>
+
+  <p><tt>__vma_link()</tt> 的链入分三阶段：<tt>__vma_link_list()</tt> 将 VMA 插入线性单链表（若是首个映射，<tt>prev</tt> 为 NULL，则成为红黑树根节点）；<tt>__vma_link_rb()</tt> 将节点链入红黑树；<tt>__vma_link_file()</tt> 通过 <tt>vm_pprev_share</tt> 与 <tt>vm_next_share</tt> 链入文件共享映射链表。</p>
+
+  <h3>4.4.7　合并相邻区域</h3>
+  <p>Linux 曾有一个 <tt>merge_segments()</tt> 函数 [Hac02]，负责把相邻文件与权限匹配的内存区合并，意图减少 VMA 数量（许多操作如 <tt>sys_mprotect()</tt> 会产生大量映射）。但代价高昂，可能遍历大量映射；后来因许多带大量映射的应用在 <tt>merge_segments()</tt> 中耗时过长而被移除。</p>
+
+  <p>现在等价的函数叫 <tt>vma_merge()</tt>，仅在两处使用：一是 <tt>sys_mmap()</tt> 映射匿名区域时（匿名区域往往可合并）；二是 <tt>do_brk()</tt> 把一个区域扩展为新分配区域时。<tt>vma_merge()</tt> 并不合并两个区域，而是检查已有区域能否被扩展以满足新分配，从而免去新建。区域可被扩展的条件是无文件/设备映射且两者权限相同。</p>
+
+  <p>合并发生的其它场所并不直接调用合并函数：一是 <tt>sys_mprotect()</tt> 修整时，若权限变化后两侧权限一致就合并；二是 <tt>move_vma()</tt> 中，因为相似区域很可能彼此相邻。</p>
+
+  <h3>4.4.8　重映射与移动内存区</h3>
+  <p><tt>mremap()</tt> 是用于扩大或缩小现有映射的系统调用，由 <tt>sys_mremap()</tt> 实现。当 flags 未指定 <tt>MREMAP_FIXED</tt> 时，若区域扩大或与另一个区域重叠，函数可能移动它。调用图见图 4.7。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html015.png" alt="图 4.7">
+    <div class="caption">图 4.7：函数调用图：<tt>sys_mremap()</tt></div>
+  </div>
+
+  <p>若需要移动，<tt>do_mremap()</tt> 先调 <tt>get_unmapped_area()</tt> 找到足够大的新位置，再用 <tt>move_vma()</tt> 把原 VMA 移过去。其调用图见图 4.8。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html016.png" alt="图 4.8">
+    <div class="caption">图 4.8：函数调用图：<tt>move_vma()</tt></div>
+  </div>
+
+  <p><tt>move_vma()</tt> 先看新位置能否与相邻 VMA 合并；若不能就新分配一个 VMA（一次一个 PTE）。再调用 <tt>move_page_tables()</tt>（调用图见图 4.9），把旧映射的所有页表项复制到新位置。或许有更好方法，但此法回退简单。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html017.png" alt="图 4.9">
+    <div class="caption">图 4.9：函数调用图：<tt>move_page_tables()</tt></div>
+  </div>
+
+  <p>页内容本身不复制。<tt>zap_page_range()</tt> 会把旧映射的页换出或移除，正常缺页处理会从后备存储/文件读回页，或调用设备的 <tt>do_nopage()</tt>。</p>
+
+  <h3>4.4.9　锁定内存区</h3>
+  <div class="figure">
+    <img src="../original_html/figures/understand-html018.png" alt="图 4.10">
+    <div class="caption">图 4.10：函数调用图：<tt>sys_mlock()</tt></div>
+  </div>
+
+  <p>Linux 可通过 <tt>mlock()</tt> 把某地址范围的页锁定在内存中，由 <tt>sys_mlock()</tt> 实现，调用图见图 4.10。函数概念简单：为待锁范围建 VMA，置 <tt>VM_LOCKED</tt> 标志，并用 <tt>make_pages_present()</tt> 强制所有页驻留。另一个系统调用 <tt>mlockall()</tt>（映射到 <tt>sys_mlockall()</tt>）对调用进程的<em>所有</em> VMA 执行同样操作。两者皆依赖核心函数 <tt>do_mlock()</tt>，由它找到受影响的 VMA 并决定如何修整。</p>
+
+  <p>有一些限制：地址范围必须页对齐（VMA 即页对齐）——简单地向上取整即可；不得超过管理员设置的 <tt>RLIMIT_MLOCK</tt>；每个进程同时最多锁定物理内存的一半。最后这点并非严格——进程可 fork 多次让子进程各锁一部分，但只有 root 进程能锁页，因此实际差别不大。可假定 root 进程可信、知道在做什么；若它不知，那 root 把系统搞坏也"罪有应得"。</p>
+
+  <h3>4.4.10　解锁区域</h3>
+  <p><tt>munlock()</tt> 与 <tt>munlockall()</tt> 是锁定的对应解锁函数，分别映射到 <tt>sys_munlock()</tt> 与 <tt>sys_munlockall()</tt>。比锁定函数简单得多——无需大量检查——它们也依赖 <tt>do_mmap()</tt> 来修整区域。</p>
+
+  <h3>4.4.11　锁定后的区域修整</h3>
+  <p>锁定或解锁会以四种方式影响 VMA，均由 <tt>mlock_fixup()</tt> 处理：影响整个 VMA 时调用 <tt>mlock_fixup_all()</tt>；只影响起始时调用 <tt>mlock_fixup_start()</tt>（需分配新 VMA 映射新部分）；只影响末尾时调用 <tt>mlock_fixup_end()</tt>；中间部分被映射时调用 <tt>mlock_fixup_middle()</tt>（需分配两个新 VMA）。</p>
+
+  <p>有意思的是，因锁定而新生的 VMA 即使被解锁后也不会合并。其设想是：锁定过区域的进程将一次又一次锁定相同区域，反复合并/拆分得不偿失。</p>
+
+  <h3>4.4.12　删除内存区</h3>
+  <p>负责删除内存区（部分或全部）的函数是 <tt>do_munmap()</tt>，相对简单，大致分三步：修整待解除映射区域的红黑树；释放与之相关的页与 PTE；若产生空洞则修整。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html019.png" alt="图 4.11">
+    <div class="caption">图 4.11：函数调用图：<tt>do_munmap()</tt></div>
+  </div>
+
+  <p>为保持红黑树有序，所有受影响 VMA 先放入名为 <tt>free</tt> 的链表，再用 <tt>rb_erase()</tt> 从树中删除；若仍存在的区域将在随后修整时以新地址重新加入。</p>
+
+  <p>接着遍历 <tt>free</tt> 链表，确认是否为部分解除映射。即使部分解除，也会调用 <tt>remove_shared_vm_struct()</tt> 移除共享文件映射；若为部分解除则修整阶段会重建。<tt>zap_page_range()</tt> 移除所有相关页，然后 <tt>unmap_fixup()</tt> 处理部分解除映射。</p>
+
+  <p>最后调用 <tt>free_pgtables()</tt> 释放与解除区相关的页表项。注意此释放并不彻底——只释放完整的 PGD 目录及其项。例如若映射只占用半个 PGD，则不会释放页表项。因为更细粒度地释放这些既小又可能再次被用到的数据结构成本过高。</p>
+
+  <h3>4.4.13　删除所有内存区</h3>
+  <p>进程退出时需解除 <tt>mm_struct</tt> 所关联的所有 VMA，由 <tt>exit_mmap()</tt> 完成。函数非常简单：先刷 CPU cache，再遍历 VMA 链表逐个解除映射、释放页、刷 TLB、删除页表项。详见代码注释篇。</p>
+
+  <h2 class="section">4.5　异常处理</h2>
+  <p>VM 中很重要的一点是：内核地址空间出现的非 bug 异常如何被捕获<sup><a href="#note12">1</a></sup>。本节<em>不</em>讨论除零等错误异常，仅关心缺页相关。坏引用有两种情形：一是进程通过系统调用传入非法指针——内核仅初步检查地址是否低于 <tt>PAGE_OFFSET</tt>，所以必须能安全捕获；二是内核用 <tt>copy_from_user()</tt>/<tt>copy_to_user()</tt> 读写用户空间。</p>
+
+  <p>编译期，链接器在内核代码段的 <tt>__ex_table</tt> 节生成异常表，起止符号为 <tt>__start___ex_table</tt> 与 <tt>__stop___ex_table</tt>。每个条目类型为 <tt>exception_table_entry</tt>——执行点与修复例程的二元组。缺页处理无法搞定时会调用 <tt>search_exception_table()</tt> 查找触发指令是否有对应的修复例程；若编译了模块支持，也会搜索每个模块的异常表。</p>
+
+  <p>若在表中找到当前异常地址，返回修复代码位置并执行。4.7 节将看到它如何用来捕获坏的用户空间读写。</p>
+
+  <h2 class="section">4.6　缺页</h2>
+  <p>进程线性地址空间中的页未必驻留于内存。例如代表进程的分配并不立即满足，仅在 <tt>vm_area_struct</tt> 中预留空间。还包括被换出到后备存储的页、写只读页等。</p>
+
+  <p>Linux 同大多数操作系统一样，对未驻留页采用<em>按需读取（Demand Fetch）</em>策略：仅当硬件触发缺页异常时操作系统才从后备存储读取页。后备存储的特性暗示某种预取策略能减少缺页 [MM87]，但 Linux 在这方面相当原始。从 swap 区换入页时，<tt>swapin_readahead()</tt> 会读入它之后 2<sup><i>page_cluster</i></sup> 个页放入 swap cache。可惜 swap 区中相邻的页不一定就会被很快用到，所以这是一个较差的预读策略。若能根据程序行为做自适应预读，Linux 会受益匪浅 [KMC02]。</p>
+
+  <p>缺页有两类：主缺页（major）与次缺页（minor）。主缺页要从磁盘读数据，代价高昂；其它为次缺页或软缺页。<tt>task_struct&rarr;maj_flt</tt> 与 <tt>task_struct&rarr;min_flt</tt> 分别统计这两类。</p>
+
+  <p>Linux 缺页处理需要识别并处理表 4.4 列出的多种情况，本章后面会详细讨论。</p>
+
+  <h4>表 4.4：缺页原因</h4>
+  <table>
+    <tr><th>异常</th><th>类型</th><th>动作</th></tr>
+    <tr><td>区域有效但页未分配</td><td>次</td><td>从物理页分配器分配一帧</td></tr>
+    <tr><td>区域无效但紧邻可扩展区域（如栈）</td><td>次</td><td>扩展区域并分配一页</td></tr>
+    <tr><td>页已换出，但还在 swap cache</td><td>次</td><td>在进程页表重新建立映射，丢一份对 swap cache 的引用</td></tr>
+    <tr><td>页已换出到后备存储</td><td>主</td><td>用 PTE 中信息定位页位置并从磁盘读取</td></tr>
+    <tr><td>对标记为只读的页执行写</td><td>次</td><td>若为 COW 页，复制、置可写、赋给进程；若是真正非法写，发送 <tt>SIGSEGV</tt></td></tr>
+    <tr><td>区域无效或进程无访问权限</td><td>错</td><td>给进程发 <tt>SIGSEGV</tt></td></tr>
+    <tr><td>缺页发生在内核地址空间部分</td><td>次</td><td>若发生在 vmalloc 区，则用 <tt>init_mm</tt> 持有的主页表更新当前进程页表。这是唯一合法的内核缺页</td></tr>
+    <tr><td>在内核态时缺页发生在用户空间区域</td><td>错</td><td>说明内核系统未正确从用户空间复制——是内核 bug，严肃处理</td></tr>
+  </table>
+
+  <p>各架构注册自己的缺页处理函数。名字任意，常见选择是 <tt>do_page_fault()</tt>，其 x86 调用图见图 4.12。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html020.png" alt="图 4.12">
+    <div class="caption">图 4.12：函数调用图：<tt>do_page_fault()</tt></div>
+  </div>
+
+  <p>它获得了丰富信息：错误地址、是页不存在还是保护错误、是读是写、来自用户态还是内核态。它判断缺页类型并交由架构无关代码处理。图 4.13 的流程图大致描绘其行为，图中带冒号的标识符对应代码中的 label。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html021.png" alt="图 4.13">
+    <div class="caption">图 4.13：<tt>do_page_fault()</tt> 流程图</div>
+  </div>
+
+  <p><tt>handle_mm_fault()</tt> 是架构无关的顶层函数，负责从后备存储缺页换入、执行 COW 等。返回 1 表示次缺页，2 表示主缺页，0 发送 <tt>SIGBUS</tt>，其它值触发 OOM 处理。</p>
+
+  <h3>4.6.1　处理缺页</h3>
+  <p>异常处理一旦判定是合法内存区中的合法缺页，便交给 <tt>handle_mm_fault()</tt>（图 4.14）。它在必要时分配各级页表项，然后调用 <tt>handle_pte_fault()</tt>。</p>
+
+  <p>根据 PTE 属性选择不同处理函数。第一步用 <tt>pte_present()</tt> 与 <tt>pte_none()</tt> 判断 PTE 是否标记为不存在或是否已分配。若 PTE 未分配（<tt>pte_none()</tt> 为真），调用 <tt>do_no_page()</tt> 处理<em>按需分配</em>；否则页已换出磁盘，<tt>do_swap_page()</tt> 执行<em>按需换页</em>。少数情况下，由虚拟文件支撑的换出页会用 <tt>do_no_page()</tt> 处理，详见 12.4 节。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html022.png" alt="图 4.14">
+    <div class="caption">图 4.14：函数调用图：<tt>handle_mm_fault()</tt></div>
+  </div>
+
+  <p>第二种情形是写入页：若 PTE 写保护，调用 <tt>do_wp_page()</tt>，因为这是<em>写时复制（COW）</em>页。COW 页在多个进程间（通常父子）共享，直到写入时复制私有版本。COW 页的识别：VMA 标记为可写而 PTE 不可写。若不是 COW，仅将页标记为脏。</p>
+
+  <p>最后一种情形：页存在且已读，但仍发生缺页——某些没有三级页表的架构会出现。此时建立 PTE 并标记为 young 即可。</p>
+
+  <h3>4.6.2　按需分配</h3>
+  <p>当进程第一次访问某页时，由 <tt>do_no_page()</tt> 分配并可能填充数据。若父 VMA 的 <tt>vm_operations_struct</tt>（<tt>vma&rarr;vm_ops</tt>）提供了 <tt>nopage()</tt>，则调用之。这对内存映射设备（如显卡需分配页并供数据）或映射文件（需从后备存储取数据）很重要。先讨论最简单的情况：匿名页。</p>
+
+  <h5>处理匿名页</h5>
+  <p>若 <tt>vm_area_struct&rarr;vm_ops</tt> 未填充或未提供 <tt>nopage()</tt>，由 <tt>do_anonymous_page()</tt> 处理匿名访问。只有两种情况：首次读和首次写。首次读最简单——数据不存在，把系统级的 <tt>empty_zero_page</tt>（全零页）映射给 PTE，并写保护它，这样写入时会再次缺页。在 x86 上，全局零填充页由 <tt>mem_init()</tt> 清零。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html023.png" alt="图 4.15">
+    <div class="caption">图 4.15：函数调用图：<tt>do_no_page()</tt></div>
+  </div>
+
+  <p>若是首次写，则用 <tt>alloc_page()</tt> 分配新页（见第 6 章），并用 <tt>clear_user_highpage()</tt> 清零。分配成功后，递增 <tt>mm_struct</tt> 中的 <em>RSS</em>；某些架构在向用户进程插入新页时需要 <tt>flush_page_to_ram()</tt> 来保 cache 一致。把页放入 LRU 链表以供后续回收。最后更新进程页表项以建立新映射。</p>
+
+  <h5>处理文件/设备支撑的页</h5>
+  <p>若由文件或设备支撑，VMA 的 <tt>vm_operations_struct</tt> 会提供 <tt>nopage()</tt>。文件支撑常用 <tt>filemap_nopage()</tt>——分配页并从磁盘读入一页数据。虚拟文件（如 shmfs）支撑的页则使用 <tt>shmem_nopage()</tt>（见第 12 章）。每种设备驱动提供各自的 <tt>nopage()</tt>，对我们而言不重要——只要返回合法的 <tt>struct page</tt> 即可。</p>
+
+  <p>返回页后检查是否分配成功并返回相应错误。再检查是否需要尽早 COW 拆分：若缺页为写且 VMA 不含 <tt>VM_SHARED</tt> 则尽早拆分——分配新页并复制数据，然后递减 <tt>nopage()</tt> 返回页的引用计数。</p>
+
+  <p>无论哪种情形，最后用 <tt>pte_none()</tt> 确认目标位置上的 PTE 未被占用。在 SMP 下，同一页可能几乎同时发生两次缺页；由于完整缺页过程没有一直持自旋锁，所以此检查要在最后一刻进行。若无竞争，赋值 PTE、更新统计并调用架构 cache 一致性钩子。</p>
+
+  <h3>4.6.3　按需换页</h3>
+  <p>当页被换出到后备存储时，<tt>do_swap_page()</tt> 负责读回（除虚拟文件之外，详见第 12 章）。所需信息存于 PTE 中，足以在 swap 中定位该页。由于页可能多进程共享，不能立即换出——换出时先放入 swap cache。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html024.png" alt="图 4.16">
+    <div class="caption">图 4.16：函数调用图：<tt>do_swap_page()</tt></div>
+  </div>
+
+  <p>共享页不能立即换出，因为没有便捷方法把 <tt>struct page</tt> 映射回每个进程的 PTE——遍历所有进程页表代价过高。注意 2.5 后期内核及打了自定义补丁的 2.4 引入了<em>反向映射（RMAP）</em>（章节末讨论）。</p>
+
+  <p>因有 swap cache，缺页时页可能仍在 cache 中：若在，递增引用计数、放回进程页表，按次缺页处理。</p>
+
+  <p>若页仅在磁盘上，<tt>swapin_readahead()</tt> 读取所需页并随后预读若干页。读入数量由 <tt>mm/swap.c</tt> 中的 <tt>page_cluster</tt> 决定——低内存（&lt; 16 MiB）机器为 2，其它为 3。读 2<sup><i>page_cluster</i></sup> 页，遇坏/空 swap 表项即停。这基于"寻道是最贵的"假设：既然寻完了，顺带把后续页也读了。</p>
+
+  <h3>4.6.4　写时复制（COW）页</h3>
+  <p>从前 fork 子进程时要把父地址空间完整复制，代价极高——可能很大部分需要从后备存储换入。于是采用<em>写时复制（COW）</em>。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html025.png" alt="图 4.17">
+    <div class="caption">图 4.17：函数调用图：<tt>do_wp_page()</tt></div>
+  </div>
+
+  <p>fork 时把两进程的 PTE 改为只读，写入即缺页。Linux 识别 COW：PTE 写保护，但 VMA 标记为可写。用 <tt>do_wp_page()</tt> 处理——复制页并赋给写入进程；必要时为页保留新的 swap 槽。这样 fork 时只需复制页表项。</p>
+
+  <h2 class="section">4.7　与用户空间的复制</h2>
+  <p>直接访问进程地址空间不安全：无法快速判断目标页是否驻留。Linux 依赖 MMU 在地址非法时触发异常，由缺页异常处理器捕获并修复。x86 上，<tt>__copy_user()</tt> 用汇编捕获那些地址完全无效的异常。修复代码位置由 <tt>search_exception_table()</tt> 找到。Linux 提供了一套丰富 API（多为宏）安全地与用户空间复制数据，见表 4.5。</p>
+
+  <h4>表 4.5：访问进程地址空间的 API</h4>
+  <table>
+    <tr><td><tt>unsigned long copy_from_user(void *to, const void *from, unsigned long n)</tt></td></tr>
+    <tr><td>从用户地址 <tt>from</tt> 复制 n 字节到内核地址 <tt>to</tt>。</td></tr>
+    <tr><td><tt>unsigned long copy_to_user(void *to, const void *from, unsigned long n)</tt></td></tr>
+    <tr><td>从内核地址 <tt>from</tt> 复制 n 字节到用户地址 <tt>to</tt>。</td></tr>
+    <tr><td><tt>void copy_user_page(void *to, void *from, unsigned long address)</tt></td></tr>
+    <tr><td>将数据复制到用户空间的匿名页或 COW 页。移植方负责避免 D-cache 别名——可通过使用与该虚地址共用相同 cache line 的内核虚地址实现。</td></tr>
+    <tr><td><tt>void clear_user_page(void *page, unsigned long address)</tt></td></tr>
+    <tr><td>类似 <tt>copy_user_page()</tt>，但用于清零页。</td></tr>
+    <tr><td><tt>void get_user(void *to, void *from)</tt></td></tr>
+    <tr><td>从用户空间 <tt>from</tt> 复制一个整数值到内核空间 <tt>to</tt>。</td></tr>
+    <tr><td><tt>void put_user(void *from, void *to)</tt></td></tr>
+    <tr><td>从内核空间 <tt>from</tt> 复制一个整数值到用户空间 <tt>to</tt>。</td></tr>
+    <tr><td><tt>long strncpy_from_user(char *dst, const char *src, long count)</tt></td></tr>
+    <tr><td>从用户空间 <tt>src</tt> 复制最长 <tt>count</tt> 字节的以 NULL 结尾字符串到内核空间 <tt>dst</tt>。</td></tr>
+    <tr><td><tt>long strlen_user(const char *s, long n)</tt></td></tr>
+    <tr><td>返回用户空间字符串长度（含 NULL），上限为 <tt>n</tt>。</td></tr>
+    <tr><td><tt>int access_ok(int type, unsigned long addr, unsigned long size)</tt></td></tr>
+    <tr><td>若用户空间内存块合法则返回非零，否则返回 0。</td></tr>
+  </table>
+
+  <p>所有宏映射到模式相似的汇编实现，下面以 x86 上的 <tt>copy_from_user()</tt> 为例说明。</p>
+
+  <p>若复制大小在编译期已知，<tt>copy_from_user()</tt> 调用 <tt>__constant_copy_from_user()</tt>；否则用 <tt>__generic_copy_from_user()</tt>。大小已知时存在按 1、2、4 字节步长的不同汇编优化，否则二者区别不重要。</p>
+
+  <p>通用复制函数最终调用 <tt>&lt;asm-i386/uaccess.h&gt;</tt> 中的 <tt>__copy_user_zeroing()</tt>，含三部分：实际复制 <tt>size</tt> 字节的汇编（若有页未驻留会触发缺页，地址合法则正常换入）；"修复"代码；以及 <tt>__ex_table</tt>，把第一部分指令映射到第二部分的修复代码。</p>
+
+  <p>如 4.5 节所述，链接器据此把复制指令位置与修复代码位置写入内核异常表。若读到非法地址，<tt>do_page_fault()</tt> 会调用 <tt>search_exception_table()</tt> 找到出错 EIP 并跳到修复代码——它把剩余内核空间清零、修正寄存器后返回。如此内核可以在不做昂贵检查的情况下安全访问用户空间，由 MMU 硬件处理异常。</p>
+
+  <p>所有访问用户空间的函数都遵循类似模式。</p>
+
+  <h2 class="section">4.8　2.6 内核中的新变化</h2>
+  <h5>线性地址空间</h5>
+  <p>线性地址空间与 2.4 基本相同，无难以辨认的修改。主要变化是在固定地址虚拟映射中新增一页供用户空间使用。x86 上该页位于 <tt>0xFFFFF000</tt>，称为 <em>vsyscall 页</em>。该页上有代码，是进入内核空间的最优方式。如今用户程序进入内核空间应使用 <tt>call 0xFFFFF000</tt> 而非传统的 <tt>int 0x80</tt>。</p>
+
+  <h5><tt>struct mm_struct</tt></h5>
+  <p>变化不大。首先新增 <tt>free_area_cache</tt> 字段，初值为 <tt>TASK_UNMAPPED_BASE</tt>，记录线性地址空间中第一个空洞位置以提升搜索效率。末尾新增若干与 core dump 相关的字段，超出本书范围。</p>
+
+  <h5><tt>struct vm_area_struct</tt></h5>
+  <p>也无大变。主要差异是 <tt>vm_next_share</tt> 与 <tt>vm_pprev_share</tt> 被替换为标准链表，新字段名 <tt>shared</tt>。<tt>vm_raend</tt> 完全移除——2.6 的文件预读实现方式截然不同，由 <tt>struct file&rarr;f_ra</tt> 中的 <tt>struct file_ra_state</tt> 管理；详见 <tt>mm/readahead.c</tt>。</p>
+
+  <h5><tt>struct address_space</tt></h5>
+  <p>第一项变化较小：<tt>gfp_mask</tt> 字段被 <tt>flags</tt> 取代——前 <tt>__GFP_BITS_SHIFT</tt> 位作为 <tt>gfp_mask</tt>，由 <tt>mapping_gfp_mask()</tt> 访问；剩余位用于存异步 IO 状态：<tt>AS_EIO</tt> 表 IO 错误，<tt>AS_ENOSPC</tt> 表异步写时文件系统空间不足。</p>
+
+  <p>该结构新增了多项重要字段，主要与 page cache 和文件预读相关：</p>
+  <ul>
+    <li><b>page_tree</b>：本映射 page cache 中所有页的 radix 树，按物理磁盘块索引。2.4 中通过链表遍历查找 page cache，2.6 改为 radix 树查找，显著降低查询时间。radix 树实现于 <tt>lib/radix-tree.c</tt>；</li>
+    <li><b>page_lock</b>：保护 <tt>page_tree</tt> 的自旋锁；</li>
+    <li><b>io_pages</b>：脏页写回前先放入此链表再调 <tt>do_writepages()</tt>。详情见 <tt>fs/mpage.c</tt> 中 <tt>mpage_writepages()</tt> 上方注释：把待写出页放入此链表以避免锁住已锁定的 IO；</li>
+    <li><b>dirtied_when</b>：以 jiffies 记录 inode 首次被弄脏的时间，决定其在 <tt>super_block&rarr;s_dirty</tt> 中的位置，避免常被弄脏的 inode 总居链表顶端、饿死别的 inode 的写回；</li>
+    <li><b>backing_dev_info</b>：记录预读相关信息，结构定义见 <tt>include/linux/backing-dev.h</tt>；</li>
+    <li><b>private_list</b>：地址空间私有链表。若用 <tt>mark_buffer_dirty_inode()</tt> 与 <tt>sync_mapping_buffers()</tt> 辅助函数，则通过 <tt>buffer_head&rarr;b_assoc_buffers</tt> 链接 <tt>buffer_head</tt>；</li>
+    <li><b>private_lock</b>：保护本地址空间的自旋锁。用法颇复杂，2.5.17 的 ChangeLog 有解释；主要用于保护"与本映射共享 buffer 的其它映射的链表"——它不保护本映射的 <tt>private_list</tt>，而保护与之共享 buffer 的另一 <tt>address_space</tt> 的 <tt>private_list</tt>；</li>
+    <li><b>assoc_mapping</b>：支撑本映射 <tt>private_list</tt> 中 buffer 的 <tt>address_space</tt>；</li>
+    <li><b>truncate_count</b>：当 <tt>invalidate_mmap_range()</tt> 截断区域时递增。<tt>do_no_page()</tt> 在缺页时检查该计数器以确保不会换入刚被失效的页。</li>
+  </ul>
+
+  <h5><tt>struct address_space_operations</tt></h5>
+  <p>变化乍看简单，实则牵涉甚广：</p>
+  <ul>
+    <li><b>writepage</b>：新增参数 <tt>struct writeback_control</tt>，记录写回信息——是否拥堵、写者是直接回收的页分配器还是 kupdated、对应的 <tt>backing_dev_info</tt> 等；</li>
+    <li><b>writepages</b>：把全部页从 <tt>dirty_pages</tt> 移到 <tt>io_pages</tt> 再写出；</li>
+    <li><b>set_page_dirty</b>：地址空间专属的脏页标记方法。主要用于后备存储的 <tt>address_space_operations</tt> 与匿名共享页（无对应 buffer 可标脏）；</li>
+    <li><b>readpages</b>：读入页时使用以精确控制预读；</li>
+    <li><b>bmap</b>：改为处理磁盘扇区而非 <tt>unsigned long</tt>，以支持 &gt; 2<sup>32</sup> 字节的设备；</li>
+    <li><b>invalidatepage</b>：改名而已。<tt>block_flushpage()</tt> 与回调 <tt>flushpage()</tt> 被改为 <tt>block_invalidatepage()</tt> 与 <tt>invalidatepage()</tt>；</li>
+    <li><b>direct_IO</b>：改用 2.6 的新 IO 机制，超出本书范围。</li>
+  </ul>
+
+  <h5>内存区</h5>
+  <p><tt>mmap()</tt> 有两项重要变化：一是安全模块可注册回调 <tt>security_file_mmap()</tt>，它通过 <tt>security_ops</tt> 查找相关函数，默认空操作。二是地址空间记账更严格——会记账的 <tt>vm_area_struct</tt> 设 <tt>VM_ACCOUNT</tt> 标志（含所有用户空间映射）。创建或销毁用户空间区域时，<tt>vm_acct_memory()</tt> 与 <tt>vm_unacct_memory()</tt> 更新 <tt>vm_committed_space</tt> 变量，内核因此能更准确了解已分配给用户空间的内存。</p>
+
+  <h5>4 GiB/4 GiB 用户/内核划分</h5>
+  <p>2.4.x 内核的一项限制是内核仅有 1 GiB 虚拟地址空间且所有进程可见。撰文时 Ingo Molnar 已开发出补丁<sup><a href="#note13">2</a></sup>，可选地让内核拥有完整的 4 GiB 地址空间。补丁可在 <em>http://redhat.com/~mingo/4g-patches/</em> 获得并被纳入 -mm 测试树，但是否合入主线尚不明。</p>
+
+  <p>该特性面向具有非常大（&gt; 16 GiB）内存的 32 位系统。传统 3/1 划分支持最多 1 GiB RAM；之后靠高端内存支持，通过临时映射高端内存页支撑更多 RAM，但内存愈大瓶颈愈明显。例如物理 RAM 接近 60 GiB 时，低端内存几乎全部被 <tt>mem_map</tt> 占用。给内核独立 4 GiB 虚拟地址空间能更容易支撑这种内存量，但严重的代价是每次系统调用都要刷 TLB，性能受重创。</p>
+
+  <p>该补丁下，用户空间与内核空间只共享 16 MiB 区域用于 GDT、IDT、TSS、LDT、vsyscall 页与内核栈。进入/退出内核的 trampoline 代码中包含切换页表的代码。核心代码改动不大——例如移除了用户空间缓冲区的直接指针访问。</p>
+
+  <h5>VMA 的非线性填充</h5>
+  <p>2.4 中文件支撑的 VMA 按线性顺序填充。2.6 引入 <tt>mmap()</tt> 的 <tt>MAP_POPULATE</tt> 标志和新的 <tt>remap_file_pages()</tt> 系统调用（由 <tt>sys_remap_file_pages()</tt> 实现），允许通过操作页表把现有 VMA 中的任意页重映射到后备文件的任意位置。</p>
+
+  <p>换出时，文件的非线性地址编码在 PTE 内，缺页时可正确恢复。如何编码因架构而异，提供 <tt>pgoff_to_pte()</tt> 与 <tt>pte_to_pgoff()</tt> 两个宏完成。</p>
+
+  <p>该特性主要惠及映射众多的程序，如数据库服务器与模拟器等虚拟化程序。引入原因有几：第一，VMA 是进程级别的，对映射多的程序占用大；第二，<tt>get_unmapped_area()</tt> 找空闲区是线性查找，映射多时代价高；第三，非线性映射会把大部分页预先 fault 入内存，普通映射则每页触发一次主缺页——尽管可用 <tt>MAP_POPULATE</tt> 或 <tt>mlock()</tt> 避免。最后是避免稀疏映射——最坏情况每个文件页都要一个 VMA。</p>
+
+  <p>但该特性有严重缺点。第一，<tt>truncate()</tt> 与 <tt>mincore()</tt> 对非线性映射"残废"——它们依赖 <tt>vm_area_struct&rarr;vm_pgoff</tt>，对非线性映射毫无意义。截断非线性映射文件后，VMA 内的页仍残留。有提议是把它们留在内存但改为匿名，但撰文时未实现。</p>
+
+  <p>第二大缺点是 TLB 失效。每次重映射都要用 <tt>flush_icache_page()</tt> 告知 MMU，更关键的是要 <tt>flush_tlb_page()</tt>。某些处理器能仅失效该页相关项，另一些则只能整条 TLB 失效。若频繁重映射，TLB miss 增加加上频繁陷入内核，性能会下降。此代价随处理器变化较大，是最难评估的部分。</p>
+
+  <p>该特性未来如何尚不确定。撰文时仍在讨论如何解决其问题，但非线性映射在换出、截断和反向映射方面很可能与普通映射区别对待。鉴于数据库是主要用户，此特殊待遇问题不大。</p>
+
+  <h5>缺页</h5>
+  <p>缺页例程的改动多为表面，除支持反向映射与高端内存中的 PTE 所做的必要修改外。最显眼的"表面"变化是缺页例程返回有清晰含义的编译期常量而非神奇数字。<tt>handle_mm_fault()</tt> 可能的返回值有：<tt>VM_FAULT_MINOR</tt>、<tt>VM_FAULT_MAJOR</tt>、<tt>VM_FAULT_SIGBUS</tt> 与 <tt>VM_FAULT_OOM</tt>。</p>
+
+  <hr>
+  <div class="notes">
+    <h3>脚注</h3>
+    <ol>
+      <li id="note12">非常感谢 Ingo Oeser 帮助澄清这部分的实现细节。</li>
+      <li id="note13">补丁的首次公告见 <em>http://lwn.net/Articles/39283/</em>。</li>
+    </ol>
+  </div>
+
+  <div class="notes">
+    <h3>译注</h3>
+    <ul>
+      <li>"VMA（vm_area_struct）"是描述进程地址空间中一段同质区域的核心结构。</li>
+      <li>"COW（Copy-On-Write，写时复制）"：父子进程 fork 后共享只读页，写时再复制一份私有副本。</li>
+      <li>"按需分配（Demand Allocation）"与"按需换页（Demand Paging）"：首次访问/被换出页时才分配或读入。</li>
+      <li>函数名、结构体名、宏名均保留英文，便于查阅源码。</li>
+    </ul>
+  </div>
+
+  <nav>
+    [ <a href="understand006_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="understand008_zh.html">下一章 &raquo;</a> ]
+  </nav>
+</body>
+</html>
