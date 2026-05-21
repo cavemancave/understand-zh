@@ -9,7 +9,7 @@
   <nav>
     [ <a href="understand018_zh.html">&laquo; 上一章</a> ]
     [ <a href="index.html">&uarr; 返回目录</a> ]
-    [ <a href="../original_html/understand020.html">下一章 &raquo;</a> ]
+    [ <a href="understand020_zh.html">下一章 &raquo;</a> ]
   </nav>
 
 <h1 id="chap-describing-physical-memory"><a name="htoc107">附录 B</a>　描述物理内存</h1>
@@ -20,7 +20,7 @@
 <h3><a name="htoc109">B.1.1</a>　函数：<tt>setup_memory</tt></h3>
 <p><em>源码位置：arch/i386/kernel/setup.c</em> <a name="func: setup_memory"></a> <a name="@codeindex0"></a></p>
 
-<p>本函数的调用图如<a href="../original_html/understand005.html#fig: setup_memory">图 2.3</a> 所示。该函数会收集必要的信息，提供给引导阶段内存分配器（boot memory allocator）用以完成自身的初始化。整个流程可拆分为若干不同的任务：</p>
+<p>本函数的调用图如<a href="understand005_zh.html#fig: setup_memory">图 2.3</a> 所示。该函数会收集必要的信息，提供给引导阶段内存分配器（boot memory allocator）用以完成自身的初始化。整个流程可拆分为若干不同的任务：</p>
 <ul>
 <li>找出低端内存（low memory）的起始与结束 PFN（<tt>min_low_pfn</tt>、<tt>max_low_pfn</tt>），高端内存（high memory）的起始与结束 PFN（<tt>highstart_pfn</tt>、<tt>highend_pfn</tt>），以及系统中最后一个物理页的 PFN（<tt>max_pfn</tt>）。</li>
 <li>初始化 <tt>bootmem_data</tt> 结构，并声明哪些页面可以被引导阶段内存分配器使用。</li>
@@ -325,7 +325,7 @@
 <p>这一段开始一个循环，对节点中的每一个 <tt>zone_t</tt> 进行初始化。初始化首先从那些已有现成值的简单字段开始。</p>
 <dl>
 <dt><b>728</b></dt><dd>遍历节点中所有 zone。</dd>
-<dt><b>733</b></dt><dd>把指向该 zone 的指针记录到 <tt>zone_table</tt> 中。参见 <a href="../original_html/understand005.html#sec: Mapping Pages to Zones">2.4.1 节</a>。</dd>
+<dt><b>733</b></dt><dd>把指向该 zone 的指针记录到 <tt>zone_table</tt> 中。参见 <a href="understand005_zh.html#sec: Mapping Pages to Zones">2.4.1 节</a>。</dd>
 <dt><b>734-736</b></dt><dd>根据 <tt>zones_size</tt> 中的总大小减去 <tt>zholes_size</tt> 中的空洞大小，计算 zone 的真实大小。</dd>
 <dt><b>738</b></dt><dd>打印一条信息，告知该 zone 中有多少页。</dd>
 <dt><b>739</b></dt><dd>记录该 zone 的大小。</dd>
@@ -404,7 +404,7 @@
 <dl>
 <dt><b>785-794</b></dt><dd>初始时该 zone 中的所有页都被标记为已保留，因为无法得知哪些页正被引导阶段内存分配器使用。等到引导阶段内存分配器在 <tt>free_all_bootmem()</tt> 中退出舞台时，未被使用的页将被清除 <tt>PG_reserved</tt> 位。</dd>
 <dt><b>786</b></dt><dd>取得该偏移处的页。</dd>
-<dt><b>787</b></dt><dd>将该页所属 zone 信息编码到页标志中。参见 <a href="../original_html/understand005.html#sec: Mapping Pages to Zones">2.4.1 节</a>。</dd>
+<dt><b>787</b></dt><dd>将该页所属 zone 信息编码到页标志中。参见 <a href="understand005_zh.html#sec: Mapping Pages to Zones">2.4.1 节</a>。</dd>
 <dt><b>788</b></dt><dd>将引用计数（count）设为 0，因为目前没有任何人在使用它。</dd>
 <dt><b>789</b></dt><dd>设置 reserved 标志。稍后如果该页未被使用，引导阶段内存分配器会清除该标志。</dd>
 <dt><b>790</b></dt><dd>初始化该页的 list head。</dd>
@@ -671,7 +671,7 @@
   <nav>
     [ <a href="understand018_zh.html">&laquo; 上一章</a> ]
     [ <a href="index.html">&uarr; 返回目录</a> ]
-    [ <a href="../original_html/understand020.html">下一章 &raquo;</a> ]
+    [ <a href="understand020_zh.html">下一章 &raquo;</a> ]
   </nav>
 </body>
 </html>
