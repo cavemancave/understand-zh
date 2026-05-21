@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>附录 C 页表管理 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand019_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand021.html">下一章 &raquo;</a> ]
+  </nav>
+
+<h1 id="chap-page-table-management"><a name="htoc125">附录 C</a>　页表管理</h1>
+<div class="meta">原文版本：Appendix C — Page Table Management</div>
+
+<h2><a name="toc100"></a><a name="htoc126">C.1</a>　页表初始化</h2>
+
+<h3><a name="htoc127">C.1.1</a>　函数：<tt>paging_init</tt></h3>
+<p><em>源码位置：arch/i386/mm/init.c</em> <a name="func: paging_init"></a> <a name="@codeindex27"></a></p>
+
+<p>这是从 <tt>setup_arch()</tt> 调用的顶层函数。当本函数返回时，页表已经被完整地建立起来。注意这一切都是 x86 特有的实现。</p>
+
+<PRE CLASS="verbatim">351 void __init paging_init(void)
+352 {
+353     pagetable_init();
+354 
+355     load_cr3(swapper_pg_dir);       
+356 
+357 #if CONFIG_X86_PAE
+362     if (cpu_has_pae)
+363         set_in_cr4(X86_CR4_PAE);
+364 #endif
+365 
+366     __flush_tlb_all();
+367 
+368 #ifdef CONFIG_HIGHMEM
+369     kmap_init();
+370 #endif
+371     zone_sizes_init();
+372 }
+</PRE>
+<dl>
+<dt><b>353</b></dt><dd><tt>pagetable_init()</tt><a name="@codeindex28"></a> 负责使用 <tt>swapper_pg_dir</tt><a name="@codeindex29"></a> 作为 PGD 来建立一张静态的页表。</dd>
+<dt><b>355</b></dt><dd>把初始化好的 <tt>swapper_pg_dir</tt> 装入 CR3 寄存器，这样 CPU 才能够使用它。</dd>
+<dt><b>362-363</b></dt><dd>如果启用了 PAE，则在 CR4 寄存器中设置相应的位。</dd>
+<dt><b>366</b></dt><dd>刷新所有 TLB，包括全局的内核 TLB 项。</dd>
+<dt><b>369</b></dt><dd><tt>kmap_init()</tt><a name="@codeindex30"></a> 初始化预留给 <tt>kmap()</tt> 使用的那部分页表区域。</dd>
+<dt><b>371</b></dt><dd><tt>zone_sizes_init()</tt>（参见 <a href="understand019_zh.html#func: zone_sizes_init">B.1.2 节</a>）记录每个 zone 的大小，然后调用 <tt>free_area_init()</tt>（参见 <a href="understand019_zh.html#func: free_area_init">B.1.3 节</a>）来初始化每一个 zone。</dd>
+</dl>
+
+<h3><a name="htoc128">C.1.2</a>　函数：<tt>pagetable_init</tt></h3>
+<p><em>源码位置：arch/i386/mm/init.c</em> <a name="func: pagetable_init"></a> <a name="@codeindex31"></a></p>
+
+<p>本函数的职责是从一个名为 <tt>swapper_pg_dir</tt> 的静态定义 PGD 出发，对页表进行静态初始化。至少要保证有 PTE 指向 <tt>ZONE_NORMAL</tt> 中的每一个物理页帧。</p>
+
+<PRE CLASS="verbatim">205 static void __init pagetable_init (void)
+206 {
+207     unsigned long vaddr, end;
+208     pgd_t *pgd, *pgd_base;
+209     int i, j, k;
+210     pmd_t *pmd;
+211     pte_t *pte, *pte_base;
+212 
+213     /*
+214      * This can be zero as well - no problem, in that case we exit
+215      * the loops anyway due to the PTRS_PER_* conditions.
+216      */
+217     end = (unsigned long)__va(max_low_pfn*PAGE_SIZE);
+218 
+219     pgd_base = swapper_pg_dir;
+220 #if CONFIG_X86_PAE
+221     for (i = 0; i &lt; PTRS_PER_PGD; i++)
+222         set_pgd(pgd_base + i, __pgd(1 + __pa(empty_zero_page)));
+223 #endif
+224     i = __pgd_offset(PAGE_OFFSET);
+225     pgd = pgd_base + i;
+</PRE>
+
+<p>这第一段代码用来初始化 PGD。具体做法是让每个表项都指向全局的零页（global zero page）。后续真正用于引用 <tt>ZONE_NORMAL</tt> 中可用内存的表项将稍后再分配。</p>
+
+<dl>
+<dt><b>217</b></dt><dd>变量 <tt>end</tt> 标记 <tt>ZONE_NORMAL</tt> 中物理内存的结束位置。</dd>
+<dt><b>219</b></dt><dd>把 <tt>pgd_base</tt> 设为那个静态声明的 PGD 的起始位置。</dd>
+<dt><b>220-223</b></dt><dd>如果启用了 PAE，仅仅把每个表项保留为 0（这等价于让它指向全局零页）是不够的，因为这种情况下每个 <tt>pgd_t</tt> 都是一个结构体。必须对每个 <tt>pgd_t</tt> 调用 <tt>set_pgd</tt>，才能让该表项指向全局零页。</dd>
+<dt><b>224</b></dt><dd>把 <tt>i</tt> 初始化为 PGD 中对应 <tt>PAGE_OFFSET</tt> 的偏移。换句话说，本函数只会初始化线性地址空间中属于内核的部分，用户空间部分维持原样。</dd>
+<dt><b>225</b></dt><dd>把 <tt>pgd</tt> 初始化为指向线性地址空间内核部分起始处的那个 <tt>pgd_t</tt>。</dd>
+</dl>
+
+<PRE CLASS="verbatim">227     for (; i &lt; PTRS_PER_PGD; pgd++, i++) {
+228         vaddr = i*PGDIR_SIZE;
+229         if (end &amp;&amp; (vaddr &gt;= end))
+230             break;
+231 #if CONFIG_X86_PAE
+232         pmd = (pmd_t *) alloc_bootmem_low_pages(PAGE_SIZE);
+233         set_pgd(pgd, __pgd(__pa(pmd) + 0x1));
+234 #else
+235         pmd = (pmd_t *)pgd;
+236 #endif
+237         if (pmd != pmd_offset(pgd, 0))
+238             BUG();
+</PRE>
+
+<p>这个循环开始建立可用的 PMD 表项。在 PAE 情形下，使用 <tt>alloc_bootmem_low_pages()</tt> 来分配页面，并相应地设置 PGD。在没有 PAE 时，并不存在中间目录，因此只是把它&ldquo;折叠（fold）&rdquo;回 PGD，以保留三级页表的假象。</p>
+
+<dl>
+<dt><b>227</b></dt><dd><tt>i</tt> 已被初始化为线性地址空间内核部分的起始处，因此循环一直进行到 <tt>PTRS_PER_PGD</tt> 处的最后一个 <tt>pgd_t</tt> 为止。</dd>
+<dt><b>228</b></dt><dd>计算该 PGD 对应的虚拟地址。</dd>
+<dt><b>229-230</b></dt><dd>如果已经到达 <tt>ZONE_NORMAL</tt> 的末尾，则跳出循环，因为不再需要更多的页表项了。</dd>
+<dt><b>231-234</b></dt><dd>如果启用了 PAE，则为 PMD 分配一页，并通过 <tt>set_pgd()</tt> 将其设置进去。</dd>
+<dt><b>235</b></dt><dd>如果没有 PAE，则把 <tt>pmd</tt> 直接置为当前的 <tt>pgd_t</tt>。这就是为了模拟三级页表所采用的&ldquo;折叠回（folding back）&rdquo;技巧。</dd>
+<dt><b>237-238</b></dt><dd>做一次合理性检查（sanity check），确保 PMD 是有效的。</dd>
+</dl>
+
+<PRE CLASS="verbatim">239         for (j = 0; j &lt; PTRS_PER_PMD; pmd++, j++) {
+240             vaddr = i*PGDIR_SIZE + j*PMD_SIZE;
+241             if (end &amp;&amp; (vaddr &gt;= end))
+242                 break;
+243             if (cpu_has_pse) {
+244                 unsigned long __pe;
+245 
+246                 set_in_cr4(X86_CR4_PSE);
+247                 boot_cpu_data.wp_works_ok = 1;
+248                 __pe = _KERNPG_TABLE + _PAGE_PSE + __pa(vaddr);
+249                 /* Make it "global" too if supported */
+250                 if (cpu_has_pge) {
+251                     set_in_cr4(X86_CR4_PGE);
+252                     __pe += _PAGE_GLOBAL;
+253                 }
+254                 set_pmd(pmd, __pmd(__pe));
+255                 continue;
+256             }
+257 
+258             pte_base = pte = 
+                           (pte_t *) alloc_bootmem_low_pages(PAGE_SIZE);
+259 
+</PRE>
+
+<p>初始化 PMD 中的每一个表项。这个循环只有在启用了 PAE 的情况下才会真正执行多次。要记得，在没有 PAE 时 <tt>PTRS_PER_PMD</tt> 等于 1。</p>
+
+<dl>
+<dt><b>240</b></dt><dd>计算这个 PMD 对应的虚拟地址。</dd>
+<dt><b>241-242</b></dt><dd>如果已经到达 <tt>ZONE_NORMAL</tt> 的末尾，则结束。</dd>
+<dt><b>243-248</b></dt><dd>如果 CPU 支持 PSE，则使用大 TLB 表项。也就是说，对于内核页面，一条 TLB 项可以映射 4&nbsp;MiB，而不是通常的 4&nbsp;KiB，从而第三级 PTE 就不再必要。</dd>
+<dt><b>258</b></dt><dd>把 <tt>__pe</tt> 设置为一个内核页表项的标志位（<tt>_KERNPG_TABLE</tt><a name="@codeindex32"></a>）、表明该表项映射 4&nbsp;MiB 的标志位（<tt>_PAGE_PSE</tt>），再加上通过 <tt>__pa()</tt> 得到的、该虚拟地址对应的物理地址。注意，这意味着有 4&nbsp;MiB 的物理内存并不是由页表来映射的。</dd>
+<dt><b>250-253</b></dt><dd>如果 CPU 支持 PGE，则为该页表项设置 PGE 标志。这会把该表项标记为&ldquo;全局（global）&rdquo;，对所有进程可见。</dd>
+<dt><b>254-255</b></dt><dd>由于 PSE 使得第三级不再需要，这里直接用 <tt>set_pmd()</tt> 设置 PMD，然后继续处理下一个 PMD。</dd>
+<dt><b>258</b></dt><dd>否则，不支持 PSE，需要 PTE，于是为它们分配一个页面。</dd>
+</dl>
+
+<PRE CLASS="verbatim">260             for (k = 0; k &lt; PTRS_PER_PTE; pte++, k++) {
+261                 vaddr = i*PGDIR_SIZE + j*PMD_SIZE + k*PAGE_SIZE;
+262                 if (end &amp;&amp; (vaddr &gt;= end))
+263                     break;
+264                 *pte = mk_pte_phys(__pa(vaddr), PAGE_KERNEL);
+265             }
+266             set_pmd(pmd, __pmd(_KERNPG_TABLE + __pa(pte_base)));
+267             if (pte_base != pte_offset(pmd, 0))
+268                 BUG();
+269 
+270         }
+271     }
+</PRE>
+
+<p>初始化 PTE。</p>
+
+<dl>
+<dt><b>260-265</b></dt><dd>对每一个 <tt>pte_t</tt>，计算当前正在处理的虚拟地址，并创建一个指向相应物理页帧的 PTE。</dd>
+<dt><b>266</b></dt><dd>PTE 已经初始化完毕，因此设置 PMD 使其指向这些 PTE。</dd>
+<dt><b>267-268</b></dt><dd>确认表项被正确建立。</dd>
+</dl>
+
+<PRE CLASS="verbatim">273     /*
+274      * Fixed mappings, only the page table structure has to be
+275      * created - mappings will be set by set_fixmap():
+276      */
+277     vaddr = __fix_to_virt(__end_of_fixed_addresses - 1) &amp; PMD_MASK;
+278     fixrange_init(vaddr, 0, pgd_base);
+279 
+280 #if CONFIG_HIGHMEM
+281     /*
+282      * Permanent kmaps:
+283      */
+284     vaddr = PKMAP_BASE;
+285     fixrange_init(vaddr, vaddr + PAGE_SIZE*LAST_PKMAP, pgd_base);
+286 
+287     pgd = swapper_pg_dir + __pgd_offset(vaddr);
+288     pmd = pmd_offset(pgd, vaddr);
+289     pte = pte_offset(pmd, vaddr);
+290     pkmap_page_table = pte;
+291 #endif
+292 
+293 #if CONFIG_X86_PAE
+294     /*
+295      * Add low memory identity-mappings - SMP needs it when
+296      * starting up on an AP from real-mode. In the non-PAE
+297      * case we already have these mappings through head.S.
+298      * All user-space mappings are explicitly cleared after
+299      * SMP startup.
+300      */
+301     pgd_base[0] = pgd_base[USER_PTRS_PER_PGD];
+302 #endif
+303 }
+</PRE>
+
+<p>到这一步为止，页表项已经建立完毕，覆盖了 <tt>ZONE_NORMAL</tt> 的所有部分。剩下需要处理的区域是固定映射（fixed mappings）所用的区域，以及通过 <tt>kmap()</tt> 映射高端内存页所需的区域。</p>
+
+<dl>
+<dt><b>277</b></dt><dd>固定地址空间被认为从 <tt>FIXADDR_TOP</tt><a name="@codeindex33"></a> 处开始，并在地址空间中向更低处&ldquo;结束（finish）&rdquo;。<tt>__fix_to_virt()</tt><a name="@codeindex34"></a> 接受一个索引作为参数，返回从 <tt>FIXADDR_TOP</tt> 开始倒数第 index 个页帧（在固定虚拟地址空间内）。<tt>__end_of_fixed_addresses</tt><a name="@codeindex35"></a> 是固定虚拟地址空间所使用的最后一个索引。换言之，这行代码返回的就是与固定虚拟地址空间起始处相对应的 PMD 的虚拟地址。</dd>
+<dt><b>278</b></dt><dd>通过给 <tt>fixrange_init()</tt> 传入 0 作为&ldquo;end&rdquo;参数，该函数会从 <tt>vaddr</tt> 开始一直构建有效的 PGD 和 PMD，直到虚拟地址空间的末尾。这些地址并不需要 PTE。</dd>
+<dt><b>280-291</b></dt><dd>为 <tt>kmap()</tt> 的使用建立页表。</dd>
+<dt><b>287-290</b></dt><dd>取得用于 <tt>kmap()</tt> 的那段区域起始位置对应的 PTE。</dd>
+<dt><b>301</b></dt><dd>这里建立了一个临时的恒等映射（identity mapping），即虚拟地址 0 直接映射到物理地址 0。</dd>
+</dl>
+
+<h3><a name="htoc129">C.1.3</a>　函数：<tt>fixrange_init</tt></h3>
+<p><em>源码位置：arch/i386/mm/init.c</em> <a name="func: fixrange_init"></a> <a name="@codeindex36"></a></p>
+
+<p>本函数为固定的虚拟地址映射建立有效的 PGD 和 PMD。</p>
+
+<PRE CLASS="verbatim">167 static void __init fixrange_init (unsigned long start, 
+                                      unsigned long end, 
+                                      pgd_t *pgd_base)
+168 {
+169     pgd_t *pgd;
+170     pmd_t *pmd;
+171     pte_t *pte;
+172     int i, j;
+173     unsigned long vaddr;
+174 
+175     vaddr = start;
+176     i = __pgd_offset(vaddr);
+177     j = __pmd_offset(vaddr);
+178     pgd = pgd_base + i;
+179 
+180     for ( ; (i &lt; PTRS_PER_PGD) &amp;&amp; (vaddr != end); pgd++, i++) {
+181 #if CONFIG_X86_PAE
+182         if (pgd_none(*pgd)) {
+183             pmd = (pmd_t *) alloc_bootmem_low_pages(PAGE_SIZE);
+184             set_pgd(pgd, __pgd(__pa(pmd) + 0x1));
+185             if (pmd != pmd_offset(pgd, 0))
+186                 printk("PAE BUG #02!\n");
+187         }
+188         pmd = pmd_offset(pgd, vaddr);
+189 #else
+190         pmd = (pmd_t *)pgd;
+191 #endif
+192         for (; (j &lt; PTRS_PER_PMD) &amp;&amp; (vaddr != end); pmd++, j++) {
+193             if (pmd_none(*pmd)) {
+194                 pte = (pte_t *) alloc_bootmem_low_pages(PAGE_SIZE);
+195                 set_pmd(pmd, __pmd(_KERNPG_TABLE + __pa(pte)));
+196                 if (pte != pte_offset(pmd, 0))
+197                     BUG();
+198             }
+199             vaddr += PMD_SIZE;
+200         }
+201         j = 0;
+202     }
+203 }
+</PRE>
+<dl>
+<dt><b>175</b></dt><dd>把起始虚拟地址（<tt>vaddr</tt>）设为通过参数传入的请求起始地址。</dd>
+<dt><b>176</b></dt><dd>取得 <tt>vaddr</tt> 在 PGD 中对应的索引。</dd>
+<dt><b>177</b></dt><dd>取得 <tt>vaddr</tt> 在 PMD 中对应的索引。</dd>
+<dt><b>178</b></dt><dd>取得起始的 <tt>pgd_t</tt>。</dd>
+<dt><b>180</b></dt><dd>不断循环，直到达到 <tt>end</tt>。当 <tt>pagetable_init()</tt> 传入 0 时，循环会一直持续到 PGD 的末尾。</dd>
+<dt><b>182-187</b></dt><dd>在 PAE 情形下，如果尚未为 PMD 分配页面，则为其分配一页。</dd>
+<dt><b>190</b></dt><dd>没有 PAE 时不存在 PMD，因此直接把 <tt>pgd_t</tt> 当成 <tt>pmd_t</tt> 使用。</dd>
+<dt><b>192-200</b></dt><dd>对 PMD 中的每个表项，为其下的 <tt>pte_t</tt> 表项分配一页，并将其设置进页表中。注意 <tt>vaddr</tt> 是按 PMD 大小为步长递增的。</dd>
+</dl>
+
+<h3><a name="htoc130">C.1.4</a>　函数：<tt>kmap_init</tt></h3>
+<p><em>源码位置：arch/i386/mm/init.c</em> <a name="func: kmap_init"></a> <a name="@codeindex37"></a></p>
+
+<p>本函数仅当编译时设置了 <tt>CONFIG_HIGHMEM</tt> 才会存在。它负责缓存 kmap 区域的起始位置、引用该区域的 PTE，以及页表项的保护属性。这样，每次使用 <tt>kmap()</tt> 时就无需再去检查 PGD。</p>
+
+<PRE CLASS="verbatim"> 74 #if CONFIG_HIGHMEM
+ 75 pte_t *kmap_pte;
+ 76 pgprot_t kmap_prot;
+ 77 
+ 78 #define kmap_get_fixmap_pte(vaddr)                      \
+ 79     pte_offset(pmd_offset(pgd_offset_k(vaddr), (vaddr)), (vaddr))
+ 80 
+ 81 void __init kmap_init(void)
+ 82 {
+ 83     unsigned long kmap_vstart;
+ 84 
+ 85     /* cache the first kmap pte */
+ 86     kmap_vstart = __fix_to_virt(FIX_KMAP_BEGIN);
+ 87     kmap_pte = kmap_get_fixmap_pte(kmap_vstart);
+ e8 
+ 89     kmap_prot = PAGE_KERNEL;
+ 90 }
+ 91 #endif /* CONFIG_HIGHMEM */
+</PRE>
+<dl>
+<dt><b>78-79</b></dt><dd>由于 <tt>fixrange_init()</tt> 已经建立了有效的 PGD 和 PMD，无需再做重复检查，因此 <tt>kmap_get_fixmap_pte()</tt><a name="@codeindex38"></a> 负责快速地遍历这段页表。</dd>
+<dt><b>86</b></dt><dd>将 kmap 区域对应的虚拟地址缓存到 <tt>kmap_vstart</tt><a name="@codeindex39"></a>。</dd>
+<dt><b>87</b></dt><dd>将 kmap 区域起始处对应的 PTE 缓存到 <tt>kmap_pte</tt><a name="@codeindex40"></a>。</dd>
+<dt><b>89</b></dt><dd>将页表项的保护属性缓存到 <tt>kmap_prot</tt><a name="@codeindex41"></a>。</dd>
+</dl>
+
+<h2><a name="toc101"></a><a name="htoc131">C.2</a>　页表遍历</h2>
+
+<h3><a name="htoc132">C.2.1</a>　函数：<tt>follow_page</tt></h3>
+<p><em>源码位置：mm/memory.c</em> <a name="func: follow_page"></a> <a name="@codeindex42"></a></p>
+
+<p>本函数返回在 <tt>mm</tt> 的页表中、位于 <tt>address</tt> 处的 PTE 所使用的 <tt>struct page</tt>。</p>
+
+<PRE CLASS="verbatim">405 static struct page * follow_page(struct mm_struct *mm, 
+                                     unsigned long address, 
+                                     int write) 
+406 {
+407     pgd_t *pgd;
+408     pmd_t *pmd;
+409     pte_t *ptep, pte;
+410 
+411     pgd = pgd_offset(mm, address);
+412     if (pgd_none(*pgd) || pgd_bad(*pgd))
+413         goto out;
+414 
+415     pmd = pmd_offset(pgd, address);
+416     if (pmd_none(*pmd) || pmd_bad(*pmd))
+417         goto out;
+418 
+419     ptep = pte_offset(pmd, address);
+420     if (!ptep)
+421         goto out;
+422 
+423     pte = *ptep;
+424     if (pte_present(pte)) {
+425         if (!write ||
+426             (pte_write(pte) &amp;&amp; pte_dirty(pte)))
+427             return pte_page(pte);
+428     }
+429 
+430 out:
+431     return 0;
+432 }
+</PRE>
+<dl>
+<dt><b>405</b></dt><dd>参数依次为：即将被遍历页表的 <tt>mm</tt>、感兴趣的 <tt>struct page</tt> 所对应的 <tt>address</tt>，以及 <tt>write</tt>，后者用来指示该页是否即将被写入。</dd>
+<dt><b>411</b></dt><dd>取得 <tt>address</tt> 对应的 PGD，并确保它存在且有效。</dd>
+<dt><b>415-417</b></dt><dd>取得 <tt>address</tt> 对应的 PMD，并确保它存在且有效。</dd>
+<dt><b>419</b></dt><dd>取得 <tt>address</tt> 对应的 PTE，并确保它确实存在。</dd>
+<dt><b>424</b></dt><dd>如果该 PTE 当前是 present 的（处于存在状态），则我们有可返回的结果。</dd>
+<dt><b>425-426</b></dt><dd>如果调用者表明即将进行写入操作，则检查该 PTE 是否设置了写权限；如果有，则将该 PTE 标记为脏页（dirty）。</dd>
+<dt><b>427</b></dt><dd>如果 PTE 处于存在状态且权限合适，则返回该 PTE 所映射的 <tt>struct page</tt>。</dd>
+<dt><b>431</b></dt><dd>返回 0，表示该 <tt>address</tt> 没有关联的 <tt>struct page</tt>。</dd>
+</dl>
+
+<hr>
+<nav>
+  [ <a href="understand019_zh.html">&laquo; 上一章</a> ]
+  [ <a href="index.html">&uarr; 返回目录</a> ]
+  [ <a href="../original_html/understand021.html">下一章 &raquo;</a> ]
+</nav>
+</body>
+</html>
