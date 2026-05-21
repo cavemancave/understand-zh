@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第十三章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand015_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand017.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1 id="chap-oom-management">第十三章　内存耗尽管理</h1>
+  <div class="meta">原文版本：Chapter 13 — Out Of Memory Management</div>
+
+<p>
+VM 子系统中我们要讨论的最后一个部分，是&ldquo;内存耗尽&rdquo;（Out Of Memory，OOM）管理器。本章故意写得很短，因为它只承担一个简单任务：检查是否有足够可用内存来满足请求，确认系统是否真的已经耗尽内存，若确实如此，则挑选一个进程将其杀掉。这是 VM 中颇具争议的一部分，多次有人建议将其去掉。无论它在最新的内核中是否还存在，作为一个会牵动到若干其他子系统的模块，它仍然值得一看。
+</p>
+
+<h2 id="sec-checking-available-memory">13.1　检查可用内存</h2>
+
+<p>
+对于某些操作，例如通过 <tt>brk()</tt> 扩展堆，或用 <tt>mremap()</tt> 重映射地址空间，系统会检查是否有足够的可用内存来满足这次请求。注意，这条路径与下一节讨论的 <tt>out_of_memory()</tt> 路径是分开的。这条路径是为了尽可能避免系统进入 OOM 状态。
+</p>
+
+<p>
+在检查可用内存时，所需页数会作为参数传给 <tt>vm_enough_memory()</tt>。除非系统管理员明确允许内存超额提交（overcommit），否则会去查看可用内存的多少。为了估算潜在可用的页数，Linux 把下列几项数据相加：
+</p>
+
+<dl class="description">
+  <dt></dt><dd><b>page cache 总页数</b>，因为 page cache 很容易被回收。</dd>
+  <dt></dt><dd><b>空闲页总数</b>，因为它们本来就可用。</dd>
+  <dt></dt><dd><b>空闲交换页总数</b>，因为用户空间页可以被换出。</dd>
+  <dt></dt><dd><b>由 <tt>swapper_space</tt> 管理的页总数</b>，尽管这与空闲交换页的统计存在重复计数。但这一重复计数会被另一事实抵消：有时槽位被预留却并未真正使用。</dd>
+  <dt></dt><dd><b>dentry cache 占用的页总数</b>，因为它们很容易被回收。</dd>
+  <dt></dt><dd><b>inode cache 占用的页总数</b>，因为它们很容易被回收。</dd>
+</dl>
+
+<p>
+如果累加得到的页数足以满足本次请求，<tt>vm_enough_memory()</tt> 就向调用者返回 true。如果返回 false，调用者就知道内存不可用，通常会向用户空间返回 <tt>-ENOMEM</tt>。
+</p>
+
+<h2 id="sec-determining-oom-status">13.2　判定 OOM 状态</h2>
+
+<p>
+当机器内存吃紧时，旧的页帧会被回收（见<a href="../original_html/understand013.html#chap: Page Frame Reclamation">第 10 章</a>）；但即使在以最高优先级进行扫描的情况下，回收过程也可能无法释放出足够多的页来满足请求。当确实无法释放出页帧时，会调用 <tt>out_of_memory()</tt> 来判断系统是否已经耗尽内存、是否需要杀死一个进程。
+</p>
+
+<div class="figure" id="fig-out-of-memory">
+  <img src="../original_html/figures/understand-html077.png" alt="图 13.1：调用图：out_of_memory()">
+  <div class="caption">图 13.1：调用图：<tt>out_of_memory()</tt></div>
+</div>
+
+<p>
+遗憾的是，有可能系统其实并未耗尽内存，只是需要等待 I/O 完成，或等待页被换出到后备存储。这种情况令人头痛，倒不是因为系统还有内存，而是因为这时不必要地调用了该函数，进而可能造成进程被无谓地杀掉。在决定杀掉进程之前，函数会依次进行下列检查：
+</p>
+
+<ul class="itemize">
+  <li>是否还有足够的交换空间（<tt>nr_swap_pages</tt> &gt; 0）？若有，则不算 OOM。</li>
+  <li>距离上一次失败是否已经超过 5 秒？若是，则不算 OOM。</li>
+  <li>最近 1 秒内是否发生过失败？若否，则不算 OOM。</li>
+  <li>最近 5 秒内是否至少发生过 10 次失败？若不到，则不算 OOM。</li>
+  <li>最近 5 秒内是否已经杀过一个进程？若有，则不算 OOM。</li>
+</ul>
+
+<p>
+只有在上述所有检查都通过之后，才会调用 <tt>oom_kill()</tt> 来挑选一个进程将其杀掉。
+</p>
+
+<h2 id="sec-selecting-a-process">13.3　挑选进程</h2>
+
+<p>
+<tt>select_bad_process()</tt> 函数负责挑选要被杀掉的进程。它会遍历每一个正在运行的任务，并用 <tt>badness()</tt> 函数计算每个任务有多&ldquo;适合&rdquo;被杀掉。badness 的计算公式如下，注意其中的平方根是用 <tt>int_sqrt()</tt> 算得的整数近似值：
+</p>
+
+<pre>
+badness_for_task = total_vm_for_task / (sqrt(cpu_time_in_seconds) *
+sqrt(sqrt(cpu_time_in_minutes)))</pre>
+
+<p>
+这样选出来的，将是一个使用了大量内存但又&ldquo;活得并不久&rdquo;的进程。长时间运行的进程不太可能是内存短缺的元凶，因此该公式倾向于选出使用大量内存但运行时间不长的进程。如果该进程是 root 进程，或者具有 <tt>CAP_SYS_ADMIN</tt> 能力，得到的分数会被除以 4，因为这里假定具有 root 权限的进程表现良好。类似地，如果它具有 <tt>CAP_SYS_RAWIO</tt> 能力（可直接访问裸设备），分数还会再被除以 4，因为我们不希望去杀一个能直接访问硬件的进程。
+</p>
+
+<h2 id="sec-killing-the-selected-process">13.4　杀掉所选进程</h2>
+
+<p>
+一旦选定了某个任务，就会再次遍历进程链表，向所有与被选中进程共享同一个 <tt>mm_struct</tt> 的进程（也就是它的线程）发送信号。如果该进程具有 <tt>CAP_SYS_RAWIO</tt> 能力，则发送 <tt>SIGTERM</tt>，给它一次干净退出的机会；否则就发送 <tt>SIGKILL</tt>。
+</p>
+
+<h2 id="sec-is-that-it">13.5　就这些？</h2>
+
+<p>
+是的，就这些。除了&ldquo;内存耗尽管理&rdquo;牵动了不少其他子系统之外，它本身并没有太多内容。
+</p>
+
+<h2 id="sec-whats-new-in-2-6">13.6　2.6 版的新变化</h2>
+
+<p>
+在 2.6 中，OOM 管理的大部分内容基本保持不变，主要新增的是&ldquo;VM 计入对象&rdquo;（VM accounted objects）。这类 VMA 会被打上 <tt>VM_ACCOUNT</tt> 标志，<a href="../original_html/understand007.html#new: Process Address Space">4.8 节</a>中曾首次提到。在对带有该标志的 VMA 进行操作时，会做额外的检查，以确保有足够的可用内存。引入这一复杂度的主要动机，是为了尽量避免动用 OOM 杀手。
+</p>
+
+<p>
+一些总是会被设置 <tt>VM_ACCOUNT</tt> 标志的区域包括：进程栈、进程堆、用 <tt>MAP_SHARED</tt> 标志 <tt>mmap()</tt> 出来的区域、可写的私有区域，以及通过 <tt>shmget()</tt> 建立的区域。换句话说，大多数用户空间的映射都会带有 <tt>VM_ACCOUNT</tt> 标志。
+</p>
+
+<p>
+Linux 通过 <tt>vm_acct_memory()</tt> 来记账：每当为这些 VMA 提交内存时，它会增加一个名为 <tt>committed_space</tt> 的变量；当 VMA 被释放时，则通过 <tt>vm_unacct_memory()</tt> 减少该值。这是一种相当简单的机制，但它使 Linux 在决定是否再向用户空间提交内存时，能够&ldquo;记得&rdquo;自己已经提交了多少。
+</p>
+
+<p>
+这些检查由 <tt>security_vm_enough_memory()</tt> 完成，这就把我们引到了另一项新特性上。2.6 提供了一项功能，允许与安全相关的内核模块覆盖某些内核函数。可用的钩子完整列表保存在一个名为 <tt>security_ops</tt> 的 <tt>struct</tt> <tt>security_operations</tt> 中。其中有许多默认的&ldquo;哑&rdquo;函数（dummy），全部列在 <tt>security/dummy.c</tt> 中，大多数都只是 return 而已什么也不做。如果系统未加载任何安全模块，则使用的 <tt>security_operations</tt> 结构体名为 <tt>dummy_security_ops</tt>，它使用的全部都是这些默认函数。
+</p>
+
+<p>
+默认情况下，<tt>security_vm_enough_memory()</tt> 会调用在 <tt>security/dummy.c</tt> 中声明的 <tt>dummy_vm_enough_memory()</tt>，它与 2.4 中的 <tt>vm_enough_memory()</tt> 非常相似。新版本会把以下信息累加起来，用以判定可用内存：
+</p>
+
+<dl class="description">
+  <dt></dt><dd><b>page cache 总页数</b>，因为 page cache 很容易被回收。</dd>
+  <dt></dt><dd><b>空闲页总数</b>，因为它们本来就可用。</dd>
+  <dt></dt><dd><b>空闲交换页总数</b>，因为用户空间页可以被换出。</dd>
+  <dt></dt><dd><b>带有 <tt>SLAB_RECLAIM_ACCOUNT</tt> 标志的 slab 页</b>，因为它们很容易被回收。</dd>
+</dl>
+
+<p>
+这些页数减去给 root 进程预留的 3%，便是本次请求可用的总内存。如果内存充足，还要进一步检查已提交的内存总量是否超过允许的阈值。允许的阈值为 <tt>TotalRam * (OverCommitRatio/100) + TotalSwapPage</tt>，其中 <tt>OverCommitRatio</tt> 由系统管理员设置。如果已提交的空间总量没有过高，就返回 1，让本次分配继续进行。
+</p>
+
+<nav>
+  [ <a href="understand015_zh.html">&laquo; 上一章</a> ]
+  [ <a href="index.html">&uarr; 返回目录</a> ]
+  [ <a href="../original_html/understand017.html">下一章 &raquo;</a> ]
+</nav>
+
+<p><small>原文来源：<a href="../original_html/understand016.html">understand016.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
+</body>
+</html>
