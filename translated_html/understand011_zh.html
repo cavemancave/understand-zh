@@ -679,7 +679,48 @@ size-32              850   2712     32   24   24    1 :  252  126
 </p>
 
 <div class="figure" id="fig-kmem-cache-create">
-  <img src="../original_html/figures/understand-html039.png" alt="图 8.3：调用关系图：kmem_cache_create()">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 260" width="760" role="img" aria-labelledby="fig039-title fig039-desc" font-family="sans-serif" font-size="12">
+    <title id="fig039-title">图 8.3：kmem_cache_create() 的调用关系图</title>
+    <desc id="fig039-desc">kmem_cache_create() 调用 kmem_cache_estimate 估算每个 slab 可容纳的对象数，调用 kmem_find_general_cachep 为 slab 描述符寻找合适的通用缓存，调用 kmem_cache_alloc 从 cache_cache 中分配新的 kmem_cache_t，并调用 enable_cpucache（其内部再调用 kmem_tune_cpucache）启用每 CPU 缓存。</desc>
+    <defs>
+      <marker id="arr039" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+      </marker>
+    </defs>
+
+    <text x="380" y="22" text-anchor="middle" font-size="13" font-weight="bold">kmem_cache_create() 调用关系图</text>
+
+    <g font-family="monospace" font-size="12" text-anchor="middle">
+      <!-- root -->
+      <rect x="300" y="40" width="160" height="32" fill="#eef5ff" stroke="#1f4e8a"/>
+      <text x="380" y="60">kmem_cache_create()</text>
+
+      <!-- children -->
+      <rect x="20"  y="140" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="100" y="160">kmem_cache_estimate</text>
+
+      <rect x="200" y="140" width="180" height="32" fill="#eef" stroke="#333"/>
+      <text x="290" y="160">kmem_find_general_cachep</text>
+
+      <rect x="400" y="140" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="480" y="160">kmem_cache_alloc</text>
+
+      <rect x="580" y="140" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="660" y="160">enable_cpucache</text>
+
+      <!-- grandchild -->
+      <rect x="580" y="210" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="660" y="230">kmem_tune_cpucache</text>
+    </g>
+
+    <g stroke="#333" stroke-width="1.4" fill="none" marker-end="url(#arr039)">
+      <line x1="340" y1="72" x2="115" y2="140"/>
+      <line x1="360" y1="72" x2="290" y2="140"/>
+      <line x1="400" y1="72" x2="475" y2="140"/>
+      <line x1="420" y1="72" x2="650" y2="140"/>
+      <line x1="660" y1="172" x2="660" y2="210"/>
+    </g>
+  </svg>
   <div class="caption">图 8.3：调用关系图：<tt>kmem_cache_create()</tt></div>
 </div>
 
