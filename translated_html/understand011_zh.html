@@ -1563,7 +1563,46 @@ slab 中下一个空闲对象的索引存放在 <tt>slab_t</tt>→<tt>free</tt> 
 <p><a href="#fig-kmem-slab-destroy">图 8.13</a> 所示的调用关系图非常简单。</p>
 
 <div class="figure" id="fig-kmem-slab-destroy">
-  <img src="../original_html/figures/understand-html049.png" alt="图 8.13：调用关系图：kmem_slab_destroy()">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 240" width="760" role="img" aria-labelledby="fig049-title fig049-desc" font-family="sans-serif" font-size="12">
+    <title id="fig049-title">图 8.13：kmem_slab_destroy() 的调用关系图</title>
+    <desc id="fig049-desc">kmem_slab_destroy() 遍历 slab 上的对象，对存在析构函数的对象调用 cachep-&gt;dtor()；随后调用 kmem_freepages（再由其调用 __free_pages）把 slab 占用的物理页面归还给伙伴系统；若 slab 描述符离片存放，则调用 kmem_cache_free 把 slab_t 描述符归还到 cachep-&gt;slabp_cache。</desc>
+    <defs>
+      <marker id="arr049" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+      </marker>
+    </defs>
+
+    <text x="380" y="22" text-anchor="middle" font-size="13" font-weight="bold">kmem_slab_destroy() 调用关系图</text>
+
+    <g font-family="monospace" font-size="12" text-anchor="middle">
+      <!-- root -->
+      <rect x="300" y="40" width="160" height="32" fill="#eef5ff" stroke="#1f4e8a"/>
+      <text x="380" y="60">kmem_slab_destroy()</text>
+
+      <!-- level 1 children -->
+      <rect x="40"  y="120" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="120" y="140">cachep-&gt;dtor()</text>
+
+      <rect x="300" y="120" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="380" y="140">kmem_freepages</text>
+
+      <rect x="560" y="120" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="640" y="140">kmem_cache_free</text>
+
+      <!-- level 2 -->
+      <rect x="300" y="190" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="380" y="210">__free_pages</text>
+    </g>
+
+    <g stroke="#333" stroke-width="1.4" fill="none" marker-end="url(#arr049)">
+      <!-- root to level 1 -->
+      <line x1="320" y1="72" x2="140" y2="120"/>
+      <line x1="380" y1="72" x2="380" y2="120"/>
+      <line x1="440" y1="72" x2="620" y2="120"/>
+      <!-- level 1 to level 2 -->
+      <line x1="380" y1="152" x2="380" y2="190"/>
+    </g>
+  </svg>
   <div class="caption">图 8.13：调用关系图：<tt>kmem_slab_destroy()</tt></div>
 </div>
 
