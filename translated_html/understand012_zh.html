@@ -155,7 +155,42 @@
 </p>
 
 <div class="figure" id="fig-kunmap">
-  <img src="../original_html/figures/understand-html055.png" alt="图 9.2：kunmap() 的调用图">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 220" width="640" role="img"
+       aria-labelledby="fig055-title fig055-desc"
+       font-family="sans-serif" font-size="12">
+    <title id="fig055-title">图 9.2：kunmap() 的调用图</title>
+    <desc id="fig055-desc">kunmap() 首先检查页是否位于高端内存；若是，则调用 kunmap_high()，后者递减 pkmap_count[] 中对应槽位的计数，并在计数降到 1 时通过 wake_up() 唤醒等待在 pkmap_map_wait 上的进程。</desc>
+    <defs>
+      <marker id="fig055-arrow" viewBox="0 0 10 10" refX="10" refY="5"
+              markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+      </marker>
+    </defs>
+
+    <!-- kunmap -->
+    <rect x="20" y="90" width="110" height="36" fill="#fff" stroke="#333"/>
+    <text x="75" y="113" text-anchor="middle" font-family="monospace">kunmap</text>
+
+    <!-- kunmap_high -->
+    <rect x="240" y="90" width="140" height="36" fill="#fff" stroke="#333"/>
+    <text x="310" y="113" text-anchor="middle" font-family="monospace">kunmap_high</text>
+
+    <!-- wake_up -->
+    <rect x="480" y="90" width="140" height="36" fill="#fff" stroke="#333"/>
+    <text x="550" y="113" text-anchor="middle" font-family="monospace">wake_up</text>
+
+    <!-- edges -->
+    <line x1="130" y1="108" x2="240" y2="108" stroke="#333" marker-end="url(#fig055-arrow)"/>
+    <line x1="380" y1="108" x2="480" y2="108" stroke="#333" marker-end="url(#fig055-arrow)"/>
+
+    <!-- edge annotations (Chinese commentary) -->
+    <text x="185" y="100" text-anchor="middle" fill="#555">若页在高端内存</text>
+    <text x="430" y="100" text-anchor="middle" fill="#555">计数降到 1 时</text>
+    <text x="430" y="124" text-anchor="middle" fill="#555" font-family="monospace">&amp;pkmap_map_wait</text>
+
+    <!-- inline note for non-highmem case -->
+    <text x="75" y="160" text-anchor="middle" fill="#555">否则：内联检查后直接返回</text>
+  </svg>
   <div class="caption">图 9.2：<tt>kunmap()</tt> 的调用图</div>
 </div>
 
