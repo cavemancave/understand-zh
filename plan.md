@@ -53,3 +53,26 @@ Tracked in the SQL `todos` table. Two kinds of todos:
 - Keep `understand_zh.css` link tag unchanged in each translated file.
 - For SVG: prefer hand-authored geometric SVG that approximates the original diagram; do not embed the PNG as base64.
 - If a figure is complex enough that recreation risks errors, flag it as `blocked` in todos and ask the user.
+
+### Navigation / cross-reference links
+- All `href` to sibling chapters MUST point to the `_zh.html` version when that chapter has been translated.
+- Nav blocks (Prev / Next / Up / TOC) and inline cross-references (e.g. `<a href="understandNNN.html#anchor">第 X.Y 节</a>`) both follow this rule.
+- If the target chapter is not yet translated, keep `../original_html/understandNNN.html#anchor` as a placeholder. When that chapter is later translated, sweep all files that reference it and rewrite to `understandNNN_zh.html#anchor`.
+- After translating each new chapter, run a quick scan:
+  `grep -rE 'href="(\.\./original_html/)?understand[0-9]+\.html' translated_html/`
+  and rewrite any link whose target is now translated.
+
+### Appendix translation: prose vs. code
+The appendices (`understand019_zh.html` onward, App A–K) are mostly annotated kernel source listings: large `<pre class="verbatim">` blocks of C code interleaved with bulleted prose that explains each numbered region. Rules:
+
+1. **Code blocks (`<PRE>` / `<pre class="verbatim">`) are NOT translated.** Keep them byte-for-byte identical to the source: identifiers, keywords, string literals, whitespace, and inline `/* … */` or `//` comments INSIDE the code stay in English.
+2. **Only prose between code blocks is translated.** This includes paragraphs, section headings, function descriptions, and the bulleted line-by-line explanations that reference line numbers in the preceding `<PRE>` block.
+3. **C identifiers in prose stay English.** Wrap them in `<tt>…</tt>` (or keep existing `<tt>`/`<code>` markup) — e.g. translate "The function `kmem_cache_create` allocates …" as "函数 `kmem_cache_create` 用于分配 …".
+4. **Verification:** after translating an appendix, run `grep -c '<PRE' original_html/understandNNN.html` and the same on the `_zh` file — counts must match. Diff the `<PRE>` blocks if uncertain.
+5. **Sub-agent prompts MUST repeat rules 1–4 verbatim** so each fresh context window applies them consistently.
+
+### Appendix D retry strategy (xlate-021)
+Previous two attempts on `understand021.html` (4317 lines) silently produced no output. For the retry:
+- First sub-agent: only `cp original_html/understand021.html translated_html/understand021_zh.html`, swap the CSS link to `understand_zh.css`, translate the `<title>` and top-level headings, commit the skeleton.
+- Then one sub-agent per H2 section (D.1 … D.6): translate prose only in that section's range, leave `<PRE>` blocks untouched, commit + push.
+- This keeps each sub-agent's working set well below the context limit.
