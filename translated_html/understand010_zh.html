@@ -9,7 +9,7 @@
   <nav>
     [ <a href="understand009_zh.html">&laquo; 上一章</a> ]
     [ <a href="index.html">&uarr; 返回目录</a> ]
-    [ <a href="../original_html/understand011.html">下一章 &raquo;</a> ]
+    [ <a href="understand011_zh.html">下一章 &raquo;</a> ]
   </nav>
 
   <h1>第七章　非连续内存分配</h1>
@@ -24,7 +24,7 @@
 </p>
 
 <p>
-这一区域中的页表会按需调整，以指向由普通物理页面分配器分配的物理页面。这意味着分配必须是硬件页面大小的整数倍。由于分配操作需要修改内核页表，<tt>vmalloc()</tt> 能够映射的内存量受限，因为只有 <tt>VMALLOC_START</tt> 到 <tt>VMALLOC_END</tt> 之间的虚拟地址空间可用。因此，它在内核核心代码中使用得很谨慎。在 <tt>2.4.22</tt> 中，它仅用于存储交换映射信息（见<a href="../original_html/understand014.html#chap: Swap Management">第 11 章</a>）以及将内核模块加载到内存中。
+这一区域中的页表会按需调整，以指向由普通物理页面分配器分配的物理页面。这意味着分配必须是硬件页面大小的整数倍。由于分配操作需要修改内核页表，<tt>vmalloc()</tt> 能够映射的内存量受限，因为只有 <tt>VMALLOC_START</tt> 到 <tt>VMALLOC_END</tt> 之间的虚拟地址空间可用。因此，它在内核核心代码中使用得很谨慎。在 <tt>2.4.22</tt> 中，它仅用于存储交换映射信息（见<a href="understand014_zh.html#chap: Swap Management">第 11 章</a>）以及将内核模块加载到内存中。
 </p>
 
 <p>
@@ -346,9 +346,9 @@ vmalloc 地址空间使用资源映射分配器（resource map allocator）[Vah9
   <nav>
     [ <a href="understand009_zh.html">&laquo; 上一章</a> ]
     [ <a href="index.html">&uarr; 返回目录</a> ]
-    [ <a href="../original_html/understand011.html">下一章 &raquo;</a> ]
+    [ <a href="understand011_zh.html">下一章 &raquo;</a> ]
   </nav>
 
-  <p><small>原文来源：<a href="../original_html/understand010.html">understand010.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
+  <p><small>原文来源：<a href="understand011_zh.html">understand010.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
 </body>
 </html>
