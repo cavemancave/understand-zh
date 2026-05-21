@@ -287,7 +287,33 @@ vmalloc 地址空间使用资源映射分配器（resource map allocator）[Vah9
 </p>
 
 <div class="figure" id="fig-vfree">
-  <img src="../original_html/figures/understand-html036.png" alt="图 7.4：调用关系图：vfree()">
+  <svg xmlns="http://www.w3.org/2000/svg" width="720" viewBox="0 0 720 340" role="img" aria-labelledby="fig036-title fig036-desc">
+    <title id="fig036-title">图 7.4：调用关系图：vfree()</title>
+    <desc id="fig036-desc">vfree() 的调用关系图。vfree() 调用 vmfree_area_pages()；vmfree_area_pages() 调用 free_area_pmd()；free_area_pmd() 调用 free_area_pte() 以逐级释放页表项和物理页面。</desc>
+    <defs>
+      <marker id="arrow036" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+      </marker>
+    </defs>
+    <g font-family="ui-monospace, Menlo, Consolas, monospace" font-size="13" text-anchor="middle">
+      <rect x="300" y="20"  width="120" height="32" fill="#eef" stroke="#333"/>
+      <text x="360" y="40">vfree()</text>
+
+      <rect x="270" y="100" width="180" height="32" fill="#eef" stroke="#333"/>
+      <text x="360" y="120">vmfree_area_pages()</text>
+
+      <rect x="280" y="180" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="360" y="200">free_area_pmd()</text>
+
+      <rect x="280" y="260" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="360" y="280">free_area_pte()</text>
+    </g>
+    <g stroke="#333" stroke-width="1.4" fill="none" marker-end="url(#arrow036)">
+      <line x1="360" y1="52"  x2="360" y2="100"/>
+      <line x1="360" y1="132" x2="360" y2="180"/>
+      <line x1="360" y1="212" x2="360" y2="260"/>
+    </g>
+  </svg>
   <div class="caption">图 7.4：调用关系图：<tt>vfree()</tt></div>
 </div>
 
