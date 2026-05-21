@@ -964,7 +964,70 @@ size-32              850   2712     32   24   24    1 :  252  126
 </ul>
 
 <div class="figure" id="fig-kmem-cache-destroy">
-  <img src="../original_html/figures/understand-html043.png" alt="图 8.7：调用关系图：kmem_cache_destroy()">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 320" width="760" role="img" aria-labelledby="fig043-title fig043-desc" font-family="sans-serif" font-size="12">
+    <title id="fig043-title">图 8.7：kmem_cache_destroy() 的调用关系图</title>
+    <desc id="fig043-desc">kmem_cache_destroy 首先通过 down(&amp;cache_chain_sem) 获取缓存链信号量，使用 list_del 将该缓存从 cache_chain 中移除，然后调用 __kmem_cache_shrink_locked 收缩缓存——后者继续调用 kmem_slab_destroy，再经由 kmem_freepages（最终调用 free_pages）释放 slab 占用的页面，或调用 kmem_cache_free 释放离片的 slab 描述符。随后通过 up(&amp;cache_chain_sem) 释放信号量，并调用 kmem_cache_free(&amp;cache_cache, cachep) 把缓存描述符自身归还给 cache_cache。</desc>
+    <defs>
+      <marker id="arr043" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+      </marker>
+    </defs>
+
+    <text x="380" y="22" text-anchor="middle" font-size="13" font-weight="bold">kmem_cache_destroy() 调用关系图</text>
+
+    <g font-family="monospace" font-size="12" text-anchor="middle">
+      <!-- root -->
+      <rect x="290" y="40" width="180" height="32" fill="#eef5ff" stroke="#1f4e8a"/>
+      <text x="380" y="60">kmem_cache_destroy</text>
+
+      <!-- level 1: direct callees -->
+      <rect x="10"   y="110" width="120" height="32" fill="#eef" stroke="#333"/>
+      <text x="70"  y="130">down</text>
+
+      <rect x="150" y="110" width="110" height="32" fill="#eef" stroke="#333"/>
+      <text x="205" y="130">list_del</text>
+
+      <rect x="275" y="110" width="210" height="32" fill="#eef" stroke="#333"/>
+      <text x="380" y="130">__kmem_cache_shrink_locked</text>
+
+      <rect x="505" y="110" width="100" height="32" fill="#eef" stroke="#333"/>
+      <text x="555" y="130">up</text>
+
+      <rect x="625" y="110" width="130" height="32" fill="#eef" stroke="#333"/>
+      <text x="690" y="130">kmem_cache_free</text>
+
+      <!-- level 2 under __kmem_cache_shrink_locked -->
+      <rect x="275" y="175" width="210" height="32" fill="#eef" stroke="#333"/>
+      <text x="380" y="195">kmem_slab_destroy</text>
+
+      <!-- level 3 under kmem_slab_destroy -->
+      <rect x="190" y="235" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="270" y="255">kmem_freepages</text>
+
+      <rect x="410" y="235" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="490" y="255">kmem_cache_free</text>
+
+      <!-- level 4 under kmem_freepages -->
+      <rect x="190" y="280" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="270" y="300">free_pages</text>
+    </g>
+
+    <g stroke="#333" stroke-width="1.4" fill="none" marker-end="url(#arr043)">
+      <!-- root -> level 1 -->
+      <line x1="320" y1="72" x2="120" y2="110"/>
+      <line x1="345" y1="72" x2="220" y2="110"/>
+      <line x1="380" y1="72" x2="380" y2="110"/>
+      <line x1="415" y1="72" x2="540" y2="110"/>
+      <line x1="440" y1="72" x2="650" y2="110"/>
+      <!-- __kmem_cache_shrink_locked -> kmem_slab_destroy -->
+      <line x1="380" y1="142" x2="380" y2="175"/>
+      <!-- kmem_slab_destroy -> kmem_freepages / kmem_cache_free -->
+      <line x1="345" y1="207" x2="295" y2="235"/>
+      <line x1="415" y1="207" x2="465" y2="235"/>
+      <!-- kmem_freepages -> free_pages -->
+      <line x1="270" y1="267" x2="270" y2="280"/>
+    </g>
+  </svg>
   <div class="caption">图 8.7：调用关系图：<tt>kmem_cache_destroy()</tt></div>
 </div>
 
