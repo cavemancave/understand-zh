@@ -1240,7 +1240,117 @@ size-32              850   2712     32   24   24    1 :  252  126
 </p>
 
 <div class="figure" id="fig-slab-off-slab">
-  <img src="../original_html/figures/understand-html046.png" alt="图 8.10：描述符放在 slab 外的 slab">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" width="760" role="img" aria-labelledby="fig046-title fig046-desc" font-family="sans-serif" font-size="12">
+    <title id="fig046-title">图 8.10：描述符放在 slab 外的 slab</title>
+    <desc id="fig046-desc">展示 slab 描述符放在 slab 之外的形态：上方是从 sizes 通用缓存（通过 kmem_find_general_cachep 获取）分配出的 slab_t 描述符与 kmem_bufctl_t[] 数组；下方的 slab 页内只包含 colouroff 着色偏移和对象 0..N-1，没有描述符与 bufctl 数组；slab_t->s_mem 指向 slab 页内的第一个对象，bufctl 数组项引用对象索引，链尾以 BUFCTL_END 标识。</desc>
+    <defs>
+      <pattern id="pad046" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="#888" stroke-width="1"/>
+      </pattern>
+      <marker id="arr046" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+      </marker>
+    </defs>
+
+    <text x="380" y="20" text-anchor="middle" font-size="14" font-weight="bold">描述符放在 slab 外的 slab</text>
+
+    <!-- ====== 上排：sizes 通用缓存中的描述符与 bufctl 数组 ====== -->
+    <text x="20" y="46" font-size="11" fill="#444">sizes 通用缓存（由 <tspan font-family="monospace">kmem_find_general_cachep()</tspan> 找到）</text>
+    <rect x="20" y="52" width="430" height="90" fill="none" stroke="#1f4e8a" stroke-width="2" stroke-dasharray="5,3"/>
+
+    <!-- slab_t 描述符 -->
+    <rect x="36" y="62" width="130" height="70" fill="#ffe2b8" stroke="#a05a00"/>
+    <text x="101" y="76" text-anchor="middle" font-size="12" font-weight="bold" font-family="monospace">slab_t</text>
+    <line x1="36" y1="80" x2="166" y2="80" stroke="#a05a00"/>
+    <g font-family="monospace" font-size="10" fill="#333">
+      <text x="44" y="92">list</text>
+      <text x="44" y="103">colouroff</text>
+      <text x="44" y="114">s_mem</text>
+      <text x="44" y="125">inuse</text>
+      <text x="100" y="125">free</text>
+    </g>
+
+    <!-- kmem_bufctl_t[] 数组 -->
+    <rect x="186" y="62" width="248" height="70" fill="#fff1c8" stroke="#a05a00"/>
+    <text x="310" y="76" text-anchor="middle" font-family="monospace" font-size="11" font-weight="bold">kmem_bufctl_t[]</text>
+    <line x1="186" y1="80" x2="434" y2="80" stroke="#a05a00"/>
+    <g font-family="monospace" font-size="10">
+      <rect x="194" y="86" width="40" height="22" fill="#fff" stroke="#a05a00"/>
+      <text x="214" y="101" text-anchor="middle">2</text>
+      <text x="214" y="118" text-anchor="middle" font-size="9" fill="#666">[0]</text>
+
+      <rect x="238" y="86" width="40" height="22" fill="#fff" stroke="#a05a00"/>
+      <text x="258" y="101" text-anchor="middle">3</text>
+      <text x="258" y="118" text-anchor="middle" font-size="9" fill="#666">[1]</text>
+
+      <rect x="282" y="86" width="40" height="22" fill="#fff" stroke="#a05a00"/>
+      <text x="302" y="101" text-anchor="middle" font-size="9">END</text>
+      <text x="302" y="118" text-anchor="middle" font-size="9" fill="#666">[2]</text>
+
+      <rect x="326" y="86" width="40" height="22" fill="#fff" stroke="#a05a00"/>
+      <text x="346" y="101" text-anchor="middle">…</text>
+      <text x="346" y="118" text-anchor="middle" font-size="9" fill="#666">[…]</text>
+
+      <rect x="370" y="86" width="56" height="22" fill="#fff" stroke="#a05a00"/>
+      <text x="398" y="101" text-anchor="middle">…</text>
+      <text x="398" y="118" text-anchor="middle" font-size="9" fill="#666">[N-1]</text>
+    </g>
+    <text x="310" y="140" text-anchor="middle" font-size="10" fill="#444">链尾以 <tspan font-family="monospace">BUFCTL_END</tspan> 标识</text>
+
+    <!-- 右侧：kmem_find_general_cachep 注解 -->
+    <g stroke="#1f4e8a" fill="none" marker-end="url(#arr046)">
+      <path d="M 600 90 L 460 90"/>
+    </g>
+    <text x="610" y="86" font-size="11" fill="#1f4e8a"><tspan font-family="monospace">kmem_find_general_cachep()</tspan></text>
+    <text x="610" y="100" font-size="10" fill="#444">为 off-slab 描述符</text>
+    <text x="610" y="112" font-size="10" fill="#444">分配内存</text>
+
+    <!-- ====== 下排：slab 页（只含 colouroff + 对象） ====== -->
+    <text x="20" y="178" font-size="11" fill="#444">slab 起始（一页或多页连续物理内存）</text>
+    <text x="740" y="178" font-size="11" fill="#444" text-anchor="end">slab 末尾</text>
+    <rect x="20" y="186" width="720" height="100" fill="none" stroke="#1f4e8a" stroke-width="2"/>
+
+    <!-- colouroff 着色偏移 -->
+    <rect x="20" y="186" width="50" height="100" fill="url(#pad046)" stroke="#1f4e8a"/>
+    <text x="45" y="236" text-anchor="middle" font-size="10" fill="#333" transform="rotate(-90 45 236)">colouroff</text>
+
+    <!-- 对象区：slab 页内只有对象 -->
+    <g font-family="sans-serif">
+      <rect x="70" y="186" width="130" height="100" fill="#cfe2ff" stroke="#1f4e8a"/>
+      <text x="135" y="232" text-anchor="middle">对象 0</text>
+      <text x="135" y="248" text-anchor="middle" font-size="10" fill="#444">object</text>
+
+      <rect x="200" y="186" width="130" height="100" fill="#cfe2ff" stroke="#1f4e8a"/>
+      <text x="265" y="232" text-anchor="middle">对象 1</text>
+      <text x="265" y="248" text-anchor="middle" font-size="10" fill="#444">object</text>
+
+      <rect x="330" y="186" width="130" height="100" fill="#cfe2ff" stroke="#1f4e8a"/>
+      <text x="395" y="232" text-anchor="middle">对象 2</text>
+      <text x="395" y="248" text-anchor="middle" font-size="10" fill="#444">object</text>
+
+      <rect x="460" y="186" width="60" height="100" fill="#eef3fb" stroke="#1f4e8a" stroke-dasharray="3,3"/>
+      <text x="490" y="238" text-anchor="middle">…</text>
+
+      <rect x="520" y="186" width="220" height="100" fill="#cfe2ff" stroke="#1f4e8a"/>
+      <text x="630" y="232" text-anchor="middle">对象 N-1</text>
+      <text x="630" y="248" text-anchor="middle" font-size="10" fill="#444">object</text>
+    </g>
+    <text x="380" y="276" text-anchor="middle" font-size="10" fill="#444">slab 页内不再包含 <tspan font-family="monospace">slab_t</tspan> 与 <tspan font-family="monospace">kmem_bufctl_t[]</tspan></text>
+
+    <!-- s_mem -> 对象 0 箭头（从上排 slab_t.s_mem 指向下排第一个对象） -->
+    <g stroke="#1f4e8a" fill="none" marker-end="url(#arr046)">
+      <path d="M 80 132 L 80 160 L 135 160 L 135 186"/>
+    </g>
+    <text x="158" y="156" font-size="10" fill="#1f4e8a"><tspan font-family="monospace">slab_t-&gt;s_mem</tspan> 指向第一个对象</text>
+
+    <!-- bufctl[0]=2 引用对象 2（虚线，逻辑索引引用） -->
+    <g stroke="#c0392b" fill="none" stroke-dasharray="3,2" marker-end="url(#arr046)">
+      <path d="M 214 108 L 214 168 L 395 168 L 395 186"/>
+    </g>
+    <text x="400" y="166" font-size="9" fill="#c0392b"><tspan font-family="monospace">bufctl[]</tspan> 项以索引引用对象</text>
+
+    <text x="380" y="312" text-anchor="middle" font-size="11" fill="#333">描述符与 bufctl 数组存放在 sizes 通用缓存中，slab 页内只剩 colouroff 与对象</text>
+  </svg>
   <div class="caption">图 8.10：描述符放在 slab 外的 slab</div>
 </div>
 
