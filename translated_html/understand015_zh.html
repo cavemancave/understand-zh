@@ -9,7 +9,7 @@
   <nav>
     [ <a href="understand014_zh.html">&laquo; 上一章</a> ]
     [ <a href="index.html">&uarr; 返回目录</a> ]
-    [ <a href="../original_html/understand016.html">下一章 &raquo;</a> ]
+    [ <a href="understand016_zh.html">下一章 &raquo;</a> ]
   </nav>
 
   <h1 id="chap-shared-memory-vfs">第十二章　共享内存虚拟文件系统</h1>
@@ -20,7 +20,7 @@
 </p>
 
 <p>
-当 VMA 中的页由磁盘上的文件作为后备时，所用的接口很直接。要在缺页时读入一页，所需的 <tt>nopage()</tt> 函数可以通过 <tt>vm_area_struct</tt>&rarr;<tt>vm_ops</tt> 找到。要把一页写回后备存储，则在 <tt>address_space_operations</tt> 中查找相应的 <tt>writepage()</tt> 函数，通常经由 <tt>inode</tt>&rarr;<tt>i_mapping</tt>&rarr;<tt>a_ops</tt>，或者经由 <tt>page</tt>&rarr;<tt>mapping</tt>&rarr;<tt>a_ops</tt>。在进行 <tt>mmap()</tt>、<tt>read()</tt> 和 <tt>write()</tt> 等普通文件操作时，带有相应函数的 <tt>struct file_operations</tt> 通过 <tt>inode</tt>&rarr;<tt>i_fop</tt> 找到，等等。它们之间的关系在<a href="../original_html/understand007.html#fig: Data Structures related to the Address Space">图 4.2</a> 中已经展示过。
+当 VMA 中的页由磁盘上的文件作为后备时，所用的接口很直接。要在缺页时读入一页，所需的 <tt>nopage()</tt> 函数可以通过 <tt>vm_area_struct</tt>&rarr;<tt>vm_ops</tt> 找到。要把一页写回后备存储，则在 <tt>address_space_operations</tt> 中查找相应的 <tt>writepage()</tt> 函数，通常经由 <tt>inode</tt>&rarr;<tt>i_mapping</tt>&rarr;<tt>a_ops</tt>，或者经由 <tt>page</tt>&rarr;<tt>mapping</tt>&rarr;<tt>a_ops</tt>。在进行 <tt>mmap()</tt>、<tt>read()</tt> 和 <tt>write()</tt> 等普通文件操作时，带有相应函数的 <tt>struct file_operations</tt> 通过 <tt>inode</tt>&rarr;<tt>i_fop</tt> 找到，等等。它们之间的关系在<a href="understand007_zh.html#fig: Data Structures related to the Address Space">图 4.2</a> 中已经展示过。
 </p>
 
 <p>
@@ -388,9 +388,9 @@ IPC 的全部内部实现细节超出了本书的范围。本节只关注 <tt>sh
 <nav>
   [ <a href="understand014_zh.html">&laquo; 上一章</a> ]
   [ <a href="index.html">&uarr; 返回目录</a> ]
-  [ <a href="../original_html/understand016.html">下一章 &raquo;</a> ]
+  [ <a href="understand016_zh.html">下一章 &raquo;</a> ]
 </nav>
 
-<p><small>原文来源：<a href="../original_html/understand015.html">understand015.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
+<p><small>原文来源：<a href="understand016_zh.html">understand015.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
 </body>
 </html>
