@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第六章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand008_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="understand010_zh.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1>第六章　物理页面分配</h1>
+  <div class="meta">原文版本：Chapter 6 — Physical Page Allocation</div>
+
+<p>
+本章介绍Linux中物理页面的管理与分配机制。所采用的核心算法是<strong>二进制伙伴分配器（Binary Buddy Allocator）</strong>，由Knowlton [Kno65] 提出，并由Knuth [Knu68] 进一步描述。与其他分配器相比，该算法被证明具有极高的效率 [KB85]。
+</p>
+
+<p>
+该分配方案结合了普通的2的幂次分配器与空闲缓冲区合并机制 [Vah96]，其基本思想非常简洁：内存被划分为若干大块页面，每块的大小是2的幂次个页面。若没有所需大小的空闲块，则将一个更大的块一分为二，形成两个<em>伙伴块</em>，一半用于分配，另一半放入空闲链表。如此不断折半，直到找到合适大小的块。当某块后来被释放时，会检查其伙伴块，若伙伴也空闲则合并成更大的块。
+</p>
+
+<p>
+本章首先介绍Linux如何记录哪些内存块是空闲的，然后详细讨论分配和释放页面的方法，接着介绍影响分配器行为的标志位，最后讨论碎片问题以及分配器的应对策略。
+</p>
+
+<h2 class="section" id="sec6-1">6.1　管理空闲块</h2>
+
+<p>
+如前所述，分配器维护着若干空闲页面块，每块的大小是2的幂次个页面。2的幂次方的指数称为<em>阶（order）</em>。系统为每个阶维护一个 <tt>free_area_t</tt> 结构体数组，每个元素指向一个相应大小的空闲页面块链表，如图 6.1所示。
+</p>
+
+<div class="figure">
+  <svg viewBox="0 0 760 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="free_area 数组与不同阶空闲块链表示意图" style="max-width:100%;height:auto;font-family:'Microsoft YaHei',Arial,sans-serif;">
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#1a3a6b"/>
+      </marker>
+      <linearGradient id="blk" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#eaf2fb"/>
+        <stop offset="100%" stop-color="#cfe0f5"/>
+      </linearGradient>
+    </defs>
+
+    <!-- 标题 -->
+    <text x="380" y="22" text-anchor="middle" font-size="14" fill="#1a3a6b" font-weight="bold">zone-&gt;free_area[MAX_ORDER]</text>
+
+    <!-- 数组表头 -->
+    <g font-size="12" fill="#222">
+      <rect x="40" y="40" width="120" height="28" fill="#1a3a6b"/>
+      <text x="100" y="59" text-anchor="middle" fill="#fff" font-weight="bold">索引 (order)</text>
+      <rect x="160" y="40" width="160" height="28" fill="#1a3a6b"/>
+      <text x="240" y="59" text-anchor="middle" fill="#fff" font-weight="bold">free_area_t</text>
+      <rect x="320" y="40" width="400" height="28" fill="#1a3a6b"/>
+      <text x="520" y="59" text-anchor="middle" fill="#fff" font-weight="bold">free_list  →  空闲块链表（每块 2^order 页）</text>
+    </g>
+
+    <!-- 行模板：order, y, blockWidth, blockCount -->
+    <!-- order 0: 1 页 -->
+    <g>
+      <rect x="40" y="68" width="120" height="44" fill="#fff" stroke="#bbb"/>
+      <text x="100" y="95" text-anchor="middle" font-size="13">0  (2^0 = 1 页)</text>
+      <rect x="160" y="68" width="160" height="44" fill="#f5f7fa" stroke="#bbb"/>
+      <text x="180" y="88" font-size="11" fill="#333">free_list ●</text>
+      <text x="180" y="104" font-size="11" fill="#666">map: bits</text>
+      <line x1="252" y1="90" x2="340" y2="90" stroke="#1a3a6b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <rect x="345" y="76" width="22" height="28" fill="url(#blk)" stroke="#1a3a6b"/>
+      <line x1="367" y1="90" x2="385" y2="90" stroke="#1a3a6b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <rect x="390" y="76" width="22" height="28" fill="url(#blk)" stroke="#1a3a6b"/>
+      <line x1="412" y1="90" x2="430" y2="90" stroke="#1a3a6b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <rect x="435" y="76" width="22" height="28" fill="url(#blk)" stroke="#1a3a6b"/>
+      <text x="475" y="94" font-size="12" fill="#888">…</text>
+    </g>
+
+    <!-- order 1: 2 页 -->
+    <g>
+      <rect x="40" y="112" width="120" height="44" fill="#fff" stroke="#bbb"/>
+      <text x="100" y="139" text-anchor="middle" font-size="13">1  (2^1 = 2 页)</text>
+      <rect x="160" y="112" width="160" height="44" fill="#f5f7fa" stroke="#bbb"/>
+      <text x="180" y="132" font-size="11" fill="#333">free_list ●</text>
+      <text x="180" y="148" font-size="11" fill="#666">map: bits</text>
+      <line x1="252" y1="134" x2="340" y2="134" stroke="#1a3a6b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <rect x="345" y="120" width="44" height="28" fill="url(#blk)" stroke="#1a3a6b"/>
+      <line x1="389" y1="134" x2="407" y2="134" stroke="#1a3a6b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <rect x="412" y="120" width="44" height="28" fill="url(#blk)" stroke="#1a3a6b"/>
+      <text x="475" y="138" font-size="12" fill="#888">…</text>
+    </g>
+
+    <!-- order 2: 4 页 -->
+    <g>
+      <rect x="40" y="156" width="120" height="44" fill="#fff" stroke="#bbb"/>
+      <text x="100" y="183" text-anchor="middle" font-size="13">2  (2^2 = 4 页)</text>
+      <rect x="160" y="156" width="160" height="44" fill="#f5f7fa" stroke="#bbb"/>
+      <text x="180" y="176" font-size="11" fill="#333">free_list ●</text>
+      <text x="180" y="192" font-size="11" fill="#666">map: bits</text>
+      <line x1="252" y1="178" x2="340" y2="178" stroke="#1a3a6b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <rect x="345" y="164" width="88" height="28" fill="url(#blk)" stroke="#1a3a6b"/>
+      <line x1="433" y1="178" x2="451" y2="178" stroke="#1a3a6b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <rect x="456" y="164" width="88" height="28" fill="url(#blk)" stroke="#1a3a6b"/>
+      <text x="562" y="182" font-size="12" fill="#888">…</text>
+    </g>
+
+    <!-- order 3: 8 页 -->
+    <g>
+      <rect x="40" y="200" width="120" height="44" fill="#fff" stroke="#bbb"/>
+      <text x="100" y="227" text-anchor="middle" font-size="13">3  (2^3 = 8 页)</text>
+      <rect x="160" y="200" width="160" height="44" fill="#f5f7fa" stroke="#bbb"/>
+      <text x="180" y="220" font-size="11" fill="#333">free_list ●</text>
+      <text x="180" y="236" font-size="11" fill="#666">map: bits</text>
+      <line x1="252" y1="222" x2="340" y2="222" stroke="#1a3a6b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <rect x="345" y="208" width="176" height="28" fill="url(#blk)" stroke="#1a3a6b"/>
+      <text x="562" y="226" font-size="12" fill="#888">…</text>
+    </g>
+
+    <!-- 省略行 -->
+    <g>
+      <rect x="40" y="244" width="120" height="28" fill="#fff" stroke="#bbb"/>
+      <text x="100" y="263" text-anchor="middle" font-size="13" fill="#888">…</text>
+      <rect x="160" y="244" width="160" height="28" fill="#f5f7fa" stroke="#bbb"/>
+      <text x="240" y="263" text-anchor="middle" font-size="12" fill="#888">…</text>
+      <rect x="320" y="244" width="400" height="28" fill="#fff" stroke="#eee"/>
+      <text x="520" y="263" text-anchor="middle" font-size="12" fill="#888">…</text>
+    </g>
+
+    <!-- order MAX_ORDER-1 -->
+    <g>
+      <rect x="40" y="272" width="120" height="44" fill="#fff" stroke="#bbb"/>
+      <text x="100" y="293" text-anchor="middle" font-size="12">MAX_ORDER−1</text>
+      <text x="100" y="309" text-anchor="middle" font-size="11" fill="#555">(2^9 = 512 页)</text>
+      <rect x="160" y="272" width="160" height="44" fill="#f5f7fa" stroke="#bbb"/>
+      <text x="180" y="292" font-size="11" fill="#333">free_list ●</text>
+      <text x="180" y="308" font-size="11" fill="#666">map: bits</text>
+      <line x1="252" y1="294" x2="340" y2="294" stroke="#1a3a6b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <rect x="345" y="280" width="370" height="28" fill="url(#blk)" stroke="#1a3a6b"/>
+      <text x="530" y="298" text-anchor="middle" font-size="11" fill="#1a3a6b">2^(MAX_ORDER−1) 个连续页面</text>
+    </g>
+
+    <!-- 图例 -->
+    <g font-size="11" fill="#444">
+      <rect x="40" y="330" width="14" height="14" fill="url(#blk)" stroke="#1a3a6b"/>
+      <text x="60" y="342">空闲页面块（宽度示意阶数大小）</text>
+      <line x1="260" y1="338" x2="290" y2="338" stroke="#1a3a6b" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="296" y="342">page-&gt;list 链接同阶空闲块</text>
+      <text x="500" y="342" fill="#666">map 中每对伙伴只用 1 bit（MARK_USED 翻转）</text>
+    </g>
+  </svg>
+  <div class="caption">图 6.1：空闲页面块管理（每个 zone 的 free_area 数组与同阶空闲链表）</div>
+</div>
+
+<p>
+因此，数组第0个元素指向大小为 2<sup>0</sup>=1 个页面的空闲块链表，第1个元素为 2<sup>1</sup>=2 个页面的链表，依此类推，直到 2<sup>MAX_ORDER−1</sup> 个页面（其中 <tt>MAX_ORDER</tt> 当前定义为10）。这确保了不会为了满足小请求而拆分大块。页面块通过 <tt>page→list</tt> 以线性链表方式维护。
+</p>
+
+<p>
+每个zone都有一个名为 <tt>free_area[MAX_ORDER]</tt> 的 <tt>free_area_t</tt> 结构数组，在 <tt>&lt;linux/mm.h&gt;</tt> 中声明如下：
+</p>
+
+<pre>
+ 22 typedef struct free_area_struct {
+ 23         struct list_head        free_list;
+ 24         unsigned long           *map;
+ 25 } free_area_t;
+</pre>
+
+<p>该结构体的字段含义如下：</p>
+<ul>
+  <li><strong>free_list</strong>：空闲页面块的链表；</li>
+  <li><strong>map</strong>：一个位图，表示一对伙伴块的状态。</li>
+</ul>
+
+<p>
+Linux为了节省内存，对每对伙伴块只使用一个比特（而非两个）来表示状态。每当某个伙伴被分配或释放时，代表该对伙伴的比特就会翻转：若该位为0，表示两个伙伴都空闲或都已分配；若为1，表示只有一个伙伴在使用中。<tt>page_alloc.c</tt> 中的宏 <tt>MARK_USED()</tt> 用于翻转对应比特，定义如下：
+</p>
+
+<pre>
+164 #define MARK_USED(index, order, area) \
+165         __change_bit((index) >> (1+(order)), (area)->map)
+</pre>
+
+<p>
+<tt>index</tt> 是页面在全局 <tt>mem_map</tt> 数组中的索引。将其右移 <tt>1+order</tt> 位，即可定位到 <tt>map</tt> 中代表该对伙伴的比特位。
+</p>
+
+<h2 class="section" id="sec6-2">6.2　分配页面</h2>
+
+<p>
+Linux提供了一套相当完整的页帧分配API，所有函数都接受一个 <tt>gfp_mask</tt> 参数，该参数是一组决定分配器行为的标志位（详见第6.4节）。
+</p>
+
+<p>
+所有分配API函数最终都调用核心函数 <tt>__alloc_pages()</tt>，但各API的存在是为了让调用者能自动选择正确的内存节点和zone（如 <tt>ZONE_DMA</tt>、<tt>ZONE_NORMAL</tt> 等），调用者无需关心具体使用哪个节点。物理页面分配API完整列表见表 6.1。
+</p>
+
+<h4>表 6.1：物理页面分配API</h4>
+<table>
+    <tr><th>函数原型</th><th>说明</th></tr>
+    <tr>
+      <td><tt>struct page * alloc_page(unsigned int gfp_mask)</tt></td>
+      <td>分配单个页面，返回 struct page 指针</td>
+    </tr>
+    <tr>
+      <td><tt>struct page * alloc_pages(unsigned int gfp_mask, unsigned int order)</tt></td>
+      <td>分配 2<sup>order</sup> 个页面，返回 struct page 指针</td>
+    </tr>
+    <tr>
+      <td><tt>unsigned long get_free_page(unsigned int gfp_mask)</tt></td>
+      <td>分配单个页面，清零后返回虚拟地址</td>
+    </tr>
+    <tr>
+      <td><tt>unsigned long __get_free_page(unsigned int gfp_mask)</tt></td>
+      <td>分配单个页面，返回虚拟地址</td>
+    </tr>
+    <tr>
+      <td><tt>unsigned long __get_free_pages(unsigned int gfp_mask, unsigned int order)</tt></td>
+      <td>分配 2<sup>order</sup> 个页面，返回虚拟地址</td>
+    </tr>
+    <tr>
+      <td><tt>struct page * __get_dma_pages(unsigned int gfp_mask, unsigned int order)</tt></td>
+      <td>从DMA zone分配 2<sup>order</sup> 个页面，返回 struct page 指针</td>
+    </tr>
+</table>
+
+<p>
+分配总是按指定阶进行（分配单页时阶为0）。若找不到所需阶的空闲块，则将高阶块一分为二：一半用于分配，另一半加入低阶空闲链表。图 6.2展示了一个2<sup>4</sup>阶块的拆分过程及伙伴块如何逐步加入空闲链表，直到找到满足请求的块。
+</p>
+
+<div class="figure">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 460" role="img" aria-label="伙伴系统拆分 2^4 块以满足 2^1 请求的过程，order 自上而下从小到大">
+    <defs>
+      <marker id="arrA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#888"/>
+      </marker>
+      <style>
+        .lbl   { font: 13px "Microsoft YaHei", Arial, sans-serif; fill: #222; }
+        .step  { font: 600 13px "Microsoft YaHei", Arial, sans-serif; fill: #1a3a6b; }
+        .blk   { font: 12px Consolas, monospace; fill: #222; text-anchor: middle; }
+        .tag   { font: 11px "Microsoft YaHei", Arial, sans-serif; fill: #555; text-anchor: middle; }
+        .axis  { font: 11px "Microsoft YaHei", Arial, sans-serif; fill: #888; }
+        .free  { fill: #dff0d8; stroke: #3c763d; }
+        .split { fill: #fff3cd; stroke: #b58a1a; stroke-dasharray: 4 3; }
+        .ret   { fill: #ffd9a8; stroke: #d18b1f; }
+      </style>
+    </defs>
+
+    <!-- order 轴（左侧）：order 从小到大，自上而下 -->
+    <text class="axis" x="86" y="20" text-anchor="end">order ↓</text>
+    <line x1="100" y1="25" x2="100" y2="335" stroke="#bbb" stroke-width="1"/>
+
+    <!-- ============ 第 1 行（顶部）：order = 1，最终拆分结果 ============ -->
+    <text class="step" x="10" y="50">步骤 4</text>
+    <text class="lbl"  x="10" y="68">order = 1</text>
+    <rect class="ret"  x="120" y="30" width="75" height="50" rx="3"/>
+    <text class="blk" x="157" y="55">order = 1</text>
+    <text class="tag" x="157" y="73">★ 返回调用者</text>
+    <rect class="free" x="195" y="30" width="75" height="50" rx="3"/>
+    <text class="blk" x="232" y="55">order = 1</text>
+    <text class="tag" x="232" y="73">→ free_area[1]</text>
+    <rect class="free" x="270" y="30" width="150" height="50" rx="3" opacity="0.55"/>
+    <text class="blk" x="345" y="55" opacity="0.8">order = 2 (已入链)</text>
+    <rect class="free" x="420" y="30" width="300" height="50" rx="3" opacity="0.55"/>
+    <text class="blk" x="570" y="55" opacity="0.8">order = 3 (已入链)</text>
+
+    <!-- ============ 第 2 行：order = 2，由其拆出两个 order=1 ============ -->
+    <text class="step" x="10" y="130">步骤 3</text>
+    <text class="lbl"  x="10" y="148">order = 2</text>
+    <rect class="split" x="120" y="110" width="150" height="50" rx="3"/>
+    <text class="blk" x="195" y="135">order = 2  (待拆)</text>
+    <text class="tag" x="195" y="153">向上拆分 → 两个 order=1</text>
+    <rect class="free"  x="270" y="110" width="150" height="50" rx="3"/>
+    <text class="blk" x="345" y="135">order = 2</text>
+    <text class="tag" x="345" y="153">→ free_area[2]</text>
+    <rect class="free"  x="420" y="110" width="300" height="50" rx="3" opacity="0.55"/>
+    <text class="blk" x="570" y="135" opacity="0.8">order = 3 (已入链)</text>
+
+    <!-- ============ 第 3 行：order = 3 ============ -->
+    <text class="step" x="10" y="210">步骤 2</text>
+    <text class="lbl"  x="10" y="228">order = 3</text>
+    <rect class="split" x="120" y="190" width="300" height="50" rx="3"/>
+    <text class="blk" x="270" y="215">order = 3  (待拆)</text>
+    <text class="tag" x="270" y="233">向上拆分 → 两个 order=2</text>
+    <rect class="free"  x="420" y="190" width="300" height="50" rx="3"/>
+    <text class="blk" x="570" y="215">order = 3</text>
+    <text class="tag" x="570" y="233">→ 加入 free_area[3]</text>
+
+    <!-- ============ 第 4 行（底部）：order = 4，初始大块 ============ -->
+    <text class="step" x="10" y="290">步骤 1</text>
+    <text class="lbl"  x="10" y="308">order = 4</text>
+    <rect class="free" x="120" y="270" width="600" height="50" rx="3"/>
+    <text class="blk" x="420" y="295">order = 4  (16 页 = 2⁴，初始唯一可用块)</text>
+    <text class="tag" x="420" y="313">free_area[4] 中的块</text>
+
+    <!-- 拆分连线（自下而上） -->
+    <path d="M 420,270 L 420,240" stroke="#888" stroke-width="1.5" fill="none" marker-end="url(#arrA)"/>
+    <path d="M 570,270 L 570,240" stroke="#888" stroke-width="1.5" fill="none" marker-end="url(#arrA)"/>
+    <path d="M 270,190 L 270,160" stroke="#888" stroke-width="1.5" fill="none" marker-end="url(#arrA)"/>
+    <path d="M 345,190 L 345,160" stroke="#888" stroke-width="1.5" fill="none" marker-end="url(#arrA)"/>
+    <path d="M 157,110 L 157,80" stroke="#888" stroke-width="1.5" fill="none" marker-end="url(#arrA)"/>
+    <path d="M 232,110 L 232,80" stroke="#888" stroke-width="1.5" fill="none" marker-end="url(#arrA)"/>
+
+    <!-- 时间方向指示 -->
+    <g transform="translate(735,30)">
+      <line x1="0" y1="290" x2="0" y2="10" stroke="#1a3a6b" stroke-width="1.2" marker-end="url(#arrA)"/>
+      <text class="axis" x="6" y="160" fill="#1a3a6b">时间</text>
+    </g>
+
+    <!-- 最终结果汇总 -->
+    <rect x="10" y="355" width="740" height="95" rx="6" fill="#f0f4fb" stroke="#ccd"/>
+    <text class="step" x="24" y="377">最终结果（请求 2¹ 完成后）</text>
+    <text class="lbl"  x="24" y="397">• 调用者获得 1 个 order=1 块（2 页）</text>
+    <text class="lbl"  x="24" y="415">• free_area[1] / free_area[2] / free_area[3] 各 +1 个块；free_area[4] −1 个块</text>
+    <text class="lbl"  x="24" y="433" style="fill:#666">▸ 留下的 3 个空闲块互为不同阶的「伙伴」，后续释放时若伙伴空闲将逐层合并回 order=4</text>
+
+    <!-- 图例 -->
+    <g transform="translate(560,367)">
+      <rect class="ret"   x="0"   y="0" width="14" height="14"/>
+      <text class="tag"   x="20"  y="11" text-anchor="start">返回</text>
+      <rect class="free"  x="60"  y="0" width="14" height="14"/>
+      <text class="tag"   x="80"  y="11" text-anchor="start">空闲入链</text>
+      <rect class="split" x="140" y="0" width="14" height="14"/>
+      <text class="tag"   x="160" y="11" text-anchor="start">待拆分</text>
+    </g>
+  </svg>
+  <div class="caption">图 6.2：物理页面分配（伙伴系统拆分 2⁴ 块以满足 2¹ 请求；order 自上而下从小到大，时间从下往上）</div>
+</div>
+
+<p>
+当块被释放时，会检查其伙伴：若两者均空闲，则合并成高阶块并加入高阶空闲链表，并继续检查更高阶的伙伴；若伙伴不空闲，则将释放的块加入当前阶的空闲链表。在这些链表操作期间，需要禁用中断，以防中断处理程序在链表处于不一致状态时操作它，这通过中断安全的自旋锁实现。
+</p>
+
+<p>
+第二个决策是选择哪个内存节点（<tt>pg_data_t</tt>）。Linux采用<em>本地节点分配策略</em>，优先使用与当前运行进程的CPU相关联的内存。这里关键函数是 <tt>_alloc_pages()</tt>，该函数在UMA架构（<tt>mm/page_alloc.c</tt>）和NUMA架构（<tt>mm/numa.c</tt>）下有不同的实现。
+</p>
+
+<p>
+无论使用哪种API，<tt>mm/page_alloc.c</tt> 中的 <tt>__alloc_pages()</tt> 都是分配器的核心。该函数不应被直接调用，它检查所选zone是否适合分配（根据可用页面数量），若不适合则可能回退到其他zone（启动时由 <tt>build_zonelists()</tt> 决定回退顺序，通常 <tt>ZONE_HIGHMEM</tt> 回退到 <tt>ZONE_NORMAL</tt>，再回退到 <tt>ZONE_DMA</tt>）。若空闲页面数降至 <tt>pages_low</tt> 水位线，则唤醒 <strong>kswapd</strong> 开始释放页面；若内存极度紧张，调用者将自行执行 <strong>kswapd</strong> 的工作。
+</p>
+
+<div class="figure">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 560" role="img" aria-label="alloc_pages() 调用图">
+    <defs>
+      <marker id="arrB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#666"/>
+      </marker>
+      <style>
+        .api    { fill: #e8eef9; stroke: #1a3a6b; stroke-width: 1.5; }
+        .fn     { fill: #fff;    stroke: #1a3a6b; stroke-width: 1.2; }
+        .core   { fill: #f5e8c7; stroke: #b58a1a; stroke-width: 1.4; }
+        .dec    { fill: #fff3cd; stroke: #b58a1a; stroke-width: 1.2; }
+        .ret    { fill: #dff0d8; stroke: #3c763d; stroke-width: 1.4; }
+        .ln     { fill: none; stroke: #666; stroke-width: 1.3; }
+        .lnDash { fill: none; stroke: #888; stroke-width: 1.2; stroke-dasharray: 5 3; }
+        .ttl    { font: 600 13px Consolas, monospace; fill: #1a3a6b; text-anchor: middle; }
+        .sub    { font: 11px "Microsoft YaHei", Arial, sans-serif; fill: #555; text-anchor: middle; }
+        .edge   { font: 11px "Microsoft YaHei", Arial, sans-serif; fill: #555; }
+      </style>
+    </defs>
+
+    <rect class="api" x="300" y="15"  width="180" height="44" rx="6"/>
+    <text class="ttl" x="390" y="35">alloc_pages()</text>
+    <text class="sub" x="390" y="50">(gfp_mask, order)</text>
+
+    <rect class="fn" x="300" y="90" width="180" height="50" rx="6"/>
+    <text class="ttl" x="390" y="110">_alloc_pages()</text>
+    <text class="sub" x="390" y="125">UMA: mm/page_alloc.c</text>
+    <text class="sub" x="390" y="138">NUMA: mm/numa.c</text>
+
+    <rect class="core" x="280" y="170" width="220" height="50" rx="6"/>
+    <text class="ttl" x="390" y="190">__alloc_pages()</text>
+    <text class="sub" x="390" y="206">核心分配逻辑（不应被直接调用）</text>
+
+    <polygon class="dec" points="390,245 540,295 390,345 240,295"/>
+    <text class="ttl" x="390" y="290" style="font-size:12px">zone 可用页面</text>
+    <text class="sub" x="390" y="306">vs 水位线？</text>
+
+    <rect class="fn" x="30" y="265" width="180" height="44" rx="6"/>
+    <text class="ttl" x="120" y="284">wakeup_kswapd()</text>
+    <text class="sub" x="120" y="299">&lt; pages_low 时唤醒</text>
+
+    <rect class="fn" x="30" y="325" width="180" height="44" rx="6"/>
+    <text class="ttl" x="120" y="344">balance_classzone()</text>
+    <text class="sub" x="120" y="359">必要时同步回收</text>
+
+    <rect class="fn" x="570" y="265" width="180" height="60" rx="6"/>
+    <text class="ttl" x="660" y="285">按 zonelist 回退</text>
+    <text class="sub" x="660" y="301">build_zonelists() 决定顺序</text>
+    <text class="sub" x="660" y="315">HIGHMEM → NORMAL → DMA</text>
+
+    <rect class="fn" x="300" y="385" width="180" height="44" rx="6"/>
+    <text class="ttl" x="390" y="404">rmqueue()</text>
+    <text class="sub" x="390" y="419">从选定 zone 摘块</text>
+
+    <polygon class="dec" points="390,455 540,490 390,525 240,490"/>
+    <text class="ttl" x="390" y="487" style="font-size:12px">free_area[order]</text>
+    <text class="sub" x="390" y="503">是否非空？</text>
+
+    <rect class="fn" x="570" y="465" width="180" height="50" rx="6"/>
+    <text class="ttl" x="660" y="485">expand()</text>
+    <text class="sub" x="660" y="500">拆分高阶块，剩余</text>
+    <text class="sub" x="660" y="512">伙伴入 free_area[k]</text>
+
+    <ellipse class="ret" cx="390" cy="545" rx="120" ry="14"/>
+    <text class="ttl" x="390" y="550" style="fill:#3c763d">返回 struct page *</text>
+
+    <!-- 主线 -->
+    <path class="ln" d="M 390,59  L 390,90"  marker-end="url(#arrB)"/>
+    <path class="ln" d="M 390,140 L 390,170" marker-end="url(#arrB)"/>
+    <path class="ln" d="M 390,220 L 390,245" marker-end="url(#arrB)"/>
+    <path class="ln" d="M 390,345 L 390,385" marker-end="url(#arrB)"/>
+    <text class="edge" x="398" y="370">充足</text>
+    <path class="ln" d="M 390,429 L 390,455" marker-end="url(#arrB)"/>
+    <path class="ln" d="M 390,525 L 390,545" marker-end="url(#arrB)"/>
+    <text class="edge" x="398" y="542">是 → 直接摘取</text>
+
+    <!-- 左分支 -->
+    <path class="ln" d="M 240,295 L 210,287" marker-end="url(#arrB)"/>
+    <text class="edge" x="170" y="260">不足 (&lt; pages_low)</text>
+    <path class="ln" d="M 120,309 L 120,325" marker-end="url(#arrB)"/>
+    <path class="ln" d="M 210,347 Q 270,365 295,388" marker-end="url(#arrB)"/>
+
+    <!-- 右分支 -->
+    <path class="ln" d="M 540,295 L 570,295" marker-end="url(#arrB)"/>
+    <text class="edge" x="548" y="258">当前 zone 失败</text>
+    <path class="ln" d="M 660,325 Q 660,365 495,405" marker-end="url(#arrB)"/>
+
+    <!-- expand 分支 -->
+    <path class="ln" d="M 540,490 L 570,490" marker-end="url(#arrB)"/>
+    <text class="edge" x="548" y="483">否</text>
+    <path class="lnDash" d="M 660,515 Q 660,555 495,549" marker-end="url(#arrB)"/>
+    <text class="edge" x="540" y="538" style="fill:#888">拆分后返回</text>
+  </svg>
+  <div class="caption">图 6.3：调用图：alloc_pages()</div>
+</div>
+
+<p>
+一旦确定了zone，就会调用 <tt>rmqueue()</tt> 分配页面块，或在没有合适大小块时拆分高阶块。
+</p>
+
+<h2 class="section" id="sec6-3">6.3　释放页面</h2>
+
+<p>
+页面释放的API相对简单，其存在是为了便于记住释放时块的阶——伙伴分配器的一个缺点是调用者必须记住原始分配的大小。释放API见表 6.2。
+</p>
+
+<h4>表 6.2：物理页面释放API</h4>
+<table>
+    <tr><th>函数原型</th><th>说明</th></tr>
+    <tr>
+      <td><tt>void __free_pages(struct page *page, unsigned int order)</tt></td>
+      <td>从给定页面释放指定阶数量的页面</td>
+    </tr>
+    <tr>
+      <td><tt>void __free_page(struct page *page)</tt></td>
+      <td>释放单个页面</td>
+    </tr>
+    <tr>
+      <td><tt>void free_page(void *addr)</tt></td>
+      <td>从给定虚拟地址释放页面</td>
+    </tr>
+</table>
+
+<p>
+释放页面的核心函数是 <tt>__free_pages_ok()</tt>，不应直接调用。而应使用 <tt>__free_pages()</tt>，它会先进行一些基本检查，如图 6.4所示。
+</p>
+
+<div class="figure">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 490" role="img" aria-label="__free_pages() 调用图">
+    <defs>
+      <marker id="arrC" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#666"/>
+      </marker>
+      <marker id="arrCL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#b3478a"/>
+      </marker>
+      <style>
+        .api  { fill: #e8eef9; stroke: #1a3a6b; stroke-width: 1.5; }
+        .fn   { fill: #fff;    stroke: #1a3a6b; stroke-width: 1.2; }
+        .core { fill: #f5e8c7; stroke: #b58a1a; stroke-width: 1.4; }
+        .dec  { fill: #fff3cd; stroke: #b58a1a; stroke-width: 1.2; }
+        .loop { fill: #fdf2f8; stroke: #b3478a; stroke-width: 1.2; stroke-dasharray: 6 3; }
+        .ret  { fill: #dff0d8; stroke: #3c763d; stroke-width: 1.4; }
+        .ln   { fill: none; stroke: #666; stroke-width: 1.3; }
+        .lnL  { fill: none; stroke: #b3478a; stroke-width: 1.3; }
+        .ttl  { font: 600 13px Consolas, monospace; fill: #1a3a6b; text-anchor: middle; }
+        .sub  { font: 11px "Microsoft YaHei", Arial, sans-serif; fill: #555; text-anchor: middle; }
+        .edge { font: 11px "Microsoft YaHei", Arial, sans-serif; fill: #555; }
+      </style>
+    </defs>
+
+    <rect class="api" x="290" y="15" width="200" height="44" rx="6"/>
+    <text class="ttl" x="390" y="35">__free_pages()</text>
+    <text class="sub" x="390" y="50">(page, order)</text>
+
+    <polygon class="dec" points="390,85 540,130 390,175 240,130"/>
+    <text class="ttl" x="390" y="125" style="font-size:12px">page 有效？</text>
+    <text class="sub" x="390" y="141">PageReserved / 计数检查</text>
+
+    <ellipse class="ret" cx="120" cy="130" rx="90" ry="22"/>
+    <text class="ttl" x="120" y="127" style="fill:#3c763d">直接返回</text>
+    <text class="sub" x="120" y="143">不释放</text>
+
+    <rect class="core" x="280" y="200" width="220" height="50" rx="6"/>
+    <text class="ttl" x="390" y="220">__free_pages_ok()</text>
+    <text class="sub" x="390" y="237">核心释放逻辑（不应被直接调用）</text>
+
+    <rect class="fn" x="290" y="275" width="200" height="44" rx="6"/>
+    <text class="ttl" x="390" y="294">spin_lock_irqsave()</text>
+    <text class="sub" x="390" y="309">zone-&gt;lock（关中断）</text>
+
+    <!-- 合并循环虚框 -->
+    <rect class="loop" x="80" y="345" width="600" height="95" rx="8"/>
+    <text class="edge" x="92" y="362" style="fill:#b3478a;font-weight:600">伙伴合并循环</text>
+
+    <polygon class="dec" points="240,360 360,395 240,430 120,395"/>
+    <text class="ttl" x="240" y="392" style="font-size:12px">伙伴空闲？</text>
+    <text class="sub" x="240" y="408">map 位翻转后 = 0</text>
+
+    <rect class="fn" x="400" y="375" width="250" height="44" rx="6"/>
+    <text class="ttl" x="525" y="394">合并为高阶块</text>
+    <text class="sub" x="525" y="409">order++，继续判断更高阶</text>
+
+    <!-- 循环外 -->
+    <rect class="fn" x="290" y="455" width="200" height="30" rx="5"/>
+    <text class="ttl" x="390" y="475">加入 free_area[order]</text>
+
+    <ellipse class="ret" cx="660" cy="470" rx="80" ry="16"/>
+    <text class="ttl" x="660" y="475" style="fill:#3c763d">返回</text>
+
+    <!-- 主线连接 -->
+    <path class="ln" d="M 390,59  L 390,85"  marker-end="url(#arrC)"/>
+    <path class="ln" d="M 240,130 L 210,130" marker-end="url(#arrC)"/>
+    <text class="edge" x="218" y="122">否</text>
+    <path class="ln" d="M 390,175 L 390,200" marker-end="url(#arrC)"/>
+    <text class="edge" x="398" y="195">是</text>
+    <path class="ln" d="M 390,250 L 390,275" marker-end="url(#arrC)"/>
+    <path class="ln" d="M 390,319 Q 390,335 300,388" marker-end="url(#arrC)"/>
+
+    <!-- 循环内：是 -->
+    <path class="lnL" d="M 360,395 L 400,395" marker-end="url(#arrCL)"/>
+    <text class="edge" x="368" y="388" style="fill:#b3478a">是</text>
+    <!-- 回跳箭头：合并后回到判断 -->
+    <path class="lnL" d="M 525,375 Q 525,350 360,365" marker-end="url(#arrCL)"/>
+    <text class="edge" x="380" y="354" style="fill:#b3478a">循环：order++</text>
+
+    <!-- 否 → 加入 free_area -->
+    <path class="ln" d="M 240,430 Q 240,448 290,470" marker-end="url(#arrC)"/>
+    <text class="edge" x="140" y="448">否 / 达 MAX_ORDER</text>
+    <!-- 释放锁 + 返回 -->
+    <path class="ln" d="M 490,470 L 580,470" marker-end="url(#arrC)"/>
+    <text class="edge" x="495" y="463">spin_unlock_irqrestore()</text>
+  </svg>
+  <div class="caption">图 6.4：调用图：__free_pages()（粉色虚框为伙伴合并循环）</div>
+</div>
+
+<p>
+当伙伴被释放时，Linux会立即尝试合并伙伴块（如果可能）。这并非最优策略，因为最坏情况下会出现大量合并后立即再次拆分的情况 [Vah96]。
+</p>
+
+<p>
+为了检测伙伴是否可以合并，Linux检查 <tt>free_area→map</tt> 中对应的比特位。由于一个伙伴刚被释放，至少知道一个是空闲的。翻转后若该位为0，则说明另一个伙伴也是空闲的（位为0意味着两者都空闲或都已分配），此时可以合并。
+</p>
+
+<p>
+计算伙伴地址是一个经典算法 [Knu68]。由于分配总是按 2<sup>k</sup> 大小的块进行，块的地址（至少是其在 <tt>zone_mem_map</tt> 内的偏移）也是 2<sup>k</sup> 的幂次，因此地址右边至少有 <em>k</em> 个零。为了得到伙伴的地址，检查地址右边第 <em>k</em> 位，若为0则翻转该位。Linux通过以下方式计算掩码：
+</p>
+
+<pre>
+mask = (~0 &lt;&lt; k)
+imask = 1 + ~mask
+</pre>
+
+<p>Linux利用如下等式简化计算：</p>
+<pre>
+imask = -mask = 1 + ~mask
+</pre>
+
+<p>
+合并后，从空闲链表中移除该块，新合并的块移至下一阶，继续检查是否可进一步合并。
+</p>
+
+<h2 class="section" id="sec6-4">6.4　获取空闲页（GFP）标志</h2>
+
+<p>
+<strong>获取空闲页（GFP）</strong>标志是贯穿整个虚拟内存管理的核心概念。这些标志决定了分配器和 <strong>kswapd</strong> 在分配和释放页面时的行为。例如，中断处理程序不能休眠，因此不会设置 <tt>__GFP_WAIT</tt> 标志（该标志表示调用者可以休眠）。所有GFP标志均定义在 <tt>&lt;linux/mm.h&gt;</tt> 中，分为三组。
+</p>
+
+<h3>zone修饰符标志</h3>
+<p>
+第一组是zone修饰符，如表 6.3所示。这些标志指示调用者必须尝试从特定zone分配内存。注意没有 <tt>ZONE_NORMAL</tt> 的修饰符标志，因为修饰符标志用作数组偏移量，0隐式表示从 <tt>ZONE_NORMAL</tt> 分配。
+</p>
+
+<h4>表 6.3：影响zone分配的低级GFP标志</h4>
+<table>
+    <tr><th>标志</th><th>说明</th></tr>
+    <tr><td><tt>__GFP_DMA</tt></td><td>尽可能从 ZONE_DMA 分配</td></tr>
+    <tr><td><tt>__GFP_HIGHMEM</tt></td><td>尽可能从 ZONE_HIGHMEM 分配</td></tr>
+    <tr><td><tt>GFP_DMA</tt></td><td><tt>__GFP_DMA</tt> 的别名</td></tr>
+</table>
+
+<h3>行为修饰符标志</h3>
+<p>第二组是行为修饰符，如表 6.4所示，它们改变VM的行为和调用进程的权限。低级标志单独使用过于原始，不便直接操作。</p>
+
+<h4>表 6.4：影响分配器行为的低级GFP标志</h4>
+<table>
+    <tr><th>标志</th><th>说明</th></tr>
+    <tr>
+      <td><tt>__GFP_WAIT</tt></td>
+      <td>表示调用者非高优先级，可以休眠或重新调度</td>
+    </tr>
+    <tr>
+      <td><tt>__GFP_HIGH</tt></td>
+      <td>用于高优先级或内核进程。2.2.x内核中用于判断进程是否可访问紧急内存池；2.4.x中似乎未使用</td>
+    </tr>
+    <tr>
+      <td><tt>__GFP_IO</tt></td>
+      <td>表示调用者可以执行低级IO。在2.4.x中主要影响 <tt>try_to_free_buffers()</tt> 是否可以刷新缓冲区，被至少一个日志文件系统使用</td>
+    </tr>
+    <tr>
+      <td><tt>__GFP_HIGHIO</tt></td>
+      <td>表示可以对高内存映射页面执行IO，仅在 <tt>try_to_free_buffers()</tt> 中使用</td>
+    </tr>
+    <tr>
+      <td><tt>__GFP_FS</tt></td>
+      <td>表示调用者可以调用文件系统层。当调用者与文件系统相关（如缓冲区缓存），用于避免递归调用自身</td>
+    </tr>
+</table>
+
+<h3>高级组合标志</h3>
+<p>
+为了便于使用，定义了若干高级组合标志，如表 6.5所示（为简洁起见省略 <tt>__GFP_</tt> 前缀），组合方式见表 6.6。以 <tt>GFP_ATOMIC</tt> 为例：它只设置了 <tt>__GFP_HIGH</tt>，即高优先级、可使用紧急内存池，但不会休眠、不执行IO、不访问文件系统，适用于中断处理程序。
+</p>
+
+<h4>表 6.5：高级GFP标志的低级标志组合</h4>
+<table>
+    <tr><th>标志</th><th>低级标志组合</th></tr>
+    <tr><td><tt>GFP_ATOMIC</tt></td><td>HIGH</td></tr>
+    <tr><td><tt>GFP_NOIO</tt></td><td>HIGH | WAIT</td></tr>
+    <tr><td><tt>GFP_NOHIGHIO</tt></td><td>HIGH | WAIT | IO</td></tr>
+    <tr><td><tt>GFP_NOFS</tt></td><td>HIGH | WAIT | IO | HIGHIO</td></tr>
+    <tr><td><tt>GFP_KERNEL</tt></td><td>HIGH | WAIT | IO | HIGHIO | FS</td></tr>
+    <tr><td><tt>GFP_NFS</tt></td><td>HIGH | WAIT | IO | HIGHIO | FS</td></tr>
+    <tr><td><tt>GFP_USER</tt></td><td>WAIT | IO | HIGHIO | FS</td></tr>
+    <tr><td><tt>GFP_HIGHUSER</tt></td><td>WAIT | IO | HIGHIO | FS | HIGHMEM</td></tr>
+    <tr><td><tt>GFP_KSWAPD</tt></td><td>WAIT | IO | HIGHIO | FS</td></tr>
+</table>
+
+<h4>表 6.6：影响分配器行为的高级GFP标志</h4>
+<table>
+    <tr><th>标志</th><th>说明</th></tr>
+    <tr>
+      <td><tt>GFP_ATOMIC</tt></td>
+      <td>调用者不能休眠且必须尽快被服务时使用。需要内存的中断处理程序必须使用此标志以避免休眠或执行IO。许多子系统在初始化时使用，如 <tt>buffer_init()</tt> 和 <tt>inode_init()</tt></td>
+    </tr>
+    <tr>
+      <td><tt>GFP_NOIO</tt></td>
+      <td>已在执行IO相关操作的调用者使用。例如，回环设备在为缓冲头获取页面时使用此标志，以确保不会触发更多IO，该标志正是为避免回环设备死锁而引入的</td>
+    </tr>
+    <tr>
+      <td><tt>GFP_NOHIGHIO</tt></td>
+      <td>仅在 <tt>alloc_bounce_page()</tt> 中为高内存IO创建弹跳缓冲区时使用</td>
+    </tr>
+    <tr>
+      <td><tt>GFP_NOFS</tt></td>
+      <td>仅由缓冲区缓存和文件系统使用，确保不会意外递归调用自身</td>
+    </tr>
+    <tr>
+      <td><tt>GFP_KERNEL</tt></td>
+      <td>组合标志中最宽松的，表示调用者可以自由操作。与 <tt>GFP_USER</tt> 的区别是可以使用紧急内存池，但在2.4.x内核中这是空操作</td>
+    </tr>
+    <tr>
+      <td><tt>GFP_USER</tt></td>
+      <td>历史遗留标志。在2.2.x系列中，分配有LOW/MEDIUM/HIGH优先级，内存紧张时 <tt>GFP_USER</tt> 请求会失败，现在与 <tt>GFP_KERNEL</tt> 无区别</td>
+    </tr>
+    <tr>
+      <td><tt>GFP_HIGHUSER</tt></td>
+      <td>表示应尽可能从 <tt>ZONE_HIGHMEM</tt> 分配，用于代表用户进程分配页面时</td>
+    </tr>
+    <tr>
+      <td><tt>GFP_NFS</tt></td>
+      <td>已废弃。在2.0.x系列中用于决定保留页面大小，现在无特殊处理</td>
+    </tr>
+    <tr>
+      <td><tt>GFP_KSWAPD</tt></td>
+      <td>历史遗留标志，实际与 <tt>GFP_KERNEL</tt> 无区别</td>
+    </tr>
+</table>
+
+<h3 class="subsection" id="sec6-4-1">6.4.1　进程标志</h3>
+
+<p>
+进程还可以在 <tt>task_struct</tt> 中设置影响分配器行为的标志，完整列表定义在 <tt>&lt;linux/sched.h&gt;</tt> 中，与VM相关的标志见表 6.7。
+</p>
+
+<h4>表 6.7：影响分配器行为的进程标志</h4>
+<table>
+    <tr><th>标志</th><th>说明</th></tr>
+    <tr>
+      <td><tt>PF_MEMALLOC</tt></td>
+      <td>标记进程为内存分配器。<strong>kswapd</strong> 会设置此标志，即将被OOM killer杀死的进程也会设置。它告诉伙伴分配器忽略zone水位线，尽可能分配页面</td>
+    </tr>
+    <tr>
+      <td><tt>PF_MEMDIE</tt></td>
+      <td>由OOM killer设置，与 <tt>PF_MEMALLOC</tt> 功能相同，因为进程即将死亡，告诉页面分配器尽可能给出页面</td>
+    </tr>
+    <tr>
+      <td><tt>PF_FREE_PAGES</tt></td>
+      <td>当伙伴分配器自身调用 <tt>try_to_free_pages()</tt> 时设置，表示在 <tt>__free_pages_ok()</tt> 中应为调用进程保留空闲页面，而非归还到空闲链表</td>
+    </tr>
+</table>
+
+<h2 class="section" id="sec6-5">6.5　避免碎片化</h2>
+
+<p>
+任何分配器都必须解决的重要问题是内部碎片和外部碎片。<em>外部碎片</em>是指可用内存只存在于小块中，无法满足大块请求。<em>内部碎片</em>是指为了满足小请求而分配大块，导致空间浪费。
+</p>
+
+<p>
+在Linux中，外部碎片并不严重，因为对连续大页面的请求很少见，通常 <tt>vmalloc()</tt>（见第7章）已足够。空闲块链表确保了大块不会被不必要地拆分。
+</p>
+
+<p>
+内部碎片是二进制伙伴系统最严重的缺陷。研究表明碎片率预期在28%左右 [WJNB95]，但实际可高达60%，而首次适应分配器仅约1% [JW98]。使用伙伴系统的变体也不能显著改善这种情况 [PN77]。
+</p>
+
+<p>
+为解决此问题，Linux使用<em>slab分配器</em> [Bon94] 将页面切分为小块内存进行分配 [Tan01]，详见第8章。通过这两种分配器的结合，内核能确保因内部碎片造成的内存浪费降到最低。
+</p>
+
+<h2 class="section" id="sec6-6">6.6　2.6 版本的新特性</h2>
+
+<h5>页面分配</h5>
+
+<p>
+首个显著差异看似是表面上的改动：<tt>alloc_pages()</tt> 现在是宏，定义在 <tt>&lt;linux/gfp.h&gt;</tt> 而非 <tt>&lt;linux/mm.h&gt;</tt> 中的函数。新布局依然清晰，主要差异微妙但重要：2.4版本有专门代码用于根据当前CPU选择分配节点以区分NUMA和UMA架构，而2.6版本消除了这一区分。
+</p>
+
+<p>
+在2.6中，<tt>alloc_pages()</tt> 调用 <tt>numa_node_id()</tt> 返回当前运行CPU关联节点的逻辑ID（NID），并传递给 <tt>_alloc_pages()</tt>，后者以NID为参数调用 <tt>NODE_DATA()</tt>。在UMA架构上，这无条件返回 <tt>contig_page_data</tt>；NUMA架构则以NID为数组偏移建立映射。本质上仍是与2.4相同的本地节点分配策略，但定义更清晰。
+</p>
+
+<h5>每CPU页面列表</h5>
+
+<p>
+页面分配最重要的新增是<strong>per-CPU列表</strong>（首次在第2.6节描述物理内存时提及）。
+</p>
+
+<p>
+在2.4中，页面分配需要持有中断安全自旋锁。在2.6中，页面通过 <tt>buffered_rmqueue()</tt> 从 <tt>struct per_cpu_pageset</tt> 分配。若未达到低水位线（<tt>per_cpu_pageset→low</tt>），则无需持有自旋锁即可从pageset分配。达到低水位线后，将在持有中断安全自旋锁的情况下批量分配大量页面，加入per-cpu列表，再返回一个给调用者。
+</p>
+
+<p>
+高阶分配（相对较少）仍需持有中断安全自旋锁，拆分和合并不会延迟。对于0阶分配，拆分会延迟到per-cpu集合的低水位线，合并会延迟到高水位线。
+</p>
+
+<p>
+严格来说，这并不是惰性伙伴算法 [BL89]。pageset引入了0阶分配的合并延迟，这是副作用而非有意为之，且没有机制来排空pageset并合并伙伴块。尽管per-cpu和新的计账代码大幅增加了 <tt>mm/page_alloc.c</tt> 的代码量，伙伴算法的核心与2.4相比并无变化。
+</p>
+
+<p>
+此改变的意义显而易见：减少了保护伙伴链表的自旋锁获取次数。高阶分配在Linux中相对较少，因此优化针对常见情况。此改变在多CPU机器上效果明显，对单CPU影响不大。pageset存在一些问题但不被认为是严重问题：
+</p>
+<ul>
+  <li>若pageset持有通常会合并为高阶连续块的0阶页面，高阶分配可能失败；</li>
+  <li>若内存不足、当前CPU的pageset为空而其他CPU的pageset已满，0阶分配可能失败（无机制从"远程"pageset回收页面）；</li>
+  <li>新释放页面的伙伴可能在其他pageset中，导致潜在的碎片问题。</li>
+</ul>
+
+<h5>释放页面</h5>
+
+<p>
+引入了两个新的释放API：<tt>free_hot_page()</tt> 和 <tt>free_cold_page()</tt>，分别将释放的页面放入per-cpu pageset的热页或冷页列表。但 <tt>free_cold_page()</tt> 虽然被导出，实际上从未被调用。
+</p>
+
+<p>
+来自 <tt>__free_pages()</tt> 的0阶页面释放以及 <tt>__page_cache_release()</tt> 引起的页缓存释放被放入热列表，而高阶分配则通过 <tt>__free_pages_ok()</tt> 立即释放。0阶分配通常与用户空间相关，是最常见的分配和释放类型，将它们保持在本地CPU可以减少锁竞争。
+</p>
+
+<p>
+最终，页面列表必须传递给 <tt>free_pages_bulk()</tt>，否则pageset列表会持有所有空闲页面。该函数接受页面块链表、每块的阶和从链表中释放的块数量。主要有两种使用场景：高阶释放传递给 <tt>__free_pages_ok()</tt>（页面块以指定阶放入链表，count为1）；以及当运行CPU的pageset达到高水位线时（以阶0和count=pageset→batch传递pageset）。
+</p>
+
+<p>
+一旦到达核心函数 <tt>__free_pages_bulk()</tt>，释放页面到伙伴链表的机制与2.4非常相似。
+</p>
+
+<h5>GFP 标志</h5>
+
+<p>
+仍然只有三个zone，zone修饰符保持不变，但新增了三个GFP标志，影响VM在满足请求时的努力程度：
+</p>
+
+<ul>
+  <li><strong><tt>__GFP_NOFAIL</tt></strong>：调用者要求分配永不失败，分配器应无限重试；</li>
+  <li><strong><tt>__GFP_REPEAT</tt></strong>：失败时应重试分配。当前实现与 <tt>__GFP_NOFAIL</tt> 行为相同，未来可能在一段时间后允许失败；</li>
+  <li><strong><tt>__GFP_NORETRY</tt></strong>：与 <tt>__GFP_NOFAIL</tt> 几乎相反，分配失败时应立即返回。</li>
+</ul>
+
+<p>
+撰写本文时，这些标志使用还不多，但已被引入并可能随时间增加使用量。<tt>__GFP_REPEAT</tt> 标志尤其可能被大量使用，因为实现其行为的代码块已遍布内核各处。
+</p>
+
+<p>
+新引入的分配修饰符 <tt>__GFP_COLD</tt> 用于确保从per-cpu列表的冷页中分配。VM层面，唯一使用此标志的是 <tt>page_cache_alloc_cold()</tt>，主要在IO预读时使用。通常页面分配会从热页列表取。
+</p>
+
+<p>
+最后一个新标志是 <tt>__GFP_NO_GROW</tt>，这是仅由slab分配器（第8章）使用的内部标志，是 <tt>SLAB_NO_GROW</tt> 标志的别名，用于指示永不为特定缓存分配新slab。实际上，引入此GFP标志只是为了补充目前在主内核中未使用的旧 <tt>SLAB_NO_GROW</tt> 标志。
+</p>
+
+  <nav>
+    [ <a href="understand008_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="understand010_zh.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <p><small>原文来源：<a href="../original_html/understand009.html">understand009.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
+
+</body>
+</html>
