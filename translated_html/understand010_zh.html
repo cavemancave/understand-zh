@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第七章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand009_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand011.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1>第七章　非连续内存分配</h1>
+  <div class="meta">原文版本：Chapter 7 — Non-Contiguous Memory Allocation</div>
+
+<p id="chap-non-contiguous-memory-allocation">
+在处理大量内存时，无论从缓存还是从内存访问延迟的角度考虑，使用物理上连续的页面都更为可取。然而，由于伙伴分配器存在外部碎片（external fragmentation）问题，这并非总能做到。Linux 通过 <tt>vmalloc()</tt> 提供了一种机制：使用物理上不连续，但在虚拟内存中连续的内存。
+</p>
+
+<p>
+内核在虚拟地址空间中预留了一块位于 <tt>VMALLOC_START</tt> 和 <tt>VMALLOC_END</tt> 之间的区域。<tt>VMALLOC_START</tt> 的位置取决于可用物理内存的大小，但该区域至少为 <tt>VMALLOC_RESERVE</tt> 大小，在 x86 上为 128MiB。该区域的具体大小在<a href="understand007_zh.html#sec: Linear Address Space">第 4.1 节</a>中讨论。
+</p>
+
+<p>
+这一区域中的页表会按需调整，以指向由普通物理页面分配器分配的物理页面。这意味着分配必须是硬件页面大小的整数倍。由于分配操作需要修改内核页表，<tt>vmalloc()</tt> 能够映射的内存量受限，因为只有 <tt>VMALLOC_START</tt> 到 <tt>VMALLOC_END</tt> 之间的虚拟地址空间可用。因此，它在内核核心代码中使用得很谨慎。在 <tt>2.4.22</tt> 中，它仅用于存储交换映射信息（见<a href="../original_html/understand014.html#chap: Swap Management">第 11 章</a>）以及将内核模块加载到内存中。
+</p>
+
+<p>
+本章篇幅较短，开头将描述内核如何跟踪 vmalloc 地址空间中哪些区域被使用，以及区域是如何分配和释放的。
+</p>
+
+<h2 class="section" id="sec7-1">7.1　描述虚拟内存区域</h2>
+
+<p>
+vmalloc 地址空间使用资源映射分配器（resource map allocator）[Vah96] 进行管理。<tt>struct vm_struct</tt> 负责存储（基址，大小）对，其定义在 &lt;<tt>linux/vmalloc.h</tt>&gt; 中：
+</p>
+
+<pre class="verbatim"> 14 struct vm_struct {
+ 15         unsigned long flags;
+ 16         void * addr;
+ 17         unsigned long size;
+ 18         struct vm_struct * next;
+ 19 };
+</pre>
+
+<p>
+本来可以使用完整的 VMA 结构，但其中包含许多对 vmalloc 区域不适用的额外信息，会造成浪费。下面简要说明这个小结构体中的各字段。
+</p>
+
+<dl>
+  <dt><strong>flags</strong></dt>
+  <dd>当用于 <tt>vmalloc()</tt> 时设置为 <tt>VM_ALLOC</tt>；当通过 ioremap 将高端内存映射到内核虚拟地址空间时设置为 <tt>VM_IOREMAP</tt>；</dd>
+  <dt><strong>addr</strong></dt>
+  <dd>内存块的起始地址；</dd>
+  <dt><strong>size</strong></dt>
+  <dd>不出所料，就是以字节为单位的大小；</dd>
+  <dt><strong>next</strong></dt>
+  <dd>指向下一个 <tt>vm_struct</tt> 的指针。这些结构按地址排序，链表由 <tt>vmlist_lock</tt> 锁保护。</dd>
+</dl>
+
+<p>
+显然，这些区域通过 <tt>next</tt> 字段串联起来，并按地址排序以便于简单查找。每个区域之间至少由一个页面分隔，以防越界。这一点如图 7.1 中各区域之间的间隙所示。
+</p>
+
+<div class="figure" id="fig-vmalloc-address-space">
+  <img src="../original_html/figures/understand-html033.png" alt="图 7.1：vmalloc 地址空间">
+  <div class="caption">图 7.1：vmalloc 地址空间</div>
+</div>
+
+<p>
+当内核希望分配一个新区域时，<tt>vm_struct</tt> 链表会被 <tt>get_vm_area()</tt> 函数线性搜索。该结构体所需的空间由 <tt>kmalloc()</tt> 分配。当虚拟区域用于为 IO 重新映射（通常称为 <em>ioremapping</em>）时，会直接调用此函数来映射所请求的区域。
+</p>
+
+<h2 class="section" id="sec7-2">7.2　分配非连续区域</h2>
+
+<div class="figure" id="fig-vmalloc">
+  <img src="../original_html/figures/understand-html034.png" alt="图 7.2：调用关系图：vmalloc()">
+  <div class="caption">图 7.2：调用关系图：<tt>vmalloc()</tt></div>
+</div>
+
+<p>
+<tt>vmalloc()</tt>、<tt>vmalloc_dma()</tt> 和 <tt>vmalloc_32()</tt> 这几个函数用于分配在虚拟地址空间上连续的内存区域。它们都只接受一个参数 <tt>size</tt>，并将其向上对齐到下一个页面边界。它们都返回新分配区域的线性地址。
+</p>
+
+<div class="table" id="tab-non-contiguous-memory-allocation-api">
+  <table border="1" cellspacing="0" cellpadding="4">
+    <tr><td><tt>void * vmalloc(unsigned long size)</tt></td></tr>
+    <tr><td>在 vmalloc 空间中分配满足请求大小的若干页面</td></tr>
+    <tr><td>&nbsp;</td></tr>
+    <tr><td><tt>void * vmalloc_dma(unsigned long size)</tt></td></tr>
+    <tr><td>从 <tt>ZONE_DMA</tt> 分配若干页面</td></tr>
+    <tr><td>&nbsp;</td></tr>
+    <tr><td><tt>void * vmalloc_32(unsigned long size)</tt></td></tr>
+    <tr><td>分配适用于 32 位寻址的内存。这确保物理页帧位于 <tt>ZONE_NORMAL</tt>，以满足 32 位设备的要求</td></tr>
+  </table>
+  <div class="caption">表 7.1：非连续内存分配 API</div>
+</div>
+
+<p>
+正如图 7.2 所示的调用关系图所示，分配该区域分为两个步骤。第一步由 <tt>get_vm_area()</tt> 完成，它查找一个足够大的区域以容纳请求。它在 <tt>vm_struct</tt> 的线性链表中搜索，并返回一个描述已分配区域的新结构体。
+</p>
+
+<p>
+第二步是通过 <tt>vmalloc_area_pages()</tt> 分配必要的 PGD 项、通过 <tt>alloc_area_pmd()</tt> 分配 PMD 项、通过 <tt>alloc_area_pte()</tt> 分配 PTE 项，最后通过 <tt>alloc_page()</tt> 分配页面。
+</p>
+
+<p>
+<tt>vmalloc()</tt> 更新的页表并非当前进程的页表，而是存放于 <tt>init_mm</tt>→<tt>pgd</tt> 的参考页表。这意味着进程在访问 vmalloc 区域时会触发缺页异常，因为其页表并未指向正确的区域。缺页处理代码中有一段特殊逻辑，能够识别故障发生在 vmalloc 区域，并使用主页表中的信息更新当前进程的页表。<tt>vmalloc()</tt> 与伙伴分配器及缺页处理之间的关系如图 7.3 所示。
+</p>
+
+<div class="figure" id="fig-relationship-vmalloc-alloc_page-page-faulting">
+  <img src="../original_html/figures/understand-html035.png" alt="图 7.3：vmalloc()、alloc_page() 与缺页处理之间的关系">
+  <div class="caption">图 7.3：<tt>vmalloc()</tt>、<tt>alloc_page()</tt> 与缺页处理之间的关系</div>
+</div>
+
+<h2 class="section" id="sec7-3">7.3　释放非连续区域</h2>
+
+<p>
+<tt>vfree()</tt> 函数负责释放一个虚拟区域。它线性搜索 <tt>vm_struct</tt> 链表，找到目标区域后调用 <tt>vmfree_area_pages()</tt> 释放该内存区域。
+</p>
+
+<div class="figure" id="fig-vfree">
+  <img src="../original_html/figures/understand-html036.png" alt="图 7.4：调用关系图：vfree()">
+  <div class="caption">图 7.4：调用关系图：<tt>vfree()</tt></div>
+</div>
+
+<p>
+<tt>vmfree_area_pages()</tt> 与 <tt>vmalloc_area_pages()</tt> 的作用完全相反。它遍历页表，释放区域对应的页表项和相关页面。
+</p>
+
+<div class="table" id="tab-non-contiguous-memory-free-api">
+  <table border="1" cellspacing="0" cellpadding="4">
+    <tr><td><tt>void vfree(void *addr)</tt></td></tr>
+    <tr><td>释放由 <tt>vmalloc()</tt>、<tt>vmalloc_dma()</tt> 或 <tt>vmalloc_32()</tt> 分配的内存区域</td></tr>
+  </table>
+  <div class="caption">表 7.2：非连续内存释放 API</div>
+</div>
+
+<h2 class="section" id="sec7-4">7.4　2.6 中的新变化</h2>
+
+<p>
+非连续内存分配在 2.6 中基本保持不变。主要区别在于内部 API 略有不同，影响了页面分配的时机。在 2.4 中，<tt>vmalloc_area_pages()</tt> 负责开始页表遍历，并在到达 PTE 时由 <tt>alloc_area_pte()</tt> 分配页面。在 2.6 中，所有页面都由 <tt>__vmalloc()</tt> 预先分配，然后放入一个数组中，传给 <tt>map_vm_area()</tt>，由其插入内核页表。
+</p>
+
+<p>
+<tt>get_vm_area()</tt> API 略有变化。被调用时，它的行为与之前一致，会在整个 vmalloc 虚拟地址空间中搜索空闲区域。然而，调用者可以通过直接调用 <tt>__get_vm_area()</tt> 并指定范围来只搜索 vmalloc 地址空间的子集。该用法仅在 ARM 架构加载模块时使用。
+</p>
+
+<p>
+最后一个值得注意的变化是引入了新接口 <tt>vmap()</tt>，用于将一组页面数组插入到 vmalloc 地址空间，仅由声音子系统核心使用。该接口被回移植到 2.4.22，但完全未被使用。它要么是一次意外的回移植，要么是为了便于应用需要 <tt>vmap()</tt> 的厂商专用补丁而合并进来的。
+</p>
+
+  <nav>
+    [ <a href="understand009_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand011.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <p><small>原文来源：<a href="../original_html/understand010.html">understand010.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
+</body>
+</html>
