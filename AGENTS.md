@@ -19,6 +19,17 @@ This file records the project owner's standing instructions. Agents (Copilot CLI
 - Translate `alt` text on images.
 - Keep the link to `understand_zh.css` intact.
 
+### Prose vs. code (especially in appendices)
+- **Code blocks (`<PRE>` / `<pre class="verbatim">`) are not translated.** Keep identifiers, keywords, string literals, and `/* … */` or `//` comments inside the code byte-for-byte identical to the source.
+- Only **prose between code blocks** is translated — paragraphs, headings, and the bulleted line-by-line explanations that follow each listing.
+- C identifiers in prose stay in English (wrap in `<tt>` or `<code>`); only the surrounding natural-language sentence is translated.
+- Verify by running `grep -c '<PRE' …` on both source and target — counts must match.
+
+### Navigation and cross-reference links
+- Links to sibling chapters (Prev / Next / Up / TOC and inline `<a href="understandNNN.html#anchor">…</a>` references) MUST point to the `_zh.html` version once that chapter has been translated.
+- If the target chapter is not yet translated, leave the link as `../original_html/understandNNN.html#anchor` as a placeholder.
+- Whenever a new chapter is translated, sweep existing translated files and rewrite any link whose target is now translated.
+
 ## Figures
 - Figures in the Chinese HTML files must be **inline `<svg>`** (not `<img>` to PNG).
 - SVG text/labels are translated to Chinese.
