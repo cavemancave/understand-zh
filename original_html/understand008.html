@@ -1,0 +1,344 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Boot Memory Allocator</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand007.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand009.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc34">Chapter 5</A>  Boot Memory Allocator</H1><P>
+<A NAME="chap: Boot Memory Allocator"></A></P><P>It is impractical to statically initialise all the core kernel memory
+structures at compile time as there are simply far too many permutations of
+hardware configurations. Yet to set up even the basic structures requires
+memory as even the physical page allocator, discussed in the next chapter,
+needs to allocate memory to initialise itself. But how can the physical page
+allocator allocate memory to initialise itself?</P><P>To address this, a specialised allocator called the <EM>Boot
+Memory Allocator</EM><A NAME="@mainindex516"></A> is used. It is based on the most basic of allocators,
+a <EM>First Fit</EM><A NAME="@mainindex517"></A> allocator which uses a bitmap to represent
+memory [<A HREF="understand031.html#tanenbaum01"><CITE>Tan01</CITE></A>] instead of linked lists of free blocks. If a bit
+is 1, the page is allocated and 0 if unallocated. To satisfy allocations of
+sizes smaller than a page, the allocator records the <EM>Page Frame
+Number (PFN)</EM><A NAME="@mainindex518"></A> of the last allocation and the offset the allocation ended
+at. Subsequent small allocations are &#X201C;merged&#X201D; together and stored on the
+same page.</P><P>The reader may ask why this allocator is not used for the running system. One
+compelling reason is that although the first fit allocator does not suffer badly
+from fragmentation [<A HREF="understand031.html#johnstone98"><CITE>JW98</CITE></A>], memory frequently has to linearly
+searched to satisfy an allocation. As this is examining bitmaps, it gets very
+expensive, especially as the first fit algorithm tends to leave many small
+free blocks at the beginning of physical memory which still get scanned for
+large allocations, thus making the process very wasteful [<A HREF="understand031.html#wilson95"><CITE>WJNB95</CITE></A>].</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex519"></A><TT>unsigned long init_bootmem(unsigned long start, unsigned long page)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This initialises the memory between 0 and the PFN <TT>page</TT>.
+The beginning of usable memory is at the PFN <TT>start</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex520"></A><TT>void reserve_bootmem(unsigned long addr, unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Mark the pages between the address <TT>addr</TT> and 
+<TT>addr+size</TT> reserved. Requests to partially reserve a page will result
+in the full page being reserved</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex521"></A><TT>void free_bootmem(unsigned long addr, unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Mark the pages between the address <TT>addr</TT> and
+<TT>addr+size</TT> free</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex522"></A><TT>void * alloc_bootmem(unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate <TT>size</TT> number of bytes from <TT>ZONE_NORMAL</TT>. The
+allocation will be aligned to the L1 hardware cache to get the maximum
+benefit from the hardware cache</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex523"></A><TT>void * alloc_bootmem_low(unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate <TT>size</TT> number of bytes from <TT>ZONE_DMA</TT>. The
+allocation will be aligned to the L1 hardware cache</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex524"></A><TT>void * alloc_bootmem_pages(unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate <TT>size</TT> number of bytes from <TT>ZONE_NORMAL</TT>
+aligned on a page size so that full pages will be returned to the caller</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex525"></A><TT>void * alloc_bootmem_low_pages(unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate <TT>size</TT> number of bytes from <TT>ZONE_NORMAL</TT> aligned
+on a page size so that full pages will be returned to the caller</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex526"></A><TT>unsigned long bootmem_bootmap_pages(unsigned long pages)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Calculate the number of pages required to store a bitmap
+representing the allocation state of <TT>pages</TT> number of pages</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex527"></A><TT>unsigned long free_all_bootmem()</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Used at the boot allocator end of life. It cycles through all
+pages in the bitmap. For each one that is free, the flags are cleared and
+the page is freed to the physical page allocator (See next chapter) so the
+runtime allocator can set up its free lists</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 5.1: Boot Memory Allocator API for UMA Architectures</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Boot Memory Allocator API
+for UMA Architectures"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>There are two very similar but distinct APIs for the allocator. One is for
+UMA architectures, listed in Table
+<A >??</A> and the other
+is for NUMA, listed in Table 
+<A >??</A>. The principle
+difference is that the NUMA API must be supplied with the node affected by
+the operation but as the callers of these APIs exist in the architecture
+dependant layer, it is not a significant problem.</P><P>This chapter will begin with a description of the structure the allocator
+uses to describe the physical memory available for each node. We will then
+illustrate how the limits of physical memory and the sizes of each zone are
+discovered before talking about how the information is used to initialised
+the boot memory allocator structures. The allocation and free routines will
+then be discussed before finally talking about how the boot memory allocator
+is retired.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex528"></A><TT>unsigned long init_bootmem_node(pg_data_t *pgdat, unsigned long
+freepfn, unsigned long startpfn, unsigned long endpfn)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> For use with NUMA architectures. It initialise the memory
+between PFNs <TT>startpfn</TT> and <TT>endpfn</TT> with the first usable
+PFN at <TT>freepfn</TT>. Once initialised, the <TT>pgdat</TT> node is
+inserted into the <TT>pgdat_list</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex529"></A><TT>void reserve_bootmem_node(pg_data_t *pgdat, unsigned long
+physaddr, unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Mark the pages between the address <TT>addr</TT> and
+<TT>addr+size</TT> on the specified node <TT>pgdat</TT> reserved. Requests
+to partially reserve a page will result in the full page being reserved</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex530"></A><TT>void free_bootmem_node(pg_data_t *pgdat, unsigned long physaddr,
+unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Mark the pages between the address <TT>addr</TT> and
+<TT>addr+size</TT> on the specified node <TT>pgdat</TT> free</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex531"></A><TT>void * alloc_bootmem_node(pg_data_t *pgdat, unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate <TT>size</TT> number of bytes from <TT>ZONE_NORMAL</TT> on
+the specified node <TT>pgdat</TT>. The allocation will be aligned to the
+L1 hardware cache to get the maximum benefit from the hardware cache</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex532"></A><TT>void * alloc_bootmem_pages_node(pg_data_t *pgdat, unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate <TT>size</TT> number of bytes from <TT>ZONE_NORMAL</TT> on
+the specified node <TT>pgdat</TT> aligned on a page size so that full pages
+will be returned to the caller</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex533"></A><TT>void * alloc_bootmem_low_pages_node(pg_data_t *pgdat, unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate <TT>size</TT> number of bytes from <TT>ZONE_NORMAL</TT> on
+the specified node <TT>pgdat</TT> aligned on a page size so that full pages
+will be returned to the caller</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex534"></A><TT>unsigned long free_all_bootmem_node(pg_data_t *pgdat)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Used at the boot allocator end of life. It cycles through all
+pages in the bitmap for the specified node. For each one that is free, the
+page flags are cleared and the page is freed to the physical page allocator
+(See next chapter) so the runtime allocator can set up its free lists</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 5.2: Boot Memory Allocator API for NUMA Architectures</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Boot Memory Allocator API
+for NUMA Architectures"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc36"></A><A NAME="htoc35">5.1</A>  Representing the Boot Map</H2><P>
+<A NAME="@mainindex535"></A></P><P>A <TT>bootmem_data</TT><A NAME="@mainindex536"></A> struct exists for each node of memory
+in the system. It contains the information needed for the boot memory
+allocator to allocate memory for a node such as the bitmap representing
+allocated pages and where the memory is located. It is declared as follows
+in &lt;<TT>linux/bootmem.h</TT>&gt;:</P><PRE CLASS="verbatim"> 25 typedef struct bootmem_data {
+ 26     unsigned long node_boot_start;
+ 27     unsigned long node_low_pfn;
+ 28     void *node_bootmem_map;
+ 29     unsigned long last_offset;
+ 30     unsigned long last_pos;
+ 31 } bootmem_data_t;
+</PRE><P>The fields of this struct are as follows:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_boot_start</B> This is the starting physical address of the
+represented block;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_low_pfn</B> This is the end physical address, in other words,
+the end of the <TT>ZONE_NORMAL</TT> this node represents;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_bootmem_map</B> This is the location of the bitmap representing
+allocated or free pages with each bit;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>last_offset</B> This is the offset within the the page of the end of
+the last allocation. If 0, the page used is full;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>last_pos</B> This is the the PFN of the page used with the last allocation.
+Using this with the <TT>last_offset</TT> field, a test can be made to
+see if allocations can be merged with the page used for the last allocation
+rather than using up a full new page.</DD></DL><H2 CLASS="section"><A NAME="toc37"></A><A NAME="htoc36">5.2</A>  Initialising the Boot Memory Allocator</H2><P>
+<A NAME="@mainindex537"></A>
+<A NAME="@mainindex538"></A></P><P>Each architecture is required to supply a <TT>setup_arch()</TT><A NAME="@mainindex539"></A> function
+which, among other tasks, is responsible for acquiring the necessary parameters
+to initialise the boot memory allocator.</P><P>Each architecture has its own function to get the necessary parameters. On
+the x86, it is called <TT>setup_memory()</TT><A NAME="@mainindex540"></A>, as discussed in Section
+<A HREF="understand005.html#sec: Calculating The Size of Zones">2.2.2</A>, but on other architectures such as
+MIPS or Sparc, it is called <TT>bootmem_init()</TT> or the case of the PPC,
+<TT>do_init_bootmem()</TT>. Regardless of the architecture, the tasks are
+essentially the same. The parameters it calculates are:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>min_low_pfn</B><A NAME="@mainindex541"></A>  This is the lowest PFN that is available in the system;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>max_low_pfn</B><A NAME="@mainindex542"></A>  This is the highest PFN that may be addressed by low
+memory (<TT>ZONE_NORMAL</TT>);</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>highstart_pfn</B><A NAME="@mainindex543"></A>  This is the PFN of the beginning of high memory
+(<TT>ZONE_HIGHMEM</TT>);</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>highend_pfn</B><A NAME="@mainindex544"></A>  This is the last PFN in high memory;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>max_pfn</B><A NAME="@mainindex545"></A>  Finally, this is the last PFN available to the system.</DD></DL><H3 CLASS="subsection">5.2.1  Initialising <TT>bootmem_data</TT></H3><P>
+<A NAME="sec: Initialising bootmem_data"></A></P><P>Once the limits of usable physical memory are discovered by
+<TT>setup_memory()</TT>, one of two boot memory initialisation
+functions is selected and provided with the start and end PFN for the
+node to be initialised. <TT>init_bootmem()</TT>, which initialises
+<TT>contig_page_data</TT>, is used by UMA architectures, while
+<TT>init_bootmem_node()</TT> is for NUMA to initialise a specified
+node. Both function are trivial and rely on <TT>init_bootmem_core()</TT>
+to do the real work.</P><P>The first task of the core function is to insert this
+<TT>pgdat_data_t</TT> into the <TT>pgdat_list</TT> as at the end of
+this function, the node is ready for use. It then records the starting and
+end address for this node in its associated <TT>bootmem_data_t</TT>
+and allocates the bitmap representing page allocations. The size in
+bytes, hence the division by 8, of the bitmap required is calculated as:</P><PRE>mapsize = ((end_pfn - start_pfn) + 7) / 8</PRE><P>The bitmap in stored at the physical address pointed to by</P><P><TT>bootmem_data_t</TT>&#X2192;<TT>node_boot_start</TT>
+and the virtual address to the map is placed in
+<TT>bootmem_data_t</TT>&#X2192;<TT>node_bootmem_map</TT>. As there is no
+architecture independent way to detect &#X201C;holes&#X201D; in memory, the entire bitmap
+is initialised to 1, effectively marking all pages allocated. It is up to the
+architecture dependent code to set the bits of usable pages to 0 although,
+in reality, the Sparc architecture is the only one which uses this bitmap. In
+the case of the x86, the function <TT>register_bootmem_low_pages()</TT>
+reads through the e820 map and calls <TT>free_bootmem()</TT> for each
+usable page to set the bit to 0 before using <TT>reserve_bootmem()</TT>
+to reserve the pages needed by the actual bitmap.</P><H2 CLASS="section"><A NAME="toc38"></A><A NAME="htoc37">5.3</A>  Allocating Memory</H2><P>The <TT>reserve_bootmem()</TT> function may be used to reserve
+pages for use by the caller but is very cumbersome to use for
+general allocations. There are four functions provided for easy
+allocations on UMA architectures called <TT>alloc_bootmem()</TT><A NAME="@mainindex546"></A>,
+<TT>alloc_bootmem_low()</TT><A NAME="@mainindex547"></A>, <TT>alloc_bootmem_pages()</TT><A NAME="@mainindex548"></A> and
+<TT>alloc_bootmem_low_pages()</TT><A NAME="@mainindex549"></A> which are fully described in Table
+<A >??</A>. All of these macros
+call <TT>__alloc_bootmem()</TT><A NAME="@mainindex550"></A> with different parameters. The call
+graph for these functions is shown in in Figure <A HREF="#fig: alloc_bootmem">5.1</A>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html026.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 5.1: Call Graph: <TT>alloc_bootmem()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: alloc_bootmem"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Similar functions exist for NUMA which take the node as an
+additional parameter, as listed in Table 
+<A >??</A>. They are called
+<TT>alloc_bootmem_node()</TT><A NAME="@mainindex551"></A>, <TT>alloc_bootmem_pages_node()</TT><A NAME="@mainindex552"></A>
+and <TT>alloc_bootmem_low_pages_node()</TT><A NAME="@mainindex553"></A>. All of these macros
+call <TT>__alloc_bootmem_node()</TT><A NAME="@mainindex554"></A> with different parameters.</P><P>The parameters to either <TT>__alloc_bootmem()</TT> and
+<TT>__alloc_bootmem_node()</TT><A NAME="@mainindex555"></A> are essentially the same. They are</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pgdat</B> This is the node to allocate from. It is omitted in the UMA
+case as it is assumed to be <TT>contig_page_data</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>size</B> This is the size in bytes of the requested allocation;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>align</B> This is the number of bytes that the request should be aligned
+to. For small allocations, they are aligned to <TT>SMP_CACHE_BYTES</TT>,
+which on the x86 will align to the L1 hardware cache;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>goal</B> This is the preferred starting address to begin allocating
+from. The &#X201C;low&#X201D; functions will start from physical address 0 where as the
+others will begin from <TT>MAX_DMA_ADDRESS</TT><A NAME="@mainindex556"></A> which is the maximum
+address DMA transfers may be made from on this architecture.</DD></DL><P>The core function for all the allocation APIs is
+<TT>__alloc_bootmem_core()</TT><A NAME="@mainindex557"></A>. It is a large function but with
+simple steps that can be broken down. The function linearly scans memory
+starting from the <TT>goal</TT> address for a block of memory large enough
+to satisfy the allocation. With the API, this address will either be 0 for
+DMA-friendly allocations or <TT>MAX_DMA_ADDRESS</TT> otherwise.</P><P>The clever part, and the main bulk of the function, deals with deciding
+if this new allocation can be merged with the previous one. It may be merged
+if the following conditions hold:</P><UL CLASS="itemize"><LI CLASS="li-itemize">The page used for the previous allocation
+(<TT>bootmem_data</TT>&#X2192;<TT>pos</TT>) is adjacent to the page found for this
+allocation;</LI><LI CLASS="li-itemize">The previous page has some free space in it
+(<TT>bootmem_data</TT>&#X2192;<TT>offset</TT> != 0);</LI><LI CLASS="li-itemize">The alignment is less than <TT>PAGE_SIZE</TT>.</LI></UL><P>Regardless of whether the allocations may be merged or not, the <TT>pos</TT>
+and <TT>offset</TT> fields will be updated to show the last page used
+for allocating and how much of the last page was used. If the last page was
+fully used, the offset is 0.</P><H2 CLASS="section"><A NAME="toc39"></A><A NAME="htoc38">5.4</A>  Freeing Memory</H2><P>In contrast to the allocation functions, only two free function
+are provided which are <TT>free_bootmem()</TT><A NAME="@mainindex558"></A> for UMA and
+<TT>free_bootmem_node()</TT><A NAME="@mainindex559"></A> for NUMA. They both call
+<TT>free_bootmem_core()</TT> with the only difference being that a
+<TT>pgdat</TT> is supplied with NUMA.</P><P>The core function is relatively simple in comparison to the rest of the
+allocator. For each <EM>full</EM> page affected by the free, the corresponding
+bit in the bitmap is set to 0. If it already was 0, <TT>BUG()</TT> is
+called to show a double-free occured. <TT>BUG()</TT><A NAME="@mainindex560"></A> is used when an
+unrecoverable error due to a kernel bug occurs. It terminates the running
+process and causes a kernel oops which shows a stack trace and debugging
+information that a developer can use to fix the bug.</P><P>An important restriction with the free functions is that only full pages may
+be freed. It is never recorded when a page is partially allocated so if only
+partially freed, the full page remains reserved. This is not as major a problem
+as it appears as the allocations always persist for the lifetime of the system;
+However, it is still an important restriction for developers during boot time.</P><H2 CLASS="section"><A NAME="toc40"></A><A NAME="htoc39">5.5</A>  Retiring the Boot Memory Allocator</H2><P>
+<A NAME="sec: Retiring the Boot Memory Allocator"></A>
+<A NAME="@mainindex561"></A>
+<A NAME="@mainindex562"></A>
+<A NAME="@mainindex563"></A></P><P>Late in the bootstrapping process, the function <TT>start_kernel()</TT>
+is called which knows it is safe to remove the boot allocator and all
+its associated data structures. Each architecture is required to provide
+a function <TT>mem_init()</TT><A NAME="@mainindex564"></A> that is responsible for destroying the
+boot memory allocator and its associated structures.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html027.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 5.2: Call Graph: <TT>mem_init()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: mem_init"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The purpose of the function is quite simple. It is responsible for calculating
+the dimensions of low and high memory and printing out an informational
+message to the user as well as performing final initialisations of the hardware
+if necessary. On the x86, the principal function of concern for the VM is the
+<TT>free_pages_init()</TT><A NAME="@mainindex565"></A>.</P><P>This function first tells the boot memory allocator to retire itself
+by calling <TT>free_all_bootmem()</TT><A NAME="@mainindex566"></A> for UMA architectures or
+<TT>free_all_bootmem_node()</TT><A NAME="@mainindex567"></A> for NUMA. Both call the core function
+<TT>free_all_bootmem_core()</TT><A NAME="@mainindex568"></A> with different parameters. The core
+function is simple in principle and performs the following tasks:</P><UL CLASS="itemize"><LI CLASS="li-itemize">For all unallocated pages known to the allocator for this node;
+<UL CLASS="itemize"><LI CLASS="li-itemize">
+Clear the <TT>PG_reserved</TT> flag in its struct page;
+</LI><LI CLASS="li-itemize">Set the count to 1;
+</LI><LI CLASS="li-itemize">Call <TT>__free_pages()</TT> so that the buddy allocator (discussed
+next chapter) can build its free lists.
+</LI></UL></LI><LI CLASS="li-itemize">Free all pages used for the bitmap and give them to the buddy allocator.</LI></UL><P>At this stage, the buddy allocator now has control of all the
+pages in low memory which leaves only the high memory pages. After
+<TT>free_all_bootmem()</TT> returns, it first counts the number
+of reserved pages for accounting purposes. The remainder of the
+<TT>free_pages_init()</TT> function is responsible for the high memory pages.
+However, at this point, it should be clear how the global <TT>mem_map</TT>
+array is allocated, initialised and the pages given to the main allocator.
+The basic flow used to initialise pages in low memory in a single node system
+is shown in Figure
+<A HREF="#fig: Initialising mem_map and the Main Physical Page Allocator">5.3</A>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html028.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 5.3: Initialising <TT>mem_map</TT> and the Main Physical Page Allocator</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Initialising mem_map and the Main Physical Page Allocator"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Once <TT>free_all_bootmem()</TT> returns, all the pages in <TT>ZONE_NORMAL</TT>
+have been given to the buddy allocator. To initialise the high memory pages,
+<TT>free_pages_init()</TT> calls <TT>one_highpage_init()</TT><A NAME="@mainindex569"></A> for
+every page between <TT>highstart_pfn</TT> and <TT>highend_pfn</TT>.
+<TT>one_highpage_init()</TT> simple clears the <TT>PG_reserved</TT>
+flag, sets the <TT>PG_highmem</TT> flag, sets the count to 1 and calls
+<TT>__free_pages()</TT> to release it to the buddy allocator in the same
+manner <TT>free_all_bootmem_core()</TT> did.</P><P><A NAME="@mainindex570"></A>At this point, the boot memory allocator
+is no longer required and the buddy allocator is the main physical page
+allocator for the system. An interesting feature to note is that not only
+is the data for the boot allocator removed but also all code that was used
+to bootstrap the system. All initilisation function that are required only
+during system start-up are marked <TT>__init</TT><A NAME="@mainindex571"></A> such as the following;</P><PRE CLASS="verbatim">321 unsigned long __init free_all_bootmem (void)
+</PRE><P>All of these functions are placed together in the <TT>.init</TT> section by
+the linker. On the x86, the function <TT>free_initmem()</TT><A NAME="@mainindex572"></A> walks through
+all pages from <TT>__init_begin</TT><A NAME="@mainindex573"></A> to <TT>__init_end</TT><A NAME="@mainindex574"></A>
+and frees up the pages to the buddy allocator. With this method, Linux can
+free up a considerable amount of memory that is used by bootstrapping code
+that is no longer required. For example, 27 pages were freed while booting
+the kernel running on the machine this document is composed on.</P><H2 CLASS="section"><A NAME="toc41"></A><A NAME="htoc40">5.6</A>  What's New in 2.6</H2><P>
+<A NAME="new: Boot Memory Allocator"></A></P><P>The boot memory allocator has not changed significantly since 2.4 and is mainly
+concerned with optimisations and some minor NUMA related modifications. The
+first optimisation is the addition of a <TT>last_success</TT> field to
+the <TT>bootmem_data_t</TT> struct. As the name suggests, it keeps
+track of the location of the last successful allocation to reduce search
+times. If an address is freed before <TT>last_success</TT>, it will be
+changed to the freed location.</P><P>The second optimisation is also related to the linear search. When searching
+for a free page, 2.4 test every bit which is expensive. 2.6 instead tests if
+a block of <TT>BITS_PER_LONG</TT> is all ones. If it's not, it will test
+each of the bits individually in that block. To help the linear search, nodes
+are ordered in order of their physical addresses by <TT>init_bootmem()</TT>.</P><P>The last change is related to NUMA and contiguous architectures. Contiguous
+architectures now define their own <TT>init_bootmem()</TT> function and
+any architecture can optionally define their own <TT>reserve_bootmem()</TT>
+function.
+
+	</P><HR>
+[ <A HREF="understand007.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand009.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

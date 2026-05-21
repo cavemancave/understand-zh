@@ -1,0 +1,1443 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Swap Management</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand027.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand029.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc459">Appendix K</A>  Swap Management</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc138"></A><A NAME="htoc460">K.1</A>  Scanning for Free Entries</H2><H3 CLASS="subsection"><A NAME="htoc461">K.1.1</A>  Function: get_swap_page</H3><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: get_swap_page"></A> <A NAME="@codeindex333"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand014.html#fig: get_swap_page">11.2</A>.
+This is the high level API function for searching the swap areas for a free
+swap lot and returning the resulting <TT>swp_entry_t</TT>.</P><PRE CLASS="verbatim"> 99 swp_entry_t get_swap_page(void)
+100 {
+101     struct swap_info_struct * p;
+102     unsigned long offset;
+103     swp_entry_t entry;
+104     int type, wrapped = 0;
+105 
+106     entry.val = 0;  /* Out of memory */
+107     swap_list_lock();
+108     type = swap_list.next;
+109     if (type &lt; 0)
+110         goto out;
+111     if (nr_swap_pages &lt;= 0)
+112         goto out;
+113 
+114     while (1) {
+115         p = &amp;swap_info[type];
+116         if ((p-&gt;flags &amp; SWP_WRITEOK) == SWP_WRITEOK) {
+117             swap_device_lock(p);
+118             offset = scan_swap_map(p);
+119             swap_device_unlock(p);
+120             if (offset) {
+121                 entry = SWP_ENTRY(type,offset);
+122                 type = swap_info[type].next;
+123                 if (type &lt; 0 ||
+124                     p-&gt;prio != swap_info[type].prio) {
+125                       swap_list.next = swap_list.head;
+126                 } else {
+127                     swap_list.next = type;
+128                 }
+129                 goto out;
+130             }
+131         }
+132         type = p-&gt;next;
+133         if (!wrapped) {
+134             if (type &lt; 0 || p-&gt;prio != swap_info[type].prio) {
+135                 type = swap_list.head;
+136                 wrapped = 1;
+137             }
+138         } else
+139             if (type &lt; 0)
+140                 goto out;     /* out of swap space */
+141     }
+142 out:
+143     swap_list_unlock();
+144     return entry;
+145 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>107</B>Lock the list of swap areas</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>108</B>Get the next swap area that is to be used for allocating from. This
+list will be ordered depending on the priority of the swap areas</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>109-110</B>If there are no swap areas, return NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>111-112</B>If the accounting says there are no available swap slots,
+return NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>114-141</B>Cycle through all swap areas</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>115</B>Get the current swap info struct from the <TT>swap_info</TT> array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>116</B>If this swap area is available for writing to and is active...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>117</B>Lock the swap area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>118</B>Call <TT>scan_swap_map()</TT>(See Section <A HREF="#func: scan_swap_map">K.1.2</A>)
+which searches the requested swap map for a free slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>119</B>Unlock the swap device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>120-130</B>If a slot was free...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>121</B>Encode an identifier for the entry with <TT>SWP_ENTRY()</TT><A NAME="@codeindex334"></A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>122</B>Record the next swap area to use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>123-126</B>If the next area is the end of the list or the priority of the
+next swap area does not match the current one, move back to the head</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>126-128</B>Otherwise move to the next area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>129</B>Goto <TT>out</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>132</B>Move to the next swap area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>133-138</B>Check for wrapaound. Set <TT>wrapped</TT> to 1 if we get to
+the end of the list of swap areas</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>139-140</B>If there was no available swap areas, goto out</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>142</B>The exit to this function</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>143</B>Unlock the swap area list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>144</B>Return the entry if one was found and NULL otherwise</DD></DL><H3 CLASS="subsection"><A NAME="htoc462">K.1.2</A>  Function: scan_swap_map</H3><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: scan_swap_map"></A> <A NAME="@codeindex335"></A></P><P>This function tries to allocate <TT>SWAPFILE_CLUSTER</TT> number of
+pages sequentially in swap. When it has allocated that many, it searches
+for another block of free slots of size <TT>SWAPFILE_CLUSTER</TT>. If
+it fails to find one, it resorts to allocating the first free slot. This
+clustering attempts to make sure that slots are allocated and freed in
+<TT>SWAPFILE_CLUSTER</TT> sized chunks.</P><PRE CLASS="verbatim"> 36 static inline int scan_swap_map(struct swap_info_struct *si)
+ 37 {
+ 38     unsigned long offset;
+ 47     if (si-&gt;cluster_nr) {
+ 48         while (si-&gt;cluster_next &lt;= si-&gt;highest_bit) {
+ 49             offset = si-&gt;cluster_next++;
+ 50             if (si-&gt;swap_map[offset])
+ 51                 continue;
+ 52             si-&gt;cluster_nr--;
+ 53             goto got_page;
+ 54         }
+ 55     }
+</PRE><P>Allocate <TT>SWAPFILE_CLUSTER</TT> pages sequentially.
+<TT>cluster_nr</TT> is initialised to <TT>SWAPFILE_CLUTER</TT> and
+decrements with each allocation</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>47</B>If <TT>cluster_nr</TT> is still postive, allocate the next
+available sequential slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>48</B>While the current offset to use (<TT>cluster_next</TT>) is less
+then the highest known free slot (<TT>highest_bit</TT>) then ...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>49</B>Record the offset and update <TT>cluster_next</TT> to the next
+free slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>50-51</B>If the slot is not actually free, move to the next one</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>52</B>Slot has been found, decrement the <TT>cluster_nr</TT> field</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>53</B>Goto the <TT>out</TT> path</DD></DL><PRE CLASS="verbatim"> 56     si-&gt;cluster_nr = SWAPFILE_CLUSTER;
+ 57 
+ 58     /* try to find an empty (even not aligned) cluster. */
+ 59     offset = si-&gt;lowest_bit;
+ 60  check_next_cluster:
+ 61     if (offset+SWAPFILE_CLUSTER-1 &lt;= si-&gt;highest_bit)
+ 62     {
+ 63         int nr;
+ 64         for (nr = offset; nr &lt; offset+SWAPFILE_CLUSTER; nr++)
+ 65             if (si-&gt;swap_map[nr])
+ 66             {
+ 67                 offset = nr+1;
+ 68                 goto check_next_cluster;
+ 69             }
+ 70         /* We found a completly empty cluster, so start
+ 71          * using it.
+ 72          */
+ 73         goto got_page;
+ 74     }
+</PRE><P>At this stage, <TT>SWAPFILE_CLUSTER</TT> pages have been allocated
+sequentially so find the next free block of <TT>SWAPFILE_CLUSTER</TT> pages.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>56</B>Re-initialise the count of sequential pages to allocate to
+<TT>SWAPFILE_CLUSTER</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>59</B>Starting searching at the lowest known free slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>61</B>If the offset plus the cluster size is less than the known last free
+slot, then examine all the pages to see if this is a large free block</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>64</B>Scan from <TT>offset</TT> to <TT>offset + SWAPFILE_CLUSTER</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>65-69</B>If this slot is used, then start searching again for a free slot
+beginning after this known alloated one</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>73</B>A large cluster was found so use it</DD></DL><PRE CLASS="verbatim"> 75     /* No luck, so now go finegrined as usual. -Andrea */
+ 76     for (offset = si-&gt;lowest_bit; offset &lt;= si-&gt;highest_bit ;
+                                offset++) {
+ 77         if (si-&gt;swap_map[offset])
+ 78             continue;
+ 79         si-&gt;lowest_bit = offset+1;
+</PRE><P>This unusual for loop extract starts scanning for a free page starting from
+<TT>lowest_bit</TT></P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>77-78</B>If the slot is in use, move to the next one</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>79</B>Update the <TT>lowest_bit</TT> known probable free slot to the
+succeeding one</DD></DL><PRE CLASS="verbatim"> 80     got_page:
+ 81         if (offset == si-&gt;lowest_bit)
+ 82             si-&gt;lowest_bit++;
+ 83         if (offset == si-&gt;highest_bit)
+ 84             si-&gt;highest_bit--;
+ 85         if (si-&gt;lowest_bit &gt; si-&gt;highest_bit) {
+ 86             si-&gt;lowest_bit = si-&gt;max;
+ 87             si-&gt;highest_bit = 0;
+ 88         }
+ 89         si-&gt;swap_map[offset] = 1;
+ 90         nr_swap_pages--;
+ 91         si-&gt;cluster_next = offset+1;
+ 92         return offset;
+ 93     }
+ 94     si-&gt;lowest_bit = si-&gt;max;
+ 95     si-&gt;highest_bit = 0;
+ 96     return 0;
+ 97 }
+</PRE><P>A slot has been found, do some housekeeping and return it</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>81-82</B>If this offset is the known lowest free
+slot(<TT>lowest_bit</TT>), increment it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>83-84</B>If this offset is the highest known likely free slot, decrement
+it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>85-88</B>If the low and high mark meet, the swap area is not worth
+searching any more because these marks represent the lowest and highest known
+free slots. Set the low slot to be the highest possible slot and the high mark
+to 0 to cut down on search time later. This will be fixed up the next time a
+slot is freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B>Set the reference count for the slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>90</B>Update the accounting for the number of available swap pages
+(<TT>nr_swap_pages</TT>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>91</B>Set <TT>cluster_next</TT> to the adjacent slot so the next
+search will start here</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>92</B>Return the free slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>94-96</B>No free slot available, mark the area unsearchable and return 0</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc139"></A><A NAME="htoc463">K.2</A>  Swap Cache</H2><H3 CLASS="subsection"><A NAME="htoc464">K.2.1</A>  Adding Pages to the Swap Cache</H3><H4 CLASS="subsubsection"><A NAME="htoc465">K.2.1.1</A>  Function: add_to_swap_cache</H4><P> <EM>Source: mm/swap_state.c</EM> <A NAME="func: add_to_swap_cache"></A> <A NAME="@codeindex336"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand014.html#fig: add_to_swap_cache">11.3</A>.
+This function wraps around the normal page cache handler. It first checks
+if the page is already in the swap cache with <TT>swap_duplicate()</TT>
+and if it does not, it calls <TT>add_to_page_cache_unique()</TT> instead.</P><PRE CLASS="verbatim"> 70 int add_to_swap_cache(struct page *page, swp_entry_t entry)
+ 71 {
+ 72     if (page-&gt;mapping)
+ 73         BUG();
+ 74     if (!swap_duplicate(entry)) {
+ 75         INC_CACHE_INFO(noent_race);
+ 76         return -ENOENT;
+ 77     }
+ 78     if (add_to_page_cache_unique(page, &amp;swapper_space, entry.val,
+ 79             page_hash(&amp;swapper_space, entry.val)) != 0) {
+ 80         swap_free(entry);
+ 81         INC_CACHE_INFO(exist_race);
+ 82         return -EEXIST;
+ 83     }
+ 84     if (!PageLocked(page))
+ 85         BUG();
+ 86     if (!PageSwapCache(page))
+ 87         BUG();
+ 88     INC_CACHE_INFO(add_total);
+ 89     return 0;
+ 90 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>72-73</B>A check is made with <TT>PageSwapCache()</TT> before this function
+is called to make sure the page is not already in the swap cache. This check
+here ensures the page has no other existing mapping in case the caller was
+careless and did not make the check</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>74-77</B>Use <TT>swap_duplicate()</TT> (See Section <A HREF="#func: swap_duplicate">K.2.1.2</A>)
+to try an increment the count for this entry. If a slot already exists in
+the <TT>swap_map</TT>, increment the statistic recording the number of
+races involving adding pages to the swap cache and return <TT>-ENOENT</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78</B>Try and add the page to the page cache with
+<TT>add_to_page_cache_unique()</TT> (See Section <A HREF="understand027.html#func: add_to_page_cache_unique">J.1.1.2</A>).
+This function is similar to <TT>add_to_page_cache()</TT> 
+(See Section <A HREF="understand027.html#func: add_to_page_cache">J.1.1.1</A>) except it searches the page cache for a
+duplicate entry with <TT>__find_page_nolock()</TT>. The managing address
+space is <TT>swapper_space</TT>. The &#X201C;offset within the file&#X201D; in this
+case is the offset within <TT>swap_map</TT>, hence <TT>entry.val</TT>
+and finally the page is hashed based on <TT>address_space</TT> and
+offset within <TT>swap_map</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>80-83</B>If it already existed in the page cache, we raced so increment
+the statistic recording the number of races to insert an existing page into
+the swap cache and return <TT>EEXIST</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>84-85</B>If the page is locked for IO, it is a bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>86-87</B>If it is not now in the swap cache, something went seriously
+wrong</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>88</B>Increment the statistic recording the total number of pages in the
+swap cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B>Return success</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc466">K.2.1.2</A>  Function: swap_duplicate</H4><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: swap_duplicate"></A> <A NAME="@codeindex337"></A></P><P>This function verifies a swap entry is valid and if so, increments its swap
+map count. </P><PRE CLASS="verbatim">1161 int swap_duplicate(swp_entry_t entry)
+1162 {
+1163     struct swap_info_struct * p;
+1164     unsigned long offset, type;
+1165     int result = 0;
+1166 
+1167     type = SWP_TYPE(entry);
+1168     if (type &gt;= nr_swapfiles)
+1169         goto bad_file;
+1170     p = type + swap_info;
+1171     offset = SWP_OFFSET(entry);
+1172 
+1173     swap_device_lock(p);
+1174     if (offset &lt; p-&gt;max &amp;&amp; p-&gt;swap_map[offset]) {
+1175         if (p-&gt;swap_map[offset] &lt; SWAP_MAP_MAX - 1) {
+1176             p-&gt;swap_map[offset]++;
+1177             result = 1;
+1178         } else if (p-&gt;swap_map[offset] &lt;= SWAP_MAP_MAX) {
+1179             if (swap_overflow++ &lt; 5)
+1180                 printk(KERN_WARNING "swap_dup: swap entry
+                              overflow\n");
+1181             p-&gt;swap_map[offset] = SWAP_MAP_MAX;
+1182             result = 1;
+1183         }
+1184     }
+1185     swap_device_unlock(p);
+1186 out:
+1187     return result;
+1188 
+1189 bad_file:
+1190     printk(KERN_ERR "swap_dup: %s%08lx\n", Bad_file, entry.val);
+1191     goto out;
+1192 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1161</B>The parameter is the swap entry to increase the <TT>swap_map</TT>
+count for</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1167-1169</B>Get the offset within the <TT>swap_info</TT> for the
+<TT>swap_info_struct</TT> containing this entry. If it is greater than
+the number of swap areas, goto <TT>bad_file</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1170-1171</B>Get the relevant <TT>swap_info_struct</TT> and get the
+offset within its <TT>swap_map</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1173</B>Lock the swap device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1174</B>Make a quick sanity check to ensure the offset is within the
+<TT>swap_map</TT> and that the slot indicated has a positive count. A 0 count
+would mean the slot is not free and this is a bogus <TT>swp_entry_t</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1175-1177</B>If the count is not <TT>SWAP_MAP_MAX</TT>, simply
+increment it and return 1 for success</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1178-1183</B>Else the count would overflow so set it to
+<TT>SWAP_MAP_MAX</TT> and reserve the slot permanently. In reality this
+condition is virtually impossible</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1185-1187</B>Unlock the swap device and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1190-1191</B>If a bad device was used, print out the error message and
+return failure</DD></DL><H3 CLASS="subsection"><A NAME="htoc467">K.2.2</A>  Deleting Pages from the Swap Cache</H3><H4 CLASS="subsubsection"><A NAME="htoc468">K.2.2.1</A>  Function: swap_free</H4><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: swap_free"></A> <A NAME="@codeindex338"></A></P><P>Decrements the corresponding <TT>swap_map</TT> entry for the
+<TT>swp_entry_t</TT></P><PRE CLASS="verbatim">214 void swap_free(swp_entry_t entry)
+215 {
+216     struct swap_info_struct * p;
+217 
+218     p = swap_info_get(entry);
+219     if (p) {
+220         swap_entry_free(p, SWP_OFFSET(entry));
+221         swap_info_put(p);
+222     }
+223 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>218</B><TT>swap_info_get()</TT> (See Section <A HREF="#func: swap_info_get">K.2.3.1</A>) fetches
+the correct <TT>swap_info_struct</TT> and performs a number of debugging
+checks to ensure it is a valid area and a valid <TT>swap_map</TT> entry. If
+all is sane, it will lock the swap device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>219-222</B>If it is valid, the corresponding <TT>swap_map</TT> entry is
+decremented with <TT>swap_entry_free()</TT> (See Section <A HREF="#func: swap_entry_free">K.2.2.2</A>)
+and <TT>swap_info_put()</TT> (See Section <A HREF="#func: swap_info_put">K.2.3.2</A>) called to free
+the device</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc469">K.2.2.2</A>  Function: swap_entry_free</H4><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: swap_entry_free"></A> <A NAME="@codeindex339"></A></P><PRE CLASS="verbatim">192 static int swap_entry_free(struct swap_info_struct *p, 
+                 unsigned long offset)
+193 {
+194     int count = p-&gt;swap_map[offset];
+195 
+196     if (count &lt; SWAP_MAP_MAX) {
+197         count--;
+198         p-&gt;swap_map[offset] = count;
+199         if (!count) {
+200             if (offset &lt; p-&gt;lowest_bit)
+201                 p-&gt;lowest_bit = offset;
+202             if (offset &gt; p-&gt;highest_bit)
+203                 p-&gt;highest_bit = offset;
+204             nr_swap_pages++;
+205         }
+206     }
+207     return count;
+208 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>194</B>Get the current count</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>196</B>If the count indicates the slot is not permanently reserved then..</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>197-198</B>Decrement the count and store it in the <TT>swap_map</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>199</B>If the count reaches 0, the slot is free so update some information</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>200-201</B>If this freed slot is below <TT>lowest_bit</TT>, update
+<TT>lowest_bit</TT> which indicates the lowest known free slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>202-203</B>Similarly, update the <TT>highest_bit</TT> if this newly
+freed slot is above it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>204</B>Increment the count indicating the number of free swap slots</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>207</B>Return the current count</DD></DL><H3 CLASS="subsection"><A NAME="htoc470">K.2.3</A>  Acquiring/Releasing Swap Cache Pages</H3><H4 CLASS="subsubsection"><A NAME="htoc471">K.2.3.1</A>  Function: swap_info_get</H4><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: swap_info_get"></A> <A NAME="@codeindex340"></A></P><P>This function finds the <TT>swap_info_struct</TT> for the given entry,
+performs some basic checking and then locks the device.</P><PRE CLASS="verbatim">147 static struct swap_info_struct * swap_info_get(swp_entry_t entry)
+148 {
+149     struct swap_info_struct * p;
+150     unsigned long offset, type;
+151 
+152     if (!entry.val)
+153         goto out;
+154     type = SWP_TYPE(entry);
+155     if (type &gt;= nr_swapfiles)
+156         goto bad_nofile;
+157     p = &amp; swap_info[type];
+158     if (!(p-&gt;flags &amp; SWP_USED))
+159         goto bad_device;
+160     offset = SWP_OFFSET(entry);
+161     if (offset &gt;= p-&gt;max)
+162         goto bad_offset;
+163     if (!p-&gt;swap_map[offset])
+164         goto bad_free;
+165     swap_list_lock();
+166     if (p-&gt;prio &gt; swap_info[swap_list.next].prio)
+167         swap_list.next = type;
+168     swap_device_lock(p);
+169     return p;
+170 
+171 bad_free:
+172     printk(KERN_ERR "swap_free: %s%08lx\n", Unused_offset, 
+                                                entry.val);
+173     goto out;
+174 bad_offset:
+175     printk(KERN_ERR "swap_free: %s%08lx\n", Bad_offset, 
+                                                entry.val);
+176     goto out;
+177 bad_device:
+178     printk(KERN_ERR "swap_free: %s%08lx\n", Unused_file, 
+                                                entry.val);
+179     goto out;
+180 bad_nofile:
+181     printk(KERN_ERR "swap_free: %s%08lx\n", Bad_file, 
+                                                entry.val);
+182 out:
+183     return NULL;
+184 } 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>152-153</B>If the supplied entry is NULL, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>154</B>Get the offset within the <TT>swap_info</TT> array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>155-156</B>Ensure it is a valid area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>157</B>Get the address of the area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>158-159</B>If the area is not active yet, print a bad device error and
+return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>160</B>Get the offset within the <TT>swap_map</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>161-162</B>Make sure the offset is not after the end of the map</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>163-164</B>Make sure the slot is currently in use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>165</B>Lock the swap area list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>166-167</B>If this area is of higher priority than the area that would be
+next, ensure the current area is used</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>168-169</B>Lock the swap device and return the swap area descriptor</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc472">K.2.3.2</A>  Function: swap_info_put</H4><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: swap_info_put"></A> <A NAME="@codeindex341"></A></P><P>This function simply unlocks the area and list</P><PRE CLASS="verbatim">186 static void swap_info_put(struct swap_info_struct * p)
+187 {
+188     swap_device_unlock(p);
+189     swap_list_unlock();
+190 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>188</B>Unlock the device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>189</B>Unlock the swap area list</DD></DL><H3 CLASS="subsection"><A NAME="htoc473">K.2.4</A>  Searching the Swap Cache</H3><H4 CLASS="subsubsection"><A NAME="htoc474">K.2.4.1</A>  Function: lookup_swap_cache</H4><P> <EM>Source: mm/swap_state.c</EM> <A NAME="func: lookup_swap_cache"></A> <A NAME="@codeindex342"></A></P><P>Top level function for finding a page in the swap cache</P><PRE CLASS="verbatim">161 struct page * lookup_swap_cache(swp_entry_t entry)
+162 {
+163     struct page *found;
+164 
+165     found = find_get_page(&amp;swapper_space, entry.val);
+166     /*
+167      * Unsafe to assert PageSwapCache and mapping on page found:
+168      * if SMP nothing prevents swapoff from deleting this page from
+169      * the swap cache at this moment.  find_lock_page would prevent
+170      * that, but no need to change: we _have_ got the right page.
+171      */
+172     INC_CACHE_INFO(find_total);
+173     if (found)
+174         INC_CACHE_INFO(find_success);
+175     return found;
+176 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>165</B><TT>find_get_page()</TT>(See Section <A HREF="understand027.html#func: find_get_page">J.1.4.1</A>) is the
+principle function for returning the <TT>struct page</TT>. It uses the
+normal page hashing and cache functions for quickly finding it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>172</B>Increase the statistic recording the number of times a page was
+searched for in the cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>173-174</B>If one was found, increment the successful find count</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>175</B>Return the <TT>struct page</TT> or NULL if it did not exist</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc140"></A><A NAME="htoc475">K.3</A>  Swap Area IO</H2><H3 CLASS="subsection"><A NAME="htoc476">K.3.1</A>  Reading Backing Storage</H3><H4 CLASS="subsubsection"><A NAME="htoc477">K.3.1.1</A>  Function: read_swap_cache_async</H4><P> <EM>Source: mm/swap_state.c</EM> <A NAME="func: read_swap_cache_async"></A> <A NAME="@codeindex343"></A></P><P>This function will either return the requsted page from the swap cache. If it
+does not exist, a page will be allocated, placed in the swap cache and the
+data is scheduled to be read from disk with <TT>rw_swap_page()</TT>.</P><PRE CLASS="verbatim">184 struct page * read_swap_cache_async(swp_entry_t entry)
+185 {
+186     struct page *found_page, *new_page = NULL;
+187     int err;
+188 
+189     do {
+196         found_page = find_get_page(&amp;swapper_space, entry.val);
+197         if (found_page)
+198             break;
+199 
+200         /*
+201          * Get a new page to read into from swap.
+202          */
+203         if (!new_page) {
+204             new_page = alloc_page(GFP_HIGHUSER);
+205             if (!new_page)
+206                 break;          /* Out of memory */
+207         }
+208 
+209         /*
+210          * Associate the page with swap entry in the swap cache.
+211          * May fail (-ENOENT) if swap entry has been freed since
+212          * our caller observed it.  May fail (-EEXIST) if there
+213          * is already a page associated with this entry in the
+214          * swap cache: added by a racing read_swap_cache_async,
+215          * or by try_to_swap_out (or shmem_writepage) re-using
+216          * the just freed swap entry for an existing page.
+217          */
+218         err = add_to_swap_cache(new_page, entry);
+219         if (!err) {
+220             /*
+221              * Initiate read into locked page and return.
+222              */
+223             rw_swap_page(READ, new_page);
+224             return new_page;
+225         }
+226     } while (err != -ENOENT);
+227 
+228     if (new_page)
+229         page_cache_release(new_page);
+230     return found_page;
+231 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>189</B>Loop in case <TT>add_to_swap_cache()</TT> fails to add a page to
+the swap cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>196</B>First search the swap cache with
+<TT>find_get_page()</TT>(See Section <A HREF="understand027.html#func: find_get_page">J.1.4.1</A>) to see if the page is
+already avaialble. Ordinarily, <TT>lookup_swap_cache()</TT>
+(See Section <A HREF="#func: lookup_swap_cache">K.2.4.1</A>) would be called but it updates statistics
+(such as the number of cache searches) so <TT>find_get_page()</TT>
+(See Section <A HREF="understand027.html#func: find_get_page">J.1.4.1</A>) is called directly</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>203-207</B>If the page is not in the swap cache and we have not allocated
+one yet, allocate one with <TT>alloc_page()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>218</B>Add the newly allocated page to the swap cache with
+<TT>add_to_swap_cache()</TT> (See Section <A HREF="#func: add_to_swap_cache">K.2.1.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>223</B>Schedule the data to be read with
+<TT>rw_swap_page()</TT>(See Section <A HREF="#func: rw_swap_page">K.3.3.1</A>). The page will be returned
+locked and will be unlocked when IO completes</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>224</B>Return the new page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>226</B>Loop until <TT>add_to_swap_cache()</TT> succeeds or another
+process successfully inserts the page into the swap cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>228-229</B>This is either the error path or another process added the
+page to the swap cache for us. If a new page was allocated, free it with
+<TT>page_cache_release()</TT> (See Section <A HREF="understand027.html#func: page_cache_release">J.1.3.2</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>230</B>Return either the page found in the swap cache or an error</DD></DL><H3 CLASS="subsection"><A NAME="htoc478">K.3.2</A>  Writing Backing Storage</H3><H4 CLASS="subsubsection"><A NAME="htoc479">K.3.2.1</A>  Function: swap_writepage</H4><P> <EM>Source: mm/swap_state.c</EM> <A NAME="func: swap_writepage"></A> <A NAME="@codeindex344"></A></P><P>This is the function registered in <TT>swap_aops</TT> for
+writing out pages. It's function is pretty simple. First it calls
+<TT>remove_exclusive_swap_page()</TT> to try and free the page. If the
+page was freed, then the page will be unlocked here before returning as
+there is no IO pending on the page. Otherwise <TT>rw_swap_page()</TT>
+is called to sync the page with backing storage.</P><PRE CLASS="verbatim"> 24 static int swap_writepage(struct page *page)
+ 25 {
+ 26     if (remove_exclusive_swap_page(page)) {
+ 27         UnlockPage(page);
+ 28         return 0;
+ 29     }
+ 30     rw_swap_page(WRITE, page);
+ 31     return 0;
+ 32 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>26-29</B><TT>remove_exclusive_swap_page()</TT>(See Section <A HREF="#func: remove_exclusive_swap_page">K.3.2.2</A>) 
+will reclaim the page from the swap cache if possible. If the page is 
+reclaimed, unlock it before returning</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>30</B>Otherwise the page is still in the swap cache so synchronise it
+with backing storage by calling <TT>rw_swap_page()</TT> 
+(See Section <A HREF="#func: rw_swap_page">K.3.3.1</A>)</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc480">K.3.2.2</A>  Function: remove_exclusive_swap_page</H4><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: remove_exclusive_swap_page"></A> <A NAME="@codeindex345"></A></P><P>This function will tries to work out if there is other processes sharing this
+page or not. If possible the page will be removed from the swap cache and
+freed. Once removed from the swap cache, <TT>swap_free()</TT> is decremented
+to indicate that the swap cache is no longer using the slot. The count will
+instead reflect the number of PTEs that contain a <TT>swp_entry_t</TT>
+for this slot.</P><PRE CLASS="verbatim">287 int remove_exclusive_swap_page(struct page *page)
+288 {
+289     int retval;
+290     struct swap_info_struct * p;
+291     swp_entry_t entry;
+292 
+293     if (!PageLocked(page))
+294         BUG();
+295     if (!PageSwapCache(page))
+296         return 0;
+297     if (page_count(page) - !!page-&gt;buffers != 2) /* 2: us + cache */
+298         return 0;
+299 
+300     entry.val = page-&gt;index;
+301     p = swap_info_get(entry);
+302     if (!p)
+303         return 0;
+304 
+305     /* Is the only swap cache user the cache itself? */
+306     retval = 0;
+307     if (p-&gt;swap_map[SWP_OFFSET(entry)] == 1) {
+308         /* Recheck the page count with the pagecache lock held.. */
+309         spin_lock(&amp;pagecache_lock);
+310         if (page_count(page) - !!page-&gt;buffers == 2) {
+311             __delete_from_swap_cache(page);
+312             SetPageDirty(page);
+313             retval = 1;
+314         }
+315         spin_unlock(&amp;pagecache_lock);
+316     }
+317     swap_info_put(p);
+318 
+319     if (retval) {
+320         block_flushpage(page, 0);
+321         swap_free(entry);
+322         page_cache_release(page);
+323     }
+324 
+325     return retval;
+326 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>293-294</B>This operation should only be made with the page locked</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>295-296</B>If the page is not in the swap cache, then there is nothing to
+do</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>297-298</B>If there are other users of the page, then it cannot be
+reclaimed so return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>300</B>The <TT>swp_entry_t</TT> for the page is stored in
+<TT>page</TT>&#X2192;<TT>index</TT> as explained in Section <A HREF="understand005.html#sec: Pages">2.4</A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>301</B>Get the <TT>swap_info_struct</TT> with
+<TT>swap_info_get()</TT> (See Section <A HREF="#func: swap_info_get">K.2.3.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>307</B>If the only user of the swap slot is the swap cache itself
+(i.e. no process is mapping it), then delete this page from the swap cache
+to free the slot. Later the swap slot usage count will be decremented as
+the swap cache is no longer using it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>310</B>If the current user is the only user of this page, then it is safe
+to remove from the swap cache. If another process is sharing it, it must remain
+here</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>311</B>Delete from the swap cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>313</B>Set <TT>retval</TT> to 1 so that the caller knows the page was
+freed and so that <TT>swap_free()</TT> (See Section <A HREF="#func: swap_free">K.2.2.1</A>) will be
+called to decrement the usage count in the <TT>swap_map</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>317</B>Drop the reference to the swap slot that was taken with
+<TT>swap_info_get()</TT> (See Section <A HREF="#func: swap_info_get">K.2.3.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>320</B>The slot is being freed to call <TT>block_flushpage()</TT> so that
+all IO will complete and any buffers associated with the page will be freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>321</B>Free the swap slot with <TT>swap_free()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>322</B>Drop the reference to the page</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc481">K.3.2.3</A>  Function: free_swap_and_cache</H4><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: free_swap_and_cache"></A> <A NAME="@codeindex346"></A></P><P>This function frees an entry from the swap cache and tries to reclaims the
+page. Note that this function only applies to the swap cache.</P><PRE CLASS="verbatim"> 
+332 void free_swap_and_cache(swp_entry_t entry)
+333 {
+334     struct swap_info_struct * p;
+335     struct page *page = NULL;
+336 
+337     p = swap_info_get(entry);
+338     if (p) {
+339         if (swap_entry_free(p, SWP_OFFSET(entry)) == 1)
+340             page = find_trylock_page(&amp;swapper_space, entry.val);
+341         swap_info_put(p);
+342     }
+343     if (page) {
+344         page_cache_get(page);
+345         /* Only cache user (+us), or swap space full? Free it! */
+346         if (page_count(page) - !!page-&gt;buffers == 2 || vm_swap_full()) {
+347             delete_from_swap_cache(page);
+348             SetPageDirty(page);
+349         }
+350         UnlockPage(page);
+351         page_cache_release(page);
+352     }
+353 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>337</B>Get the <TT>swap_info</TT> struct for the requsted
+<TT>entry</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>338-342</B>Presuming the swap area information struct exists, call
+<TT>swap_entry_free()</TT> to free the swap entry. The page for the
+<TT>entry</TT> is then located in the swap cache using
+<TT>find_trylock_page()</TT>. Note that the page is returned locked</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>341</B>Drop the reference taken to the swap info struct at line 337</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>343-352</B>If the page was located then we try to reclaim it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>344</B>Take a reference to the page so it will not be freed prematurly</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>346-349</B>The page is deleted from the swap cache if there are no
+processes mapping the page or if the swap area is more than 50% full (Checked
+by <TT>vm_swap_full()</TT><A NAME="@codeindex347"></A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>350</B>Unlock the page again</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>351</B>Drop the local reference to the page taken at line 344</DD></DL><H3 CLASS="subsection"><A NAME="htoc482">K.3.3</A>  Block IO</H3><H4 CLASS="subsubsection"><A NAME="htoc483">K.3.3.1</A>  Function: rw_swap_page</H4><P> <EM>Source: mm/page_io.c</EM> <A NAME="func: rw_swap_page"></A> <A NAME="@codeindex348"></A></P><P>This is the main function used for reading data from backing storage into
+a page or writing data from a page to backing storage. Which operation
+is performs depends on the first parameter <TT>rw</TT>. It is basically a
+wrapper function around the core function <TT>rw_swap_page_base()</TT>. This
+simply enforces that the operations are only performed on pages in the swap
+cache.</P><PRE CLASS="verbatim"> 85 void rw_swap_page(int rw, struct page *page)
+ 86 {
+ 87     swp_entry_t entry;
+ 88 
+ 89     entry.val = page-&gt;index;
+ 90 
+ 91     if (!PageLocked(page))
+ 92         PAGE_BUG(page);
+ 93     if (!PageSwapCache(page))
+ 94         PAGE_BUG(page);
+ 95     if (!rw_swap_page_base(rw, entry, page))
+ 96         UnlockPage(page);
+ 97 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>85</B><TT>rw</TT> indicates whether a read or write is taking place</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B>Get the <TT>swp_entry_t</TT> from the <TT>index</TT> field</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>91-92</B>If the page is not locked for IO, it is a bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>93-94</B>If the page is not in the swap cache, it is a bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>95</B>Call the core function <TT>rw_swap_page_base()</TT>. If it returns
+failure, the page is unlocked with <TT>UnlockPage()</TT> so it can be freed</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc484">K.3.3.2</A>  Function: rw_swap_page_base</H4><P> <EM>Source: mm/page_io.c</EM> <A NAME="func: rw_swap_page_base"></A> <A NAME="@codeindex349"></A></P><P>This is the core function for reading or writing data to the backing
+storage. Whether it is writing to a partition or a file, the block layer
+<TT>brw_page()</TT> function is used to perform the actual IO. This function
+sets up the necessary buffer information for the block layer to do it's job.
+The <TT>brw_page()</TT> performs asynchronous IO so it is likely it will
+return with the page locked which will be unlocked when the IO completes.</P><PRE CLASS="verbatim"> 36 static int rw_swap_page_base(int rw, swp_entry_t entry, 
+                                 struct page *page)
+ 37 {
+ 38     unsigned long offset;
+ 39     int zones[PAGE_SIZE/512];
+ 40     int zones_used;
+ 41     kdev_t dev = 0;
+ 42     int block_size;
+ 43     struct inode *swapf = 0;
+ 44 
+ 45     if (rw == READ) {
+ 46         ClearPageUptodate(page);
+ 47         kstat.pswpin++;
+ 48     } else
+ 49         kstat.pswpout++;
+ 50 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>36</B>The parameters are:
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>rw</B> indicates whether the operation is a read or a write
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>entry</B> is the swap entry for locating the data in backing storage
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>page</B> is the page that is been read or written to
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>39</B><TT>zones</TT> is a parameter required by the block layer for
+<TT>brw_page()</TT><A NAME="@codeindex350"></A>. It is expected to contain an array of block numbers
+that are to be written to. This is primarily of important when the backing
+storage is a file rather than a partition</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>45-47</B>If the page is to be read from disk, clear the
+<TT>Uptodate</TT> flag as the page is obviously not up to date if we are
+reading information from the disk. Increment the pages swapped in
+(<TT>pswpin</TT><A NAME="@codeindex351"></A>) statistic</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>49</B>Else just update the pages swapped out (<TT>pswpout</TT><A NAME="@codeindex352"></A>)
+statistic</DD></DL><PRE CLASS="verbatim"> 51     get_swaphandle_info(entry, &amp;offset, &amp;dev, &amp;swapf);
+ 52     if (dev) {
+ 53         zones[0] = offset;
+ 54         zones_used = 1;
+ 55         block_size = PAGE_SIZE;
+ 56     } else if (swapf) {
+ 57         int i, j;
+ 58         unsigned int block = 
+ 59              offset &lt;&lt; (PAGE_SHIFT - swapf-&gt;i_sb-&gt;s_blocksize_bits);
+ 60 
+ 61         block_size = swapf-&gt;i_sb-&gt;s_blocksize;
+ 62         for (i=0, j=0; j&lt; PAGE_SIZE ; i++, j += block_size)
+ 63             if (!(zones[i] = bmap(swapf,block++))) {
+ 64                 printk("rw_swap_page: bad swap file\n");
+ 65                 return 0;
+ 66             }
+ 67         zones_used = i;
+ 68         dev = swapf-&gt;i_dev;
+ 69     } else {
+ 70         return 0;
+ 71     }
+ 72 
+ 73     /* block_size == PAGE_SIZE/zones_used */
+ 74     brw_page(rw, page, dev, zones, block_size);
+ 75     return 1;
+ 76 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>51</B><TT>get_swaphandle_info()</TT>(See Section <A HREF="#func: get_swaphandle_info">K.3.3.3</A>)
+returns either the <TT>kdev_t</TT> or <TT>struct inode</TT> that
+represents the swap area, whichever is appropriate</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>52-55</B>If the storage area is a partition, then there is only one block
+to be written which is the size of a page. Hence, <TT>zones</TT> only has one
+entry which is the offset within the partition to be written and the
+<TT>block_size</TT> is <TT>PAGE_SIZE</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>56</B>Else it is a swap file so each of the blocks in the file that
+make up the page has to be mapped with <TT>bmap()</TT> before calling
+<TT>brw_page()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>58-59</B>Calculate what the starting <TT>block</TT> is</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>61</B>The size of individual block is stored in the superblock information
+for the filesystem the file resides on</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>62-66</B>Call <TT>bmap()</TT> for every block that makes up the full page.
+Each block is stored in the <TT>zones</TT> array for passing to
+<TT>brw_page()</TT>. If any block fails to be mapped, 0 is returned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>67</B>Record how many blocks make up the page in <TT>zones_used</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>68</B>Record which device is being written to</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>74</B>Call <TT>brw_page()</TT> from the block layer to schedule the IO to
+occur. This function returns immediately as the IO is asychronous. When the
+IO is completed, a callback function (<TT>end_buffer_io_async()</TT><A NAME="@codeindex353"></A>)
+is called which unlocks the page. Any process waiting on the page will be
+woken up at that point</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>75</B>Return success</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc485">K.3.3.3</A>  Function: get_swaphandle_info</H4><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: get_swaphandle_info"></A> <A NAME="@codeindex354"></A></P><P>This function is responsible for returning either the <TT>kdev_t</TT> or
+<TT>struct inode</TT> that is managing the swap area that <TT>entry</TT>
+belongs to.</P><PRE CLASS="verbatim">1197 void get_swaphandle_info(swp_entry_t entry, unsigned long *offset, 
+1198                         kdev_t *dev, struct inode **swapf)
+1199 {
+1200     unsigned long type;
+1201     struct swap_info_struct *p;
+1202 
+1203     type = SWP_TYPE(entry);
+1204     if (type &gt;= nr_swapfiles) {
+1205         printk(KERN_ERR "rw_swap_page: %s%08lx\n", Bad_file, 
+                                                        entry.val);
+1206         return;
+1207     }
+1208 
+1209     p = &amp;swap_info[type];
+1210     *offset = SWP_OFFSET(entry);
+1211     if (*offset &gt;= p-&gt;max &amp;&amp; *offset != 0) {
+1212         printk(KERN_ERR "rw_swap_page: %s%08lx\n", Bad_offset, 
+                                                        entry.val);
+1213         return;
+1214     }
+1215     if (p-&gt;swap_map &amp;&amp; !p-&gt;swap_map[*offset]) {
+1216         printk(KERN_ERR "rw_swap_page: %s%08lx\n", Unused_offset, 
+                                                        entry.val);
+1217         return;
+1218     }
+1219     if (!(p-&gt;flags &amp; SWP_USED)) {
+1220         printk(KERN_ERR "rw_swap_page: %s%08lx\n", Unused_file, 
+                                                        entry.val);
+1221         return;
+1222     }
+1223 
+1224     if (p-&gt;swap_device) {
+1225         *dev = p-&gt;swap_device;
+1226     } else if (p-&gt;swap_file) {
+1227         *swapf = p-&gt;swap_file-&gt;d_inode;
+1228     } else {
+1229         printk(KERN_ERR "rw_swap_page: no swap file or device\n");
+1230     }
+1231     return;
+1232 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1203</B>Extract which area within <TT>swap_info</TT> this
+<TT>entry</TT> belongs to</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1204-1206</B>If the index is for an area that does not exist, then print
+out an information message and return. <TT>Bad_file</TT> is a static array
+declared near the top of <TT>mm/swapfile.c</TT> that says &#X201C;Bad
+swap file entry&#X201D;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1209</B>Get the <TT>swap_info_struct</TT> from <TT>swap_info</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1210</B>Extrac the offset within the swap area for this <TT>entry</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1211-1214</B>Make sure the offset is not after the end of the file. Print
+out the message in <TT>Bad_offset</TT> if it is</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1215-1218</B>If the offset is currently not being used, it means that
+<TT>entry</TT> is a stale entry so print out the error message in
+<TT>Unused_offset</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1219-1222</B>If the swap area is currently not active, print out the error
+message in <TT>Unused_file</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1224</B>If the swap area is a device, return the <TT>kdev_t</TT> in
+<TT>swap_info_struct</TT>&#X2192;<TT>swap_device</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1226-1227</B>If it is a swap file, return the
+<TT>struct inode</TT> which is available via
+<TT>swap_info_struct</TT>&#X2192;<TT>swap_file</TT>&#X2192;<TT>d_inode</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1229</B>Else there is no swap file or device for this <TT>entry</TT> so
+print out the error message and return</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc141"></A><A NAME="htoc486">K.4</A>  Activating a Swap Area</H2><H3 CLASS="subsection"><A NAME="htoc487">K.4.1</A>  Function: sys_swapon</H3><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: sys_swapon"></A> <A NAME="@codeindex355"></A></P><P>This, quite large, function is responsible for the activating of swap space.
+Broadly speaking the tasks is takes are as follows;</P><UL CLASS="itemize"><LI CLASS="li-itemize">Find a free <TT>swap_info_struct</TT> in the <TT>swap_info</TT>
+array an initialise it with default values</LI><LI CLASS="li-itemize">Call <TT>user_path_walk()</TT> which traverses the directory tree
+for the supplied <TT>specialfile</TT> and populates a
+<TT>namidata</TT> structure with the available data on the file,
+such as the <TT>dentry</TT> and the filesystem information for where
+it is stored (<TT>vfsmount</TT>)</LI><LI CLASS="li-itemize">Populate <TT>swap_info_struct</TT> fields pertaining to the
+dimensions of the swap area and how to find it. If the swap
+area is a partition, the block size will be configured to the
+<TT>PAGE_SIZE</TT> before calculating the size. If it is a file,
+the information is obtained directly from the <TT>inode</TT></LI><LI CLASS="li-itemize">Ensure the area is not already activated. If not, allocate a page from
+memory and read the first page sized slot from the swap area. This page
+contains information such as the number of good slots and how to populate
+the <TT>swap_info_struct</TT>&#X2192;<TT>swap_map</TT> with the bad entries</LI><LI CLASS="li-itemize">Allocate memory with <TT>vmalloc()</TT> for
+<TT>swap_info_struct</TT>&#X2192;<TT>swap_map</TT> and initialise
+each entry with 0 for good slots and <TT>SWAP_MAP_BAD</TT>
+otherwise. Ideally the header information will be a version 2 file
+format as version 1 was limited to swap areas of just under 128MiB for
+architectures with 4KiB page sizes like the x86</LI><LI CLASS="li-itemize">After ensuring the information indicated in the header
+matches the actual swap area, fill in the remaining information in the
+<TT>swap_info_struct</TT> such as the maximum number of pages and
+the available good pages. Update the global statistics for
+<TT>nr_swap_pages</TT> and <TT>total_swap_pages</TT></LI><LI CLASS="li-itemize">The swap area is now fully active and initialised and so it is inserted
+into the swap list in the correct position based on priority of the newly
+activated area</LI></UL><PRE CLASS="verbatim">855 asmlinkage long sys_swapon(const char * specialfile, 
+                               int swap_flags)
+856 {
+857       struct swap_info_struct * p;
+858       struct nameidata nd;
+859       struct inode * swap_inode;
+860       unsigned int type;
+861       int i, j, prev;
+862       int error;
+863       static int least_priority = 0;
+864       union swap_header *swap_header = 0;
+865       int swap_header_version;
+866       int nr_good_pages = 0;
+867       unsigned long maxpages = 1;
+868       int swapfilesize;
+869       struct block_device *bdev = NULL;
+870       unsigned short *swap_map;
+871       
+872       if (!capable(CAP_SYS_ADMIN))
+873         return -EPERM;
+874       lock_kernel();
+875       swap_list_lock();
+876       p = swap_info;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>855</B>The two parameters are the path to the swap area and the flags for
+activation</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>872-873</B>The activating process must have the
+<TT>CAP_SYS_ADMIN</TT> capability or be the superuser to activate a swap
+area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>874</B>Acquire the Big Kernel Lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>875</B>Lock the list of swap areas</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>876</B>Get the first swap area in the <TT>swap_info</TT> array</DD></DL><PRE CLASS="verbatim">877       for (type = 0 ; type &lt; nr_swapfiles ; type++,p++)
+878         if (!(p-&gt;flags &amp; SWP_USED))
+879           break;
+880       error = -EPERM;
+881       if (type &gt;= MAX_SWAPFILES) {
+882         swap_list_unlock();
+883         goto out;
+884       }
+885       if (type &gt;= nr_swapfiles)
+886         nr_swapfiles = type+1;
+887       p-&gt;flags = SWP_USED;
+888       p-&gt;swap_file = NULL;
+889       p-&gt;swap_vfsmnt = NULL;
+890       p-&gt;swap_device = 0;
+891       p-&gt;swap_map = NULL;
+892       p-&gt;lowest_bit = 0;
+893       p-&gt;highest_bit = 0;
+894       p-&gt;cluster_nr = 0;
+895       p-&gt;sdev_lock = SPIN_LOCK_UNLOCKED;
+896       p-&gt;next = -1;
+897       if (swap_flags &amp; SWAP_FLAG_PREFER) {
+898         p-&gt;prio =
+899           (swap_flags &amp; SWAP_FLAG_PRIO_MASK)&gt;&gt;SWAP_FLAG_PRIO_SHIFT;
+900       } else {
+901         p-&gt;prio = --least_priority;
+902       }
+903       swap_list_unlock();
+</PRE><P>Find a free <TT>swap_info_struct</TT> and initialise it with default
+values</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>877-879</B>Cycle through the <TT>swap_info</TT> until a struct is found
+that is not in use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>880</B>By default the error returned is Permission Denied which indicates
+the caller did not have the proper permissions or too many swap areas are
+already in use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>881</B>If no struct was free, <TT>MAX_SWAPFILE</TT> areas have
+already been activated so unlock the swap list and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>885-886</B>If the selected swap area is after the last known active area
+(<TT>nr_swapfiles</TT>), then update <TT>nr_swapfiles</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>887</B>Set the flag indicating the area is in use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>888-896</B>Initialise fields to default values</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>897-902</B>If the caller has specified a priority, use it else set it to
+<TT>least_priority</TT> and decrement it. This way, the swap areas will be
+prioritised in order of activation</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>903</B>Release the swap list lock</DD></DL><PRE CLASS="verbatim">904       error = user_path_walk(specialfile, &amp;nd);
+905       if (error)
+906         goto bad_swap_2;
+907 
+908       p-&gt;swap_file = nd.dentry;
+909       p-&gt;swap_vfsmnt = nd.mnt;
+910       swap_inode = nd.dentry-&gt;d_inode;
+911       error = -EINVAL;
+912 
+</PRE><P>Traverse the VFS and get some information about the special file</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>904</B><TT>user_path_walk()</TT> traverses the directory structure to
+obtain a <TT>nameidata</TT> structure describing the <TT>specialfile</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>905-906</B>If it failed, return failure</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>908</B>Fill in the <TT>swap_file</TT> field with the returned
+<TT>dentry</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>909</B>Similarily, fill in the <TT>swap_vfsmnt</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>910</B>Record the inode of the special file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>911</B>Now the default error is <TT>-EINVAL</TT> indicating that the
+special file was found but it was not a block device or a regular file</DD></DL><PRE CLASS="verbatim">913       if (S_ISBLK(swap_inode-&gt;i_mode)) {
+914         kdev_t dev = swap_inode-&gt;i_rdev;
+915         struct block_device_operations *bdops;
+916         devfs_handle_t de;
+917 
+918         p-&gt;swap_device = dev;
+919         set_blocksize(dev, PAGE_SIZE);
+920         
+921         bd_acquire(swap_inode);
+922         bdev = swap_inode-&gt;i_bdev;
+923         de = devfs_get_handle_from_inode(swap_inode);
+924         bdops = devfs_get_ops(de);
+925         if (bdops) bdev-&gt;bd_op = bdops;
+926 
+927         error = blkdev_get(bdev, FMODE_READ|FMODE_WRITE, 0,
+                   BDEV_SWAP);
+928         devfs_put_ops(de);/* Decrement module use count 
+                               * now we're safe*/
+929         if (error)
+930           goto bad_swap_2;
+931         set_blocksize(dev, PAGE_SIZE);
+932         error = -ENODEV;
+933         if (!dev || (blk_size[MAJOR(dev)] &amp;&amp;
+934          !blk_size[MAJOR(dev)][MINOR(dev)]))
+935           goto bad_swap;
+936         swapfilesize = 0;
+937         if (blk_size[MAJOR(dev)])
+938           swapfilesize = blk_size[MAJOR(dev)][MINOR(dev)]
+939             &gt;&gt; (PAGE_SHIFT - 10);
+940       } else if (S_ISREG(swap_inode-&gt;i_mode))
+941         swapfilesize = swap_inode-&gt;i_size &gt;&gt; PAGE_SHIFT;
+942       else
+943         goto bad_swap;
+</PRE><P>If a partition, configure the block device before calculating the size of
+the area, else obtain it from the inode for the file.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>913</B>Check if the special file is a block device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>914-939</B>This code segment handles the case where the swap area is a
+partition</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>914</B>Record a pointer to the device structure for the block device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>918</B>Store a pointer to the device structure describing the special file
+which will be needed for block IO operations</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>919</B>Set the block size on the device to be <TT>PAGE_SIZE</TT> as it
+will be page sized chunks swap is interested in</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>921</B>The <TT>bd_acquire()</TT> function increments the usage count for
+this block device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>922</B>Get a pointer to the <TT>block_device</TT> structure which is a
+descriptor for the device file which is needed to open it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>923</B>Get a devfs handle if it is enabled. devfs is beyond the scope of
+this book</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>924-925</B>Increment the usage count of this device entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>927</B>Open the block device in read/write mode and set the
+<TT>BDEV_SWAP</TT> flag which is an enumerated type but is ignored when
+<TT>do_open()</TT> is called</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>928</B>Decrement the use count of the devfs entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>929-930</B>If an error occured on open, return failure</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>931</B>Set the block size again</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>932</B>After this point, the default error is to indicate no device could
+be found</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>933-935</B>Ensure the returned device is ok</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>937-939</B>Calculate the size of the swap file as the number of page sized
+chunks that exist in the block device as indicated by <TT>blk_size</TT>. The
+size of the swap area is calculated to make sure the information in the swap
+area is sane</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>941</B>If the swap area is a regular file, obtain the size directly from
+the inode and calculate how many page sized chunks exist</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>943</B>If the file is not a block device or regular file, return error</DD></DL><PRE CLASS="verbatim">945       error = -EBUSY;
+946       for (i = 0 ; i &lt; nr_swapfiles ; i++) {
+947         struct swap_info_struct *q = &amp;swap_info[i];
+948         if (i == type || !q-&gt;swap_file)
+949           continue;
+950         if (swap_inode-&gt;i_mapping ==
+             q-&gt;swap_file-&gt;d_inode-&gt;i_mapping)
+951           goto bad_swap;
+952       }
+953 
+954       swap_header = (void *) __get_free_page(GFP_USER);
+955       if (!swap_header) {
+956         printk("Unable to start swapping: out of memory :-)\n");
+957         error = -ENOMEM;
+958         goto bad_swap;
+959       }
+960 
+961       lock_page(virt_to_page(swap_header));
+962       rw_swap_page_nolock(READ, SWP_ENTRY(type,0), 
+            (char *) swap_header);
+963 
+964       if (!memcmp("SWAP-SPACE",swap_header-&gt;magic.magic,10))
+965         swap_header_version = 1;
+966       else if (!memcmp("SWAPSPACE2",swap_header-&gt;magic.magic,10))
+967         swap_header_version = 2;
+968       else {
+969         printk("Unable to find swap-space signature\n");
+970         error = -EINVAL;
+971         goto bad_swap;
+972       }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>945</B>The next check makes sure the area is not already active. If it is,
+the error <TT>-EBUSY</TT> will be returned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>946-962</B>Read through the while <TT>swap_info</TT> struct and ensure
+the area to be activated is not already active</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>954-959</B>Allocate a page for reading the swap area information from disk</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>961</B>The function <TT>lock_page()</TT><A NAME="@codeindex356"></A> locks a page and makes sure
+it is synced with disk if it is file backed. In this case, it'll just mark
+the page as locked which is required for the <TT>rw_swap_page_nolock()</TT>
+function</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>962</B>Read the first page slot in the swap area into
+<TT>swap_header</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>964-672</B>Check the version based on the swap area information is and
+set <TT>swap_header_version</TT> variable with it. If the swap area could
+not be identified, return <TT>-EINVAL</TT></DD></DL><PRE CLASS="verbatim">974       switch (swap_header_version) {
+975       case 1:
+976         memset(((char *) swap_header)+PAGE_SIZE-10,0,10);
+977         j = 0;
+978         p-&gt;lowest_bit = 0;
+979         p-&gt;highest_bit = 0;
+980         for (i = 1 ; i &lt; 8*PAGE_SIZE ; i++) {
+981           if (test_bit(i,(char *) swap_header)) {
+982             if (!p-&gt;lowest_bit)
+983                   p-&gt;lowest_bit = i;
+984             p-&gt;highest_bit = i;
+985             maxpages = i+1;
+986             j++;
+987           }
+988         }
+989         nr_good_pages = j;
+990         p-&gt;swap_map = vmalloc(maxpages * sizeof(short));
+991         if (!p-&gt;swap_map) {
+992           error = -ENOMEM;        
+993           goto bad_swap;
+994         }
+995         for (i = 1 ; i &lt; maxpages ; i++) {
+996           if (test_bit(i,(char *) swap_header))
+997             p-&gt;swap_map[i] = 0;
+998           else
+999             p-&gt;swap_map[i] = SWAP_MAP_BAD;
+1000         }
+1001         break;
+1002 
+</PRE><P>Read in the information needed to populate the <TT>swap_map</TT> when the
+swap area is version 1.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>976</B>Zero out the magic string identifing the version of the swap area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>978-979</B>Initialise fields in <TT>swap_info_struct</TT> to 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>980-988</B>A bitmap with 8*<TT>PAGE_SIZE</TT> entries is stored in
+the swap area. The full page, minus 10 bits for the magic string, is used to
+describe the swap map limiting swap areas to just under 128MiB in size. If the
+bit is set to 1, there is a slot on disk available. This pass will calculate
+how many slots are available so a <TT>swap_map</TT> may be allocated</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>981</B>Test if the bit for this slot is set</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>982-983</B>If the <TT>lowest_bit</TT> field is not yet set, set it to
+this slot. In most cases, <TT>lowest_bit</TT> will be initialised to 1</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>984</B>As long as new slots are found, keep updating the
+<TT>highest_bit</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>985</B>Count the number of pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>986</B><TT>j</TT> is the count of good pages in the area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>990</B>Allocate memory for the <TT>swap_map</TT> with <TT>vmalloc()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>991-994</B>If memory could not be allocated, return <TT>ENOMEM</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>995-1000</B>For each slot, check if the slot is &#X201C;good&#X201D;. If yes,
+initialise the slot count to 0, else set it to <TT>SWAP_MAP_BAD</TT> so
+it will not be used</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1001</B>Exit the switch statement</DD></DL><PRE CLASS="verbatim">1003       case 2:
+1006         if (swap_header-&gt;info.version != 1) {
+1007           printk(KERN_WARNING
+1008            "Unable to handle swap header version %d\n",
+1009            swap_header-&gt;info.version);
+1010           error = -EINVAL;
+1011           goto bad_swap;
+1012         }
+1013 
+1014         p-&gt;lowest_bit  = 1;
+1015         maxpages = SWP_OFFSET(SWP_ENTRY(0,~0UL)) - 1;
+1016         if (maxpages &gt; swap_header-&gt;info.last_page)
+1017           maxpages = swap_header-&gt;info.last_page;
+1018         p-&gt;highest_bit = maxpages - 1;
+1019 
+1020         error = -EINVAL;
+1021         if (swap_header-&gt;info.nr_badpages &gt; MAX_SWAP_BADPAGES)
+1022           goto bad_swap;
+1023         
+1025         if (!(p-&gt;swap_map = vmalloc(maxpages * sizeof(short)))) {
+1026           error = -ENOMEM;
+1027           goto bad_swap;
+1028         }
+1029 
+1030         error = 0;
+1031         memset(p-&gt;swap_map, 0, maxpages * sizeof(short));
+1032         for (i=0; i&lt;swap_header-&gt;info.nr_badpages; i++) {
+1033           int page = swap_header-&gt;info.badpages[i];
+1034           if (page &lt;= 0 || 
+             page &gt;= swap_header-&gt;info.last_page)
+1035             error = -EINVAL;
+1036           else
+1037             p-&gt;swap_map[page] = SWAP_MAP_BAD;
+1038         }
+1039         nr_good_pages = swap_header-&gt;info.last_page -
+1040             swap_header-&gt;info.nr_badpages -
+1041             1 /* header page */;
+1042         if (error) 
+1043           goto bad_swap;
+1044       }
+</PRE><P>Read the header information when the file format is version 2</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1006-1012</B>Make absolutly sure we can handle this swap file format and
+return <TT>-EINVAL</TT> if we cannot. Remember that with this version, the
+<TT>swap_header</TT> struct is placed nicely on disk</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1014</B>Initialise <TT>lowest_bit</TT> to the known lowest available
+slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1015-1017</B>Calculate the <TT>maxpages</TT> initially as the maximum
+possible size of a <TT>swap_map</TT> and then set it to the size indicated by
+the information on disk. This ensures the <TT>swap_map</TT> array is not
+accidently overloaded</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1018</B>Initialise <TT>highest_bit</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1020-1022</B>Make sure the number of bad pages that exist does not exceed
+<TT>MAX_SWAP_BADPAGES</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1025-1028</B>Allocate memory for the <TT>swap_map</TT> with
+<TT>vmalloc()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1031</B>Initialise the full <TT>swap_map</TT> to 0 indicating all slots
+are available</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1032-1038</B>Using the information loaded from disk, set each slot that is
+unusuable to <TT>SWAP_MAP_BAD</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1039-1041</B>Calculate the number of available good pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1042-1043</B>Return if an error occured</DD></DL><PRE CLASS="verbatim">1045       
+1046       if (swapfilesize &amp;&amp; maxpages &gt; swapfilesize) {
+1047         printk(KERN_WARNING
+1048          "Swap area shorter than signature indicates\n");
+1049         error = -EINVAL;
+1050         goto bad_swap;
+1051       }
+1052       if (!nr_good_pages) {
+1053         printk(KERN_WARNING "Empty swap-file\n");
+1054         error = -EINVAL;
+1055         goto bad_swap;
+1056       }
+1057       p-&gt;swap_map[0] = SWAP_MAP_BAD;
+1058       swap_list_lock();
+1059       swap_device_lock(p);
+1060       p-&gt;max = maxpages;
+1061       p-&gt;flags = SWP_WRITEOK;
+1062       p-&gt;pages = nr_good_pages;
+1063       nr_swap_pages += nr_good_pages;
+1064       total_swap_pages += nr_good_pages;
+1065       printk(KERN_INFO "Adding Swap: 
+                             %dk swap-space (priority %d)\n",
+1066        nr_good_pages&lt;&lt;(PAGE_SHIFT-10), p-&gt;prio);
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1046-1051</B>Ensure the information loaded from disk matches the actual
+dimensions of the swap area. If they do not match, print a warning and return
+an error</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1052-1056</B>If no good pages were available, return an error</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1057</B>Make sure the first page in the map containing the swap header
+information is not used. If it was, the header information would be overwritten
+the first time this area was used</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1058-1059</B>Lock the swap list and the swap device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1060-1062</B>Fill in the remaining fields in the
+<TT>swap_info_struct</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1063-1064</B>Update global statistics for the number of available swap
+pages (<TT>nr_swap_pages</TT>) and the total number of swap pages
+(<TT>total_swap_pages</TT>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1065-1066</B>Print an informational message about the swap activation</DD></DL><PRE CLASS="verbatim">1068       /* insert swap space into swap_list: */
+1069       prev = -1;
+1070       for (i = swap_list.head; i &gt;= 0; i = swap_info[i].next) {
+1071         if (p-&gt;prio &gt;= swap_info[i].prio) {
+1072           break;
+1073         }
+1074         prev = i;
+1075       }
+1076       p-&gt;next = i;
+1077       if (prev &lt; 0) {
+1078         swap_list.head = swap_list.next = p - swap_info;
+1079       } else {
+1080         swap_info[prev].next = p - swap_info;
+1081       }
+1082       swap_device_unlock(p);
+1083       swap_list_unlock();
+1084       error = 0;
+1085       goto out;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1070-1080</B>Insert the new swap area into the correct slot in the swap
+list based on priority</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1082</B>Unlock the swap device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1083</B>Unlock the swap list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1084-1085</B>Return success</DD></DL><PRE CLASS="verbatim">1086 bad_swap:
+1087       if (bdev)
+1088         blkdev_put(bdev, BDEV_SWAP);
+1089 bad_swap_2:
+1090       swap_list_lock();
+1091       swap_map = p-&gt;swap_map;
+1092       nd.mnt = p-&gt;swap_vfsmnt;
+1093       nd.dentry = p-&gt;swap_file;
+1094       p-&gt;swap_device = 0;
+1095       p-&gt;swap_file = NULL;
+1096       p-&gt;swap_vfsmnt = NULL;
+1097       p-&gt;swap_map = NULL;
+1098       p-&gt;flags = 0;
+1099       if (!(swap_flags &amp; SWAP_FLAG_PREFER))
+1100         ++least_priority;
+1101       swap_list_unlock();
+1102       if (swap_map)
+1103         vfree(swap_map);
+1104       path_release(&amp;nd);
+1105 out:
+1106       if (swap_header)
+1107         free_page((long) swap_header);
+1108       unlock_kernel();
+1109       return error;
+1110 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1087-1088</B>Drop the reference to the block device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1090-1104</B>This is the error path where the swap list need to be
+unlocked, the slot in <TT>swap_info</TT> reset to being unused and the memory
+allocated for <TT>swap_map</TT> freed if it was assigned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1104</B>Drop the reference to the special file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1106-1107</B>Release the page containing the swap header information as it
+is no longer needed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1108</B>Drop the Big Kernel Lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1109</B>Return the error or success value</DD></DL><H3 CLASS="subsection"><A NAME="htoc488">K.4.2</A>  Function: swap_setup</H3><P> <EM>Source: mm/swap.c</EM> <A NAME="func: swap_setup"></A> <A NAME="@codeindex357"></A></P><P>This function is called during the initialisation of <TT>kswapd</TT> to set
+the size of <TT>page_cluster</TT>. This variable determines how many pages
+readahead from files and from backing storage when paging in data.</P><PRE CLASS="verbatim">100 void __init swap_setup(void)
+101 {
+102     unsigned long megs = num_physpages &gt;&gt; (20 - PAGE_SHIFT);
+103 
+104     /* Use a smaller cluster for small-memory machines */
+105     if (megs &lt; 16)
+106         page_cluster = 2;
+107     else
+108         page_cluster = 3;
+109     /*
+110      * Right now other parts of the system means that we
+111      * _really_ don't want to cluster much more
+112      */
+113 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>102</B>Calculate how much memory the system has in megabytes</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>105</B>In low memory systems, set <TT>page_cluster</TT><A NAME="@codeindex358"></A> to 2 which
+means that, at most, 4 pages will be paged in from disk during readahead</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>108</B>Else readahead 8 pages</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc142"></A><A NAME="htoc489">K.5</A>  Deactivating a Swap Area</H2><H3 CLASS="subsection"><A NAME="htoc490">K.5.1</A>  Function: sys_swapoff</H3><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: sys_swapoff"></A> <A NAME="@codeindex359"></A></P><P>This function is principally concerned with updating the
+<TT>swap_info_struct</TT> and the swap lists. The main task of paging in
+all pages in the area is the responsibility of <TT>try_to_unuse()</TT>. The
+function tasks are broadly</P><UL CLASS="itemize"><LI CLASS="li-itemize">Call <TT>user_path_walk()</TT> to acquire the information about the
+special file to be deactivated and then take the BKL</LI><LI CLASS="li-itemize">Remove the <TT>swap_info_struct</TT> from the swap list and update
+the global statistics on the number of swap pages available
+(<TT>nr_swap_pages</TT>) and the total number of swap entries
+(<TT>total_swap_pages</TT>. Once this is acquired, the BKL can be
+released again</LI><LI CLASS="li-itemize">Call <TT>try_to_unuse()</TT> which will page in all pages from the swap
+area to be deactivated.</LI><LI CLASS="li-itemize">If there was not enough available memory to page in all the entries, the
+swap area is reinserted back into the running system as it cannot be
+simply dropped. If it succeeded, the <TT>swap_info_struct</TT>
+is placed into an uninitialised state and the <TT>swap_map</TT>
+memory freed with <TT>vfree()</TT></LI></UL><PRE CLASS="verbatim">720 asmlinkage long sys_swapoff(const char * specialfile)
+721 {
+722     struct swap_info_struct * p = NULL;
+723     unsigned short *swap_map;
+724     struct nameidata nd;
+725     int i, type, prev;
+726     int err;
+727     
+728     if (!capable(CAP_SYS_ADMIN))
+729         return -EPERM;
+730 
+731     err = user_path_walk(specialfile, &amp;nd);
+732     if (err)
+733         goto out;
+734 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>728-729</B>Only the superuser or a process with
+<TT>CAP_SYS_ADMIN</TT> capabilities may deactivate an area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>731-732</B>Acquire information about the special file representing the swap
+area with <TT>user_path_walk()</TT>. Goto <TT>out</TT> if an error occured</DD></DL><PRE CLASS="verbatim">735     lock_kernel();
+736     prev = -1;
+737     swap_list_lock();
+738     for (type = swap_list.head; type &gt;= 0; 
+         type = swap_info[type].next) {
+739         p = swap_info + type;
+740         if ((p-&gt;flags &amp; SWP_WRITEOK) == SWP_WRITEOK) {
+741             if (p-&gt;swap_file == nd.dentry)
+742               break;
+743         }
+744         prev = type;
+745     }
+746     err = -EINVAL;
+747     if (type &lt; 0) {
+748         swap_list_unlock();
+749         goto out_dput;
+750     }
+751 
+752     if (prev &lt; 0) {
+753         swap_list.head = p-&gt;next;
+754     } else {
+755         swap_info[prev].next = p-&gt;next;
+756     }
+757     if (type == swap_list.next) {
+758         /* just pick something that's safe... */
+759         swap_list.next = swap_list.head;
+760     }
+761     nr_swap_pages -= p-&gt;pages;
+762     total_swap_pages -= p-&gt;pages;
+763     p-&gt;flags = SWP_USED;
+</PRE><P>Acquire the BKL, find the <TT>swap_info_struct</TT> for the area to
+be deactivated and remove it from the swap list.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>735</B>Acquire the BKL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>737</B>Lock the swap list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>738-745</B>Traverse the swap list and find the
+<TT>swap_info_struct</TT> for the requested area. Use the
+<TT>dentry</TT> to identify the area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>747-750</B>If the struct could not be found, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>752-760</B>Remove from the swap list making sure that this is not the head</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>761</B>Update the total number of free swap slots</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>762</B>Update the total number of existing swap slots</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>763</B>Mark the area as active but may not be written to</DD></DL><PRE CLASS="verbatim">764     swap_list_unlock();
+765     unlock_kernel();
+766     err = try_to_unuse(type);
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>764</B>Unlock the swap list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>765</B>Release the BKL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>766</B>Page in all pages from this swap area</DD></DL><PRE CLASS="verbatim">767     lock_kernel();
+768     if (err) {
+769         /* re-insert swap space back into swap_list */
+770         swap_list_lock();
+771         for (prev = -1, i = swap_list.head; 
+                 i &gt;= 0; 
+                 prev = i, i = swap_info[i].next)
+772             if (p-&gt;prio &gt;= swap_info[i].prio)
+773                 break;
+774         p-&gt;next = i;
+775         if (prev &lt; 0)
+776             swap_list.head = swap_list.next = p - swap_info;
+777         else
+778             swap_info[prev].next = p - swap_info;
+779         nr_swap_pages += p-&gt;pages;
+780         total_swap_pages += p-&gt;pages;
+781         p-&gt;flags = SWP_WRITEOK;
+782         swap_list_unlock();
+783         goto out_dput;
+784     }
+</PRE><P>Acquire the BKL. If we failed to page in all pages, then reinsert the area
+into the swap list</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>767</B>Acquire the BKL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>770</B>Lock the swap list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>771-778</B>Reinsert the area into the swap list. The position it is
+inserted at depends on the swap area priority</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>779-780</B>Update the global statistics</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>781</B>Mark the area as safe to write to again</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>782-783</B>Unlock the swap list and return</DD></DL><PRE CLASS="verbatim">785     if (p-&gt;swap_device)
+786         blkdev_put(p-&gt;swap_file-&gt;d_inode-&gt;i_bdev, BDEV_SWAP);
+787     path_release(&amp;nd);
+788 
+789     swap_list_lock();
+790     swap_device_lock(p);
+791     nd.mnt = p-&gt;swap_vfsmnt;
+792     nd.dentry = p-&gt;swap_file;
+793     p-&gt;swap_vfsmnt = NULL;
+794     p-&gt;swap_file = NULL;
+795     p-&gt;swap_device = 0;
+796     p-&gt;max = 0;
+797     swap_map = p-&gt;swap_map;
+798     p-&gt;swap_map = NULL;
+799     p-&gt;flags = 0;
+800     swap_device_unlock(p);
+801     swap_list_unlock();
+802     vfree(swap_map);
+803     err = 0;
+804 
+805 out_dput:
+806     unlock_kernel();
+807     path_release(&amp;nd);
+808 out:
+809     return err;
+810 }
+</PRE><P>Else the swap area was successfully deactivated to close the block device and
+mark the <TT>swap_info_struct</TT> free</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>785-786</B>Close the block device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>787</B>Release the path information</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>789-790</B>Acquire the swap list and swap device lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>791-799</B>Reset the fields in <TT>swap_info_struct</TT> to default
+values</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>800-801</B>Release the swap list and swap device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>801</B>Free the memory used for the <TT>swap_map</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>806</B>Release the BKL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>807</B>Release the path information in the event we reached here via the
+error path</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>809</B>Return success or failure</DD></DL><H3 CLASS="subsection"><A NAME="htoc491">K.5.2</A>  Function: try_to_unuse</H3><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: try_to_unuse"></A> <A NAME="@codeindex360"></A></P><P>This function is heavily commented in the source code albeit it consists of
+speculation or is slightly inaccurate at parts. The comments are omitted here
+for brevity.</P><PRE CLASS="verbatim">513 static int try_to_unuse(unsigned int type)
+514 {
+515     struct swap_info_struct * si = &amp;swap_info[type];
+516     struct mm_struct *start_mm;
+517     unsigned short *swap_map;
+518     unsigned short swcount;
+519     struct page *page;
+520     swp_entry_t entry;
+521     int i = 0;
+522     int retval = 0;
+523     int reset_overflow = 0;
+525 
+540     start_mm = &amp;init_mm;
+541     atomic_inc(&amp;init_mm.mm_users);
+542 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>540-541</B>The starting <TT>mm_struct</TT> to page in pages for is
+<TT>init_mm</TT>. The count is incremented even though this particular struct
+will not disappear to prevent having to write special cases in the remainder of
+the function</DD></DL><PRE CLASS="verbatim">556     while ((i = find_next_to_unuse(si, i))) {
+557         /* 
+558          * Get a page for the entry, using the existing swap
+559          * cache page if there is one.  Otherwise, get a clean
+560          * page and read the swap into it. 
+561          */
+562         swap_map = &amp;si-&gt;swap_map[i];
+563         entry = SWP_ENTRY(type, i);
+564         page = read_swap_cache_async(entry);
+565         if (!page) {
+572             if (!*swap_map)
+573                 continue;
+574             retval = -ENOMEM;
+575             break;
+576         }
+577 
+578         /*
+579          * Don't hold on to start_mm if it looks like exiting.
+580          */
+581         if (atomic_read(&amp;start_mm-&gt;mm_users) == 1) {
+582             mmput(start_mm);
+583             start_mm = &amp;init_mm;
+584             atomic_inc(&amp;init_mm.mm_users);
+585         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>556</B>This is the beginning of the major loop in this function. Starting
+from the beginning of the <TT>swap_map</TT>, it searches for the next entry
+to be freed with <TT>find_next_to_unuse()</TT> until all swap map entries
+have been paged in</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>562-564</B>Get the <TT>swp_entry_t</TT> and call
+<TT>read_swap_cache_async()</TT> (See Section <A HREF="#func: read_swap_cache_async">K.3.1.1</A>)
+to find the page in the swap cache or have a new page allocated for reading
+in from the disk</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>565-576</B>If we failed to get the page, it means the slot has already been
+freed independently by another process or thread (process could be exiting
+elsewhere) or we are out of memory. If independently freed, we continue to the
+next map, else we return <TT>-ENOMEM</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>581</B>Check to make sure this mm is not exiting. If it is, decrement its
+count and go back to <TT>init_mm</TT></DD></DL><PRE CLASS="verbatim">587         /*
+588          * Wait for and lock page.  When do_swap_page races with
+589          * try_to_unuse, do_swap_page can handle the fault much
+590          * faster than try_to_unuse can locate the entry.  This
+591          * apparently redundant "wait_on_page" lets try_to_unuse
+592          * defer to do_swap_page in such a case - in some tests,
+593          * do_swap_page and try_to_unuse repeatedly compete.
+594          */
+595         wait_on_page(page);
+596         lock_page(page);
+597 
+598         /*
+599          * Remove all references to entry, without blocking.
+600          * Whenever we reach init_mm, there's no address space
+601          * to search, but use it as a reminder to search shmem.
+602          */
+603         shmem = 0;
+604         swcount = *swap_map;
+605         if (swcount &gt; 1) {
+606             flush_page_to_ram(page);
+607             if (start_mm == &amp;init_mm)
+608                 shmem = shmem_unuse(entry, page);
+609             else
+610                 unuse_process(start_mm, entry, page);
+611         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>595</B>Wait on the page to complete IO. Once it returns, we know for a fact
+the page exists in memory with the same information as that on disk</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>596</B>Lock the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>604</B>Get the swap map reference count</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>605</B>If the count is positive then...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>606</B>As the page is about to be inserted into proces page tables, it must
+be freed from the D-Cache or the process may not &#X201C;see&#X201D; changes made to the
+page by the kernel</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>607-608</B>If we are using the <TT>init_mm</TT>, call
+<TT>shmem_unuse()</TT> (See Section <A HREF="understand029.html#func: shmem_unuse">L.6.2</A>) which will free the page
+from any shared memory regions that are in use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>610</B>Else update the PTE in the current mm which references this page</DD></DL><PRE CLASS="verbatim">612         if (*swap_map &gt; 1) {
+613             int set_start_mm = (*swap_map &gt;= swcount);
+614             struct list_head *p = &amp;start_mm-&gt;mmlist;
+615             struct mm_struct *new_start_mm = start_mm;
+616             struct mm_struct *mm;
+617 
+618             spin_lock(&amp;mmlist_lock);
+619             while (*swap_map &gt; 1 &amp;&amp;
+620                 (p = p-&gt;next) != &amp;start_mm-&gt;mmlist) {
+621                 mm = list_entry(p, struct mm_struct,
+                            mmlist);
+622                 swcount = *swap_map;
+623                 if (mm == &amp;init_mm) {
+624                     set_start_mm = 1;
+625                     spin_unlock(&amp;mmlist_lock);
+626                     shmem = shmem_unuse(entry, page);
+627                     spin_lock(&amp;mmlist_lock);
+628                 } else
+629                     unuse_process(mm, entry, page);
+630                 if (set_start_mm &amp;&amp; *swap_map &lt; swcount) {
+631                     new_start_mm = mm;
+632                     set_start_mm = 0;
+633                 }
+634             }
+635             atomic_inc(&amp;new_start_mm-&gt;mm_users);
+636             spin_unlock(&amp;mmlist_lock);
+637             mmput(start_mm);
+638             start_mm = new_start_mm;
+639         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>612-637</B>If an entry still exists, begin traversing through all
+<TT>mm_structs</TT> finding references to this page and update the
+respective PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>618</B>Lock the mm list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>619-632</B>Keep searching until all <TT>mm_struct</TT>s have been
+found. Do not traverse the full list more than once</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>621</B>Get the <TT>mm_struct</TT> for this list entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>623-627</B>Call <TT>shmem_unuse()</TT>(See Section <A HREF="understand029.html#func: shmem_unuse">L.6.2</A>) if the
+mm is <TT>init_mm</TT> as that indicates that is a page from the virtual
+filesystem. Else call <TT>unuse_process()</TT> (See Section <A HREF="#func: unuse_process">K.5.3</A>)
+to traverse the current process's page tables searching for the swap entry. If
+found, the entry will be freed and the page reinstantiated in the PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>630-633</B>Record if we need to start searching <TT>mm_struct</TT>s
+starting from <TT>init_mm</TT> again</DD></DL><PRE CLASS="verbatim">654         if (*swap_map == SWAP_MAP_MAX) {
+655             swap_list_lock();
+656             swap_device_lock(si);
+657             nr_swap_pages++;
+658             *swap_map = 1;
+659             swap_device_unlock(si);
+660             swap_list_unlock();
+661             reset_overflow = 1;
+662         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>654</B>If the swap map entry is permanently mapped, we have to hope that
+all processes have their PTEs updated to point to the page and in reality the
+swap map entry is free. In reality, it is highly unlikely a slot would be
+permanetly reserved in the first place</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>645-661</B>Lock the list and swap device, set the swap map entry to 1,
+unlock them again and record that a reset overflow occured</DD></DL><PRE CLASS="verbatim">683         if ((*swap_map &gt; 1) &amp;&amp; PageDirty(page) &amp;&amp;
+                PageSwapCache(page)) {
+684             rw_swap_page(WRITE, page);
+685             lock_page(page);
+686         }
+687         if (PageSwapCache(page)) {
+688             if (shmem)
+689                 swap_duplicate(entry);
+690             else
+691                 delete_from_swap_cache(page);
+692         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>683-686</B>In the very rare event a reference still exists to the page,
+write the page back to disk so at least if another process really has a
+reference to it, it'll copy the page back in from disk correctly</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>687-689</B>If the page is in the swap cache and belongs to the shared
+memory filesystem, a new reference is taken to it wieh
+<TT>swap_duplicate()</TT> so we can try and remove it again later with
+<TT>shmem_unuse()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>691</B>Else, for normal pages, just delete them from the swap cache</DD></DL><PRE CLASS="verbatim">699         SetPageDirty(page);
+700         UnlockPage(page);
+701         page_cache_release(page);
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>699</B>Mark the page dirty so that the swap out code will preserve the page
+and if it needs to remove it again, it'll write it correctly to a new swap
+area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>700</B>Unlock the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>701</B>Release our reference to it in the page cache</DD></DL><PRE CLASS="verbatim">708         if (current-&gt;need_resched)
+714             schedule();
+715     }
+716 
+717     mmput(start_mm);
+718     if (reset_overflow) {
+714         printk(KERN_WARNING "swapoff: cleared swap entry
+                     overflow\n");
+715         swap_overflow = 0;
+716     }
+717     return retval;
+718 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>708-709</B>Call <TT>schedule()</TT> if necessary so the deactivation of
+swap does not hog the entire CPU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>717</B>Drop our reference to the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>718-721</B>If a permanently mapped page had to be removed, then print out a
+warning so that in the very unlikely event an error occurs later, there will be
+a hint to what might have happend</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>717</B>Return success or failure</DD></DL><H3 CLASS="subsection"><A NAME="htoc492">K.5.3</A>  Function: unuse_process</H3><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: unuse_process"></A> <A NAME="@codeindex361"></A></P><P>This function begins the page table walk required to remove the requested
+<TT>page</TT> and <TT>entry</TT> from the process page tables managed by
+<TT>mm</TT>. This is only required when a swap area is being deactivated so,
+while expensive, it is a very rare operation. This set of functions should
+be instantly recognisable as a standard page-table walk.</P><PRE CLASS="verbatim">454 static void unuse_process(struct mm_struct * mm,
+455                         swp_entry_t entry, struct page* page)
+456 {
+457     struct vm_area_struct* vma;
+458 
+459     /*
+460      * Go through process' page directory.
+461      */
+462     spin_lock(&amp;mm-&gt;page_table_lock);
+463     for (vma = mm-&gt;mmap; vma; vma = vma-&gt;vm_next) {
+464         pgd_t * pgd = pgd_offset(mm, vma-&gt;vm_start);
+465         unuse_vma(vma, pgd, entry, page);
+466     }
+467     spin_unlock(&amp;mm-&gt;page_table_lock);
+468     return;
+469 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>462</B>Lock the process page tables</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>463</B>Move through every VMA managed by this <TT>mm</TT>. Remember that
+one page frame could be mapped in multiple locations</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>462</B>Get the PGD managing the beginning of this VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>465</B>Call <TT>unuse_vma()</TT>(See Section <A HREF="#func: unuse_vma">K.5.4</A>) to search the
+VMA for the <TT>page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>467-468</B>The full <TT>mm</TT> has been searched so unlock the process
+page tables and return</DD></DL><H3 CLASS="subsection"><A NAME="htoc493">K.5.4</A>  Function: unuse_vma</H3><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: unuse_vma"></A> <A NAME="@codeindex362"></A></P><P>This function searches the requested VMA for page table entries mapping the
+<TT>page</TT> and using the given swap <TT>entry</TT>. It calls
+<TT>unuse_pgd()</TT> for every PGD this VMA maps.</P><PRE CLASS="verbatim">440 static void unuse_vma(struct vm_area_struct * vma, pgd_t *pgdir,
+441                         swp_entry_t entry, struct page* page)
+442 {
+443     unsigned long start = vma-&gt;vm_start, end = vma-&gt;vm_end;
+444 
+445     if (start &gt;= end)
+446         BUG();
+447     do {
+448         unuse_pgd(vma, pgdir, start, end - start, entry, page);
+449         start = (start + PGDIR_SIZE) &amp; PGDIR_MASK;
+450         pgdir++;
+451     } while (start &amp;&amp; (start &lt; end));
+452 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>443</B>Get the virtual addresses for ther <TT>start</TT> and <TT>end</TT>
+of the VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>445-446</B>Check that the <TT>start</TT> is not after the <TT>end</TT>.
+There would need to be serious braindamage in the kernel for this to occur</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>447-451</B>Walk through the VMA in <TT>PGDIR_SIZE</TT>-sized strides
+until the end of the VMA is reached. This effectively walks through every PGD
+that maps portions of this VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>448</B>Call <TT>unuse_pgd()</TT>(See Section <A HREF="#func: unuse_pgd">K.5.5</A>) to walk through
+just this PGD to unmap <TT>page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>449</B>Move the virtual address <TT>start</TT> to the beginning of the
+next PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>450</B>Move <TT>pgdir</TT> to the next PGD in the VMA</DD></DL><H3 CLASS="subsection"><A NAME="htoc494">K.5.5</A>  Function: unuse_pgd</H3><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: unuse_pgd"></A> <A NAME="@codeindex363"></A></P><P>This function searches the requested PGD for page table entries mapping the
+<TT>page</TT> and using the given swap <TT>entry</TT>. It calls
+<TT>unuse_pmd()</TT> for every PMD this PGD maps.</P><PRE CLASS="verbatim">409 static inline void unuse_pgd(struct vm_area_struct * vma, pgd_t *dir,
+410         unsigned long address, unsigned long size,
+411         swp_entry_t entry, struct page* page)
+412 {
+413     pmd_t * pmd;
+414     unsigned long offset, end;
+415 
+416     if (pgd_none(*dir))
+417         return;
+418     if (pgd_bad(*dir)) {
+419         pgd_ERROR(*dir);
+420         pgd_clear(dir);
+421         return;
+422     }
+423     pmd = pmd_offset(dir, address);
+424     offset = address &amp; PGDIR_MASK;
+425     address &amp;= ~PGDIR_MASK;
+426     end = address + size;
+427     if (end &gt; PGDIR_SIZE)
+428         end = PGDIR_SIZE;
+429     if (address &gt;= end)
+430         BUG();
+431     do {
+432         unuse_pmd(vma, pmd, address, end - address, offset, entry,
+433                   page);
+434         address = (address + PMD_SIZE) &amp; PMD_MASK;
+435         pmd++;
+436     } while (address &amp;&amp; (address &lt; end));
+437 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>416-417</B>If there is no PGD here, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>418-422</B>If the PGD is bad, then set the appropriate error, clear the PGD
+and return. There are very few architectures where this condition can occur</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>423</B>Get the address of the first PMD in this PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>424</B>Calculate <TT>offset</TT> as the offset within the PGD the
+<TT>address</TT> is for. Remember that the first time this function is called,
+it might be searching a partial PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>425</B>Align the <TT>address</TT> to the PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>426</B>Calculate the <TT>end</TT> address of the search</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>427-428</B>If the <TT>end</TT> is beyond this PGD, set the <TT>end</TT>
+just to the end of this PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>429-430</B>If the starting address is after the end address, something is
+very seriously wrong</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>431-436</B>Step through the PGD in <TT>PMD_SIZE</TT>-sized strides and
+call <TT>unuse_pmd()</TT> (See Section <A HREF="#func: unuse_pmd">K.5.6</A>) for every PMD in this PGD</DD></DL><H3 CLASS="subsection"><A NAME="htoc495">K.5.6</A>  Function: unuse_pmd</H3><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: unuse_pmd"></A> <A NAME="@codeindex364"></A></P><P>This function searches the requested PMD for page table entries mapping the
+<TT>page</TT> and using the given swap <TT>entry</TT>. It calls
+<TT>unuse_pte()</TT> for every PTE this PMD maps.</P><PRE CLASS="verbatim">381 static inline void unuse_pmd(struct vm_area_struct * vma, pmd_t *dir,
+382      unsigned long address, unsigned long size, unsigned long offset,
+383      swp_entry_t entry, struct page* page)
+384 {
+385     pte_t * pte;
+386     unsigned long end;
+387 
+388     if (pmd_none(*dir))
+389         return;
+390     if (pmd_bad(*dir)) {
+391         pmd_ERROR(*dir);
+392         pmd_clear(dir);
+393         return;
+394     }
+395     pte = pte_offset(dir, address);
+396     offset += address &amp; PMD_MASK;
+397     address &amp;= ~PMD_MASK;
+398     end = address + size;
+399     if (end &gt; PMD_SIZE)
+400         end = PMD_SIZE;
+401     do {
+402         unuse_pte(vma, offset+address-vma-&gt;vm_start, pte, entry, page);
+403         address += PAGE_SIZE;
+404         pte++;
+405     } while (address &amp;&amp; (address &lt; end));
+406 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>388-389</B>Return if no PMD exists</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>390-394</B>Set the appropriate error and clear the PMD if it is bad. There
+are very few architectures where this condition can occur</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>395</B>Calculate the starting PTE for this <TT>address</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>396</B>Set <TT>offset</TT> to be the offset within the PMD we are starting
+at</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>397</B>Align <TT>address</TT> to the PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>398-400</B>Calculate the <TT>end</TT> address. If it is beyond the end of
+this PMD, set it to the end of this PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>401-405</B>Step through this PMD in <TT>PAGE_SIZE</TT>-sized chunks
+and call <TT>unuse_pte()</TT> (See Section <A HREF="#func: unuse_pte">K.5.7</A>) for each PTE</DD></DL><H3 CLASS="subsection"><A NAME="htoc496">K.5.7</A>  Function: unuse_pte</H3><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: unuse_pte"></A> <A NAME="@codeindex365"></A></P><P>This function checks if the PTE at <TT>dir</TT> matches the <TT>entry</TT>
+we are searching for. If it does, the swap entry is freed and a reference is
+taken to the page representing the PTE that will be updated to map it.</P><PRE CLASS="verbatim">365 static inline void unuse_pte(struct vm_area_struct * vma, 
+            unsigned long address,
+366         pte_t *dir, swp_entry_t entry, struct page* page)
+367 {
+368     pte_t pte = *dir;
+369 
+370     if (likely(pte_to_swp_entry(pte).val != entry.val))
+371         return;
+372     if (unlikely(pte_none(pte) || pte_present(pte)))
+373         return;
+374     get_page(page);
+375     set_pte(dir, pte_mkold(mk_pte(page, vma-&gt;vm_page_prot)));
+376     swap_free(entry);
+377     ++vma-&gt;vm_mm-&gt;rss;
+378 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>370-371</B>If the <TT>entry</TT> does not match the PTE, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>372-373</B>If there is no PTE or it is already present (meaning there is no
+way this <TT>entry</TT> is mapped here), then return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>374</B>Otherwise we have found the entry we are looking for so take a
+reference to the page as a new PTE is about to map it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>375</B>Update the PTE to map <TT>page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>376</B>Free the swap entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>377</B>Increment the RSS count for this process</DD></DL><P>	</P><HR>
+[ <A HREF="understand027.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand029.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

@@ -1,0 +1,1217 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Page Frame Reclamation</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand026.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand028.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc398">Appendix J</A>  Page Frame Reclamation</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc131"></A><A NAME="htoc399">J.1</A>  Page Cache Operations</H2><P>This section addresses how pages are added and removed from the page cache and
+LRU lists, both of which are heavily intertwined. </P><H3 CLASS="subsection"><A NAME="htoc400">J.1.1</A>  Adding Pages to the Page Cache</H3><H4 CLASS="subsubsection"><A NAME="htoc401">J.1.1.1</A>  Function: add_to_page_cache</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: add_to_page_cache"></A> <A NAME="@codeindex285"></A></P><P>Acquire the lock protecting the page cache before calling
+<TT>__add_to_page_cache()</TT> which will add the page to the page hash
+table and inode queue which allows the pages belonging to files to be found
+quickly.</P><PRE CLASS="verbatim">667 void add_to_page_cache(struct page * page, 
+                     struct address_space * mapping,
+                      unsigned long offset)
+668 {
+669       spin_lock(&amp;pagecache_lock);
+670       __add_to_page_cache(page, mapping, 
+                        offset, page_hash(mapping, offset));
+671       spin_unlock(&amp;pagecache_lock);
+672       lru_cache_add(page);
+673 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>669</B>Acquire the lock protecting the page hash and inode queues</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>670</B>Call the function which performs the &#X201C;real&#X201D; work</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>671</B>Release the lock protecting the hash and inode queue</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>672</B>Add the page to the page cache. <TT>page_hash()</TT><A NAME="@codeindex286"></A> hashes into
+the page hash table based on the <TT>mapping</TT> and the <TT>offset</TT>
+within the file. If a page is returned, there was a collision and the
+colliding pages are chained with the <TT>page</TT>&#X2192;<TT>next_hash</TT>
+and <TT>page</TT>&#X2192;<TT>pprev_hash</TT> fields</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc402">J.1.1.2</A>  Function: add_to_page_cache_unique</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: add_to_page_cache_unique"></A> <A NAME="@codeindex287"></A></P><P>In many respects, this function is very similar to
+<TT>add_to_page_cache()</TT>. The principal difference is that this
+function will check the page cache with the <TT>pagecache_lock</TT> spinlock
+held before adding the page to the cache. It is for callers may race with
+another process for inserting a page in the cache such as
+<TT>add_to_swap_cache()</TT>(See Section <A HREF="understand028.html#func: add_to_swap_cache">K.2.1.1</A>).</P><PRE CLASS="verbatim">675 int add_to_page_cache_unique(struct page * page,
+676         struct address_space *mapping, unsigned long offset,
+677         struct page **hash)
+678 {
+679     int err;
+680     struct page *alias;
+681 
+682     spin_lock(&amp;pagecache_lock);
+683     alias = __find_page_nolock(mapping, offset, *hash);
+684 
+685     err = 1;
+686     if (!alias) {
+687         __add_to_page_cache(page,mapping,offset,hash);
+688         err = 0;
+689     }
+690 
+691     spin_unlock(&amp;pagecache_lock);
+692     if (!err)
+693         lru_cache_add(page);
+694     return err;
+695 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>682</B>Acquire the <TT>pagecache_lock</TT> for examining the cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>683</B>Check if the page already exists in the cache with
+<TT>__find_page_nolock()</TT> (See Section <A HREF="#func: __find_page_nolock">J.1.4.3</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>686-689</B>If the page does not exist in the cache, add it with
+<TT>__add_to_page_cache()</TT> (See Section <A HREF="#func: __add_to_page_cache">J.1.1.3</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>691</B>Release the <TT>pagecache_lock</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>692-693</B>If the page did not already exist in the page cache, add it to
+the LRU lists with <TT>lru_cache_add()</TT>(See Section <A HREF="#func: lru_cache_add">J.2.1.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>694</B>Return 0 if this call entered the page into the page cache and 1 if
+it already existed</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc403">J.1.1.3</A>  Function: __add_to_page_cache</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: __add_to_page_cache"></A> <A NAME="@codeindex288"></A></P><P>Clear all page flags, lock it, take a reference and add it to the inode and
+hash queues.</P><PRE CLASS="verbatim">653 static inline void __add_to_page_cache(struct page * page,
+654       struct address_space *mapping, unsigned long offset,
+655       struct page **hash)
+656 {
+657       unsigned long flags;
+658 
+659       flags = page-&gt;flags &amp; ~(1 &lt;&lt; PG_uptodate | 
+                            1 &lt;&lt; PG_error | 1 &lt;&lt; PG_dirty | 
+                            1 &lt;&lt; PG_referenced | 1 &lt;&lt; PG_arch_1 | 
+                            1 &lt;&lt; PG_checked);
+660       page-&gt;flags = flags | (1 &lt;&lt; PG_locked);
+661       page_cache_get(page);
+662       page-&gt;index = offset;
+663       add_page_to_inode_queue(mapping, page);
+664       add_page_to_hash_queue(page, hash);
+665 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>659</B>Clear all page flags</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>660</B>Lock the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>661</B>Take a reference to the page in case it gets freed prematurely</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>662</B>Update the index so it is known what file offset this page
+represents</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>663</B>Add the page to the inode queue with
+<TT>add_page_to_inode_queue()</TT> (See Section <A HREF="#func: add_page_to_inode_queue">J.1.1.4</A>). 
+This links the page via the <TT>page</TT>&#X2192;<TT>list</TT> to the
+<TT>clean_pages</TT> list in the <TT>address_space</TT> and points
+the <TT>page</TT>&#X2192;<TT>mapping</TT> to the same <TT>address_space</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>664</B>Add it to the page hash with <TT>add_page_to_hash_queue()</TT>
+(See Section <A HREF="#func: add_page_to_hash_queue">J.1.1.5</A>). The <TT>hash</TT> page was returned
+by <TT>page_hash()</TT> in the parent function. The page hash allows page
+cache pages without having to lineraly search the inode queue</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc404">J.1.1.4</A>  Function: add_page_to_inode_queue</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: add_page_to_inode_queue"></A> <A NAME="@codeindex289"></A></P><PRE CLASS="verbatim"> 85 static inline void add_page_to_inode_queue(
+                       struct address_space *mapping, struct page * page)
+ 86 {
+ 87     struct list_head *head = &amp;mapping-&gt;clean_pages;
+ 88 
+ 89     mapping-&gt;nrpages++;
+ 90     list_add(&amp;page-&gt;list, head);
+ 91     page-&gt;mapping = mapping;
+ 92 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>87</B>When this function is called, the page is clean, so 
+<TT>mapping</TT>&#X2192;<TT>clean_pages</TT> is the list of interest</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B>Increment the number of pages that belong to this <TT>mapping</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>90</B>Add the page to the clean list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>91</B>Set the <TT>page</TT>&#X2192;<TT>mapping</TT> field</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc405">J.1.1.5</A>  Function: add_page_to_hash_queue</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: add_page_to_hash_queue"></A> <A NAME="@codeindex290"></A></P><P>This adds <TT>page</TT> to the top of hash bucket headed by <TT>p</TT>. Bear
+in mind that <TT>p</TT> is an element of the array
+<TT>page_hash_table</TT><A NAME="@codeindex291"></A>.</P><PRE CLASS="verbatim"> 71 static void add_page_to_hash_queue(struct page * page, 
+                                       struct page **p)
+ 72 {
+ 73     struct page *next = *p;
+ 74 
+ 75     *p = page;
+ 76     page-&gt;next_hash = next;
+ 77     page-&gt;pprev_hash = p;
+ 78     if (next)
+ 79         next-&gt;pprev_hash = &amp;page-&gt;next_hash;
+ 80     if (page-&gt;buffers)
+ 81         PAGE_BUG(page);
+ 82     atomic_inc(&amp;page_cache_size);
+ 83 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>73</B>Record the current head of the hash bucket in <TT>next</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>75</B>Update the head of the hash bucket to be <TT>page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>76</B>Point <TT>page</TT>&#X2192;<TT>next_hash</TT> to the old head of the hash
+bucket</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>77</B>Point <TT>page</TT>&#X2192;<TT>pprev_hash</TT> to point to the array
+element in <TT>page_hash_table</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-79</B>This will point the <TT>pprev_hash</TT> field to the head of
+the hash bucket completing the insertion of the <TT>page</TT> into the linked
+list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>80-81</B>Check that the page entered has no associated buffers</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>82</B>Increment <TT>page_cache_size</TT><A NAME="@codeindex292"></A> which is the size of the
+page cache</DD></DL><H3 CLASS="subsection"><A NAME="htoc406">J.1.2</A>  Deleting Pages from the Page Cache</H3><H4 CLASS="subsubsection"><A NAME="htoc407">J.1.2.1</A>  Function: remove_inode_page</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: remove_inode_page"></A> <A NAME="@codeindex293"></A></P><PRE CLASS="verbatim">130 void remove_inode_page(struct page *page)
+131 {
+132     if (!PageLocked(page))
+133         PAGE_BUG(page);
+134 
+135     spin_lock(&amp;pagecache_lock);
+136     __remove_inode_page(page);
+137     spin_unlock(&amp;pagecache_lock);
+138 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>132-133</B>If the page is not locked, it is a bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>135</B>Acquire the lock protecting the page cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>136</B><TT>__remove_inode_page()</TT> (See Section <A HREF="#func: __remove_inode_page">J.1.2.2</A>)
+is the top-level function for when the pagecache lock is held</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>137</B>Release the pagecache lock</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc408">J.1.2.2</A>  Function: __remove_inode_page</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: __remove_inode_page"></A> <A NAME="@codeindex294"></A></P><P>This is the top-level function for removing a page from the page cache for
+callers with the <TT>pagecache_lock</TT> spinlock held. Callers that do not
+have this lock acquired should call <TT>remove_inode_page()</TT>.</P><PRE CLASS="verbatim">124 void __remove_inode_page(struct page *page)
+125 {
+126         remove_page_from_inode_queue(page);
+127         remove_page_from_hash_queue(page);
+128 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>126</B><TT>remove_page_from_inode_queue()</TT> (See Section <A HREF="#func: remove_page_from_inode_queue">J.1.2.3</A>)
+remove the page from it's <TT>address_space</TT> at
+<TT>page</TT>&#X2192;<TT>mapping</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>127</B><TT>remove_page_from_hash_queue()</TT> removes the page from the
+hash table in <TT>page_hash_table</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc409">J.1.2.3</A>  Function: remove_page_from_inode_queue</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: remove_page_from_inode_queue"></A> <A NAME="@codeindex295"></A></P><PRE CLASS="verbatim"> 94 static inline void remove_page_from_inode_queue(struct page * page)
+ 95 {
+ 96     struct address_space * mapping = page-&gt;mapping;
+ 97 
+ 98     if (mapping-&gt;a_ops-&gt;removepage)
+ 99         mapping-&gt;a_ops-&gt;removepage(page);
+100     list_del(&amp;page-&gt;list);
+101     page-&gt;mapping = NULL;
+102     wmb();
+103     mapping-&gt;nr_pages--;
+104 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>96</B>Get the associated <TT>address_space</TT> for this
+<TT>page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>98-99</B>Call the filesystem specific <TT>removepage()</TT> function if
+one is available</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>100</B>Delete the page from whatever list it belongs to in the
+<TT>mapping</TT> such as the <TT>clean_pages</TT> list in most cases or
+the <TT>dirty_pages</TT> in rarer cases</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>101</B>Set the <TT>page</TT>&#X2192;<TT>mapping</TT> to NULL as it is no longer
+backed by any <TT>address_space</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>103</B>Decrement the number of pages in the <TT>mapping</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc410">J.1.2.4</A>  Function: remove_page_from_hash_queue</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: remove_page_from_hash_queue"></A> <A NAME="@codeindex296"></A></P><PRE CLASS="verbatim">107 static inline void remove_page_from_hash_queue(struct page * page)
+108 {
+109     struct page *next = page-&gt;next_hash;
+110     struct page **pprev = page-&gt;pprev_hash;
+111 
+112     if (next)
+113         next-&gt;pprev_hash = pprev;
+114     *pprev = next;
+115     page-&gt;pprev_hash = NULL;
+116     atomic_dec(&amp;page_cache_size);
+117 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>109</B>Get the <TT>next</TT> page after the <TT>page</TT> being removed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>110</B>Get the <TT>pprev</TT> page before the <TT>page</TT> being
+removed. When the function completes, <TT>pprev</TT> will be linked to
+<TT>next</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>112</B>If this is not the end of the list, update
+<TT>next</TT>&#X2192;<TT>pprev_hash</TT> to point to <TT>pprev</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>114</B>Similarly, point <TT>pprev</TT> forward to <TT>next</TT>.
+<TT>page</TT> is now unlinked</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>116</B>Decrement the size of the page cache</DD></DL><H3 CLASS="subsection"><A NAME="htoc411">J.1.3</A>  Acquiring/Releasing Page Cache Pages</H3><H4 CLASS="subsubsection"><A NAME="htoc412">J.1.3.1</A>  Function: page_cache_get</H4><P> <EM>Source: include/linux/pagemap.h</EM> <A NAME="func: page_cache_get"></A> <A NAME="@codeindex297"></A></P><PRE CLASS="verbatim"> 31 #define page_cache_get(x)       get_page(x)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>31</B>Simple call <TT>get_page()</TT> which simply uses
+<TT>atomic_inc()</TT> to increment the page reference count</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc413">J.1.3.2</A>  Function: page_cache_release</H4><P> <EM>Source: include/linux/pagemap.h</EM> <A NAME="func: page_cache_release"></A> <A NAME="@codeindex298"></A></P><PRE CLASS="verbatim"> 32 #define page_cache_release(x)   __free_page(x)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>32</B>Call <TT>__free_page()</TT> which decrements the page count. If
+the count reaches 0, the page will be freed</DD></DL><H3 CLASS="subsection"><A NAME="htoc414">J.1.4</A>  Searching the Page Cache</H3><H4 CLASS="subsubsection"><A NAME="htoc415">J.1.4.1</A>  Function: find_get_page</H4><P> <EM>Source: include/linux/pagemap.h</EM> <A NAME="func: find_get_page"></A> <A NAME="@codeindex299"></A></P><P>Top level macro for finding a page in the page cache. It simply looks up the
+page hash</P><PRE CLASS="verbatim"> 75 #define find_get_page(mapping, index) \
+ 76     __find_get_page(mapping, index, page_hash(mapping, index))
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>76</B><TT>page_hash()</TT> locates an entry in the
+<TT>page_hash_table</TT> based on the <TT>address_space</TT> and
+offset</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc416">J.1.4.2</A>  Function: __find_get_page</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: __find_get_page"></A> <A NAME="@codeindex300"></A></P><P>This function is responsible for finding a struct page given an entry in
+<TT>page_hash_table</TT> as a starting point. </P><PRE CLASS="verbatim">931 struct page * __find_get_page(struct address_space *mapping,
+932                 unsigned long offset, struct page **hash)
+933 {
+934     struct page *page;
+935 
+936     /*
+937      * We scan the hash list read-only. Addition to and removal from
+938      * the hash-list needs a held write-lock.
+939      */
+940     spin_lock(&amp;pagecache_lock);
+941     page = __find_page_nolock(mapping, offset, *hash);
+942     if (page)
+943         page_cache_get(page);
+944     spin_unlock(&amp;pagecache_lock);
+945     return page;
+946 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>940</B>Acquire the read-only page cache lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>941</B>Call the page cache traversal function which presumes a lock is
+held</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>942-943</B>If the page was found, obtain a reference to it with
+<TT>page_cache_get()</TT> (See Section <A HREF="#func: page_cache_get">J.1.3.1</A>) so it is not
+freed prematurely</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>944</B>Release the page cache lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>945</B>Return the page or NULL if not found</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc417">J.1.4.3</A>  Function: __find_page_nolock</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: __find_page_nolock"></A> <A NAME="@codeindex301"></A></P><P>This function traverses the hash collision list looking for the page specified
+by the <TT>address_space</TT> and <TT>offset</TT>.</P><PRE CLASS="verbatim">443 static inline struct page * __find_page_nolock(
+                    struct address_space *mapping, 
+                    unsigned long offset, 
+                    struct page *page)
+444 {
+445     goto inside;
+446 
+447     for (;;) {
+448         page = page-&gt;next_hash;
+449 inside:
+450         if (!page)
+451             goto not_found;
+452         if (page-&gt;mapping != mapping)
+453             continue;
+454         if (page-&gt;index == offset)
+455             break;
+456     }
+457 
+458 not_found:
+459     return page;
+460 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>445</B>Begin by examining the first page in the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>450-451</B>If the page is NULL, the right one could not be found so return
+NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>452</B>If the <TT>address_space</TT> does not match, move to the next
+page on the collision list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>454</B>If the <TT>offset</TT> matchs, return it, else move on</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>448</B>Move to the next page on the hash list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>459</B>Return the found page or NULL if not</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc418">J.1.4.4</A>  Function: find_lock_page</H4><P> <EM>Source: include/linux/pagemap.h</EM> <A NAME="func: find_lock_page"></A> <A NAME="@codeindex302"></A></P><P>This is the top level function for searching the page cache for a page and
+having it returned in a locked state.</P><PRE CLASS="verbatim"> 84 #define find_lock_page(mapping, index) \
+ 85     __find_lock_page(mapping, index, page_hash(mapping, index))
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>85</B>Call the core function <TT>__find_lock_page()</TT> after looking
+up what hash bucket this page is using with <TT>page_hash()</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc419">J.1.4.5</A>  Function: __find_lock_page</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: __find_lock_page"></A> <A NAME="@codeindex303"></A></P><P>This function acquires the <TT>pagecache_lock</TT> spinlock before calling
+the core function <TT>__find_lock_page_helper()</TT> to locate the page
+and lock it.</P><PRE CLASS="verbatim">1005 struct page * __find_lock_page (struct address_space *mapping,
+1006                     unsigned long offset, struct page **hash)
+1007 {
+1008    struct page *page;
+1009 
+1010    spin_lock(&amp;pagecache_lock);
+1011    page = __find_lock_page_helper(mapping, offset, *hash);
+1012    spin_unlock(&amp;pagecache_lock);
+1013    return page;
+1014 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1010</B>Acquire the <TT>pagecache_lock</TT> spinlock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1011</B>Call <TT>__find_lock_page_helper()</TT> which will search the
+page cache and lock the page if it is found</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1012</B>Release the <TT>pagecache_lock</TT> spinlock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1013</B>If the page was found, return it in a locked state, otherwise
+return NULL</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc420">J.1.4.6</A>  Function: __find_lock_page_helper</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: __find_lock_page_helper"></A> <A NAME="@codeindex304"></A></P><P>This function uses <TT>__find_page_nolock()</TT> to locate a page within
+the page cache. If it is found, the page will be locked for returning to the
+caller.</P><PRE CLASS="verbatim">972 static struct page * __find_lock_page_helper(
+                               struct address_space *mapping,
+973                            unsigned long offset, struct page *hash)
+974 {
+975     struct page *page;
+976 
+977     /*
+978      * We scan the hash list read-only. Addition to and removal from
+979      * the hash-list needs a held write-lock.
+980      */
+981 repeat:
+982     page = __find_page_nolock(mapping, offset, hash);
+983     if (page) {
+984         page_cache_get(page);
+985         if (TryLockPage(page)) {
+986             spin_unlock(&amp;pagecache_lock);
+987             lock_page(page);
+988             spin_lock(&amp;pagecache_lock);
+989 
+990             /* Has the page been re-allocated while we slept?  */
+991             if (page-&gt;mapping != mapping || page-&gt;index != offset) {
+992                 UnlockPage(page);
+993                 page_cache_release(page);
+994                 goto repeat;
+995             }
+996         }
+997     }
+998     return page;
+999 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>982</B>Use <TT>__find_page_nolock()</TT>(See Section <A HREF="#func: __find_page_nolock">J.1.4.3</A>) 
+to locate the page in the page cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>983-984</B>If the page was found, take a reference to it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>985</B>Try and lock the page with <TT>TryLockPage()</TT><A NAME="@codeindex305"></A>. This macro is
+just a wrapper around <TT>test_and_set_bit()</TT> which attempts to set the
+<TT>PG_locked</TT> bit in the <TT>page</TT>&#X2192;<TT>flags</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>986-988</B>If the lock failed, release the <TT>pagecache_lock</TT>
+spinlock and call <TT>lock_page()</TT> (See Section <A HREF="understand019.html#func: lock_page">B.2.1.1</A>) to lock
+the page. It is likely this function will sleep until the page lock is
+acquired. When the page is locked, acquire the <TT>pagecache_lock</TT>
+spinlock again</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>991</B>If the <TT>mapping</TT> and <TT>index</TT> no longer match, it
+means that this page was reclaimed while we were asleep. The page is unlocked
+and the reference dropped before searching the page cache again</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>998</B>Return the page in a locked state, or NULL if it was not in the page
+cache</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc132"></A><A NAME="htoc421">J.2</A>  LRU List Operations</H2><H3 CLASS="subsection"><A NAME="htoc422">J.2.1</A>  Adding Pages to the LRU Lists</H3><H4 CLASS="subsubsection"><A NAME="htoc423">J.2.1.1</A>  Function: lru_cache_add</H4><P> <EM>Source: mm/swap.c</EM> <A NAME="func: lru_cache_add"></A> <A NAME="@codeindex306"></A></P><P>Adds a page to the LRU <TT>inactive_list</TT>.</P><PRE CLASS="verbatim"> 58 void lru_cache_add(struct page * page)
+ 59 {
+ 60       if (!PageLRU(page)) {
+ 61             spin_lock(&amp;pagemap_lru_lock);
+ 62             if (!TestSetPageLRU(page))
+ 63                   add_page_to_inactive_list(page);
+ 64             spin_unlock(&amp;pagemap_lru_lock);
+ 65       }
+ 66 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>60</B>If the page is not already part of the LRU lists, add it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>61</B>Acquire the LRU lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>62-63</B>Test and set the LRU bit. If it was clear, call
+<TT>add_page_to_inactive_list()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>64</B>Release the LRU lock</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc424">J.2.1.2</A>  Function: add_page_to_active_list</H4><P> <EM>Source: include/linux/swap.h</EM> <A NAME="func: add_page_to_active_list"></A> <A NAME="@codeindex307"></A></P><P>Adds the page to the <TT>active_list</TT></P><PRE CLASS="verbatim">178 #define add_page_to_active_list(page)         \
+179 do {                                          \
+180       DEBUG_LRU_PAGE(page);                   \
+181       SetPageActive(page);                    \
+182       list_add(&amp;(page)-&gt;lru, &amp;active_list);   \
+183       nr_active_pages++;                      \
+184 } while (0)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>180</B>The <TT>DEBUG_LRU_PAGE()</TT> macro will call <TT>BUG()</TT> if
+the page is already on the LRU list or is marked been active</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>181</B>Update the flags of the page to show it is active</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>182</B>Add the page to the <TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>183</B>Update the count of the number of pages in the <TT>active_list</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc425">J.2.1.3</A>  Function: add_page_to_inactive_list</H4><P> <EM>Source: include/linux/swap.h</EM> <A NAME="func: add_page_to_inactive_list"></A> <A NAME="@codeindex308"></A></P><P>Adds the page to the <TT>inactive_list</TT></P><PRE CLASS="verbatim">186 #define add_page_to_inactive_list(page)       \
+187 do {                                          \
+188       DEBUG_LRU_PAGE(page);                   \
+189       list_add(&amp;(page)-&gt;lru, &amp;inactive_list); \
+190       nr_inactive_pages++;                    \
+191 } while (0)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>188</B>The <TT>DEBUG_LRU_PAGE()</TT> macro will call <TT>BUG()</TT> if
+the page is already on the LRU list or is marked been active</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>189</B>Add the page to the <TT>inactive_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>190</B>Update the count of the number of inactive pages on the list</DD></DL><H3 CLASS="subsection"><A NAME="htoc426">J.2.2</A>  Deleting Pages from the LRU Lists</H3><H4 CLASS="subsubsection"><A NAME="htoc427">J.2.2.1</A>  Function: lru_cache_del</H4><P> <EM>Source: mm/swap.c</EM> <A NAME="func: lru_cache_del"></A> <A NAME="@codeindex309"></A></P><P>Acquire the lock protecting the LRU lists before calling
+<TT>__lru_cache_del()</TT>.</P><PRE CLASS="verbatim"> 90 void lru_cache_del(struct page * page)
+ 91 {
+ 92       spin_lock(&amp;pagemap_lru_lock);
+ 93       __lru_cache_del(page);
+ 94       spin_unlock(&amp;pagemap_lru_lock);
+ 95 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>92</B>Acquire the LRU lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>93</B><TT>__lru_cache_del()</TT> does the &#X201C;real&#X201D; work of removing
+the page from the LRU lists</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>94</B>Release the LRU lock</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc428">J.2.2.2</A>  Function: __lru_cache_del</H4><P> <EM>Source: mm/swap.c</EM> <A NAME="func: __lru_cache_del"></A> <A NAME="@codeindex310"></A></P><P>Select which function is needed to remove the page from the LRU list.</P><PRE CLASS="verbatim"> 75 void __lru_cache_del(struct page * page)
+ 76 {
+ 77       if (TestClearPageLRU(page)) {
+ 78             if (PageActive(page)) {
+ 79                   del_page_from_active_list(page);
+ 80             } else {
+ 81                   del_page_from_inactive_list(page);
+ 82             }
+ 83       }
+ 84 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>77</B>Test and clear the flag indicating the page is in the LRU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-82</B>If the page is on the LRU, select the appropriate removal
+function</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-79</B>If the page is active, then call
+<TT>del_page_from_active_list()</TT> else delete from the inactive list
+with <TT>del_page_from_inactive_list()</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc429">J.2.2.3</A>  Function: del_page_from_active_list</H4><P> <EM>Source: include/linux/swap.h</EM> <A NAME="func: del_page_from_active_list"></A> <A NAME="@codeindex311"></A></P><P>Remove the page from the <TT>active_list</TT></P><PRE CLASS="verbatim">193 #define del_page_from_active_list(page)   \
+194 do {                                      \
+195       list_del(&amp;(page)-&gt;lru);             \
+196       ClearPageActive(page);              \
+197       nr_active_pages--;                  \
+198 } while (0)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>195</B>Delete the page from the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>196</B>Clear the flag indicating it is part of <TT>active_list</TT>. The
+flag indicating it is part of the LRU list has already been cleared by
+<TT>__lru_cache_del()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>197</B>Update the count of the number of pages in the <TT>active_list</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc430">J.2.2.4</A>  Function: del_page_from_inactive_list</H4><P> <EM>Source: include/linux/swap.h</EM> <A NAME="func: del_page_from_inactive_list"></A> <A NAME="@codeindex312"></A></P><PRE CLASS="verbatim">200 #define del_page_from_inactive_list(page) \
+201 do {                                      \
+202       list_del(&amp;(page)-&gt;lru);             \
+203       nr_inactive_pages--;                \
+204 } while (0)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>202</B>Remove the page from the LRU list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>203</B>Update the count of the number of pages in the
+<TT>inactive_list</TT></DD></DL><H3 CLASS="subsection"><A NAME="htoc431">J.2.3</A>  Activating Pages</H3><H4 CLASS="subsubsection"><A NAME="htoc432">J.2.3.1</A>  Function: mark_page_accessed</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: mark_page_accessed"></A> <A NAME="@codeindex313"></A></P><P>This marks that a page has been referenced. If the page is already on the
+<TT>active_list</TT> or the referenced flag is clear, the referenced
+flag will be simply set. If it is in the <TT>inactive_list</TT> and the
+referenced flag has been set, <TT>activate_page()</TT> will be called to
+move the page to the top of the <TT>active_list</TT>.</P><PRE CLASS="verbatim">1332 void mark_page_accessed(struct page *page)
+1333 {
+1334       if (!PageActive(page) &amp;&amp; PageReferenced(page)) {
+1335             activate_page(page);
+1336             ClearPageReferenced(page);
+1337       } else
+1338             SetPageReferenced(page);
+1339 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1334-1337</B>If the page is on the <TT>inactive_list</TT>
+(<TT>!PageActive()</TT>) and has been referenced recently
+(<TT>PageReferenced()</TT>), <TT>activate_page()</TT> is called to move it
+to the <TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1338</B>Otherwise, mark the page as been referenced</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc433">J.2.3.2</A>  Function: activate_lock</H4><P> <EM>Source: mm/swap.c</EM> <A NAME="func: activate_lock"></A> <A NAME="@codeindex314"></A></P><P>Acquire the LRU lock before calling <TT>activate_page_nolock()</TT> which
+moves the page from the <TT>inactive_list</TT> to the <TT>active_list</TT>.</P><PRE CLASS="verbatim"> 47 void activate_page(struct page * page)
+ 48 {
+ 49       spin_lock(&amp;pagemap_lru_lock);
+ 50       activate_page_nolock(page);
+ 51       spin_unlock(&amp;pagemap_lru_lock);
+ 52 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>49</B>Acquire the LRU lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>50</B>Call the main work function</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>51</B>Release the LRU lock</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc434">J.2.3.3</A>  Function: activate_page_nolock</H4><P> <EM>Source: mm/swap.c</EM> <A NAME="func: active_page_nolock"></A> <A NAME="@codeindex315"></A></P><P>Move the page from the <TT>inactive_list</TT> to the <TT>active_list</TT></P><PRE CLASS="verbatim"> 39 static inline void activate_page_nolock(struct page * page)
+ 40 {
+ 41       if (PageLRU(page) &amp;&amp; !PageActive(page)) {
+ 42             del_page_from_inactive_list(page);
+ 43             add_page_to_active_list(page);
+ 44       }
+ 45 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>41</B>Make sure the page is on the LRU and not already on the <TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>42-43</B>Delete the page from the <TT>inactive_list</TT> and add to the
+<TT>active_list</TT></DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc133"></A><A NAME="htoc435">J.3</A>  Refilling <TT>inactive_list</TT></H2><P>This section covers how pages are moved from the active lists to the
+inactive lists.</P><H3 CLASS="subsection"><A NAME="htoc436">J.3.1</A>  Function: refill_inactive</H3><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: refill_inactive"></A> <A NAME="@codeindex316"></A></P><P>Move <TT>nr_pages</TT> from the <TT>active_list</TT> to the
+<TT>inactive_list</TT>. The parameter <TT>nr_pages</TT> is calculated by
+<TT>shrink_caches()</TT> and is a number which tries to keep the active list
+two thirds the size of the page cache.</P><PRE CLASS="verbatim">533 static void refill_inactive(int nr_pages)
+534 {
+535       struct list_head * entry;
+536 
+537       spin_lock(&amp;pagemap_lru_lock);
+538       entry = active_list.prev;
+539       while (nr_pages &amp;&amp; entry != &amp;active_list) {
+540             struct page * page;
+541 
+542             page = list_entry(entry, struct page, lru);
+543             entry = entry-&gt;prev;
+544             if (PageTestandClearReferenced(page)) {
+545                   list_del(&amp;page-&gt;lru);
+546                   list_add(&amp;page-&gt;lru, &amp;active_list);
+547                   continue;
+548             }
+549 
+550             nr_pages--;
+551 
+552             del_page_from_active_list(page);
+553             add_page_to_inactive_list(page);
+554             SetPageReferenced(page);
+555       }
+556       spin_unlock(&amp;pagemap_lru_lock);
+557 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>537</B>Acquire the lock protecting the LRU list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>538</B>Take the last entry in the <TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>539-555</B>Move <TT>nr_pages</TT> or until the <TT>active_list</TT>
+is empty</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>542</B>Get the <TT>struct page</TT> for this entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>544-548</B>Test and clear the referenced flag. If it has been referenced,
+then it is moved back to the top of the <TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>550-553</B>Move one page from the <TT>active_list</TT> to the <TT>inactive_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>554</B>Mark it referenced so that if it is referenced again soon, it will
+be promoted back to the <TT>active_list</TT> without requiring a second reference</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>556</B>Release the lock protecting the LRU list</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc134"></A><A NAME="htoc437">J.4</A>  Reclaiming Pages from the LRU Lists</H2><P>This section covers how a page is reclaimed once it has been selected for
+pageout.</P><H3 CLASS="subsection"><A NAME="htoc438">J.4.1</A>  Function: shrink_cache</H3><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: shrink_cache"></A> <A NAME="@codeindex317"></A></P><PRE CLASS="verbatim">338 static int shrink_cache(int nr_pages, zone_t * classzone, 
+                            unsigned int gfp_mask, int priority)
+339 {
+340     struct list_head * entry;
+341     int max_scan = nr_inactive_pages / priority;
+342     int max_mapped = min((nr_pages &lt;&lt; (10 - priority)), 
+                             max_scan / 10);
+343 
+344     spin_lock(&amp;pagemap_lru_lock);
+345     while (--max_scan &gt;= 0 &amp;&amp; 
+               (entry = inactive_list.prev) != &amp;inactive_list) {
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>338</B>The parameters are as follows;
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>nr_pages</B>The number of pages to swap out
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>classzone</B>The zone we are interested in swapping pages out for. Pages
+not belonging to this zone are skipped
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>gfp_mask</B>The gfp mask determining what actions may be taken such as
+if filesystem operations may be performed
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>priority</B>The priority of the function, starts at
+<TT>DEF_PRIORITY</TT> (6)
+and decreases to the highest priority of 1
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>341</B>The maximum number of pages to scan is the number of pages in the
+<TT>active_list</TT> divided by the priority. At lowest priority, 1/6th
+of the list may scanned. At highest priority, the full list may be scanned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>342</B>The maximum amount of process mapped pages allowed is either
+one tenth of the <TT>max_scan</TT> value or <I>nr</I>_<I>pages</I> *
+2<SUP>10&#X2212;<I>priority</I></SUP>. If this number of pages are found, whole processes
+will be swapped out</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>344</B>Lock the LRU list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>345</B>Keep scanning until <TT>max_scan</TT> pages have been scanned
+or the <TT>inactive_list</TT> is empty</DD></DL><PRE CLASS="verbatim">346         struct page * page;
+347 
+348         if (unlikely(current-&gt;need_resched)) {
+349             spin_unlock(&amp;pagemap_lru_lock);
+350             __set_current_state(TASK_RUNNING);
+351             schedule();
+352             spin_lock(&amp;pagemap_lru_lock);
+353             continue;
+354         }
+355 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>348-354</B>Reschedule if the quanta has been used up</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>349</B>Free the LRU lock as we are about to sleep</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>350</B>Show we are still running</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>351</B>Call <TT>schedule()</TT> so another process can be context switched
+in</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>352</B>Re-acquire the LRU lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>353</B>Reiterate through the loop and take an entry
+<TT>inactive_list</TT> again. As we slept, another process could have
+changed what entries are on the list which is why another entry has to be
+taken with the spinlock held</DD></DL><PRE CLASS="verbatim">356         page = list_entry(entry, struct page, lru);
+357 
+358         BUG_ON(!PageLRU(page));
+359         BUG_ON(PageActive(page));
+360 
+361         list_del(entry);
+362         list_add(entry, &amp;inactive_list);
+363 
+364         /*
+365          * Zero page counts can happen because we unlink the pages
+366          * _after_ decrementing the usage count..
+367          */
+368         if (unlikely(!page_count(page)))
+369             continue;
+370 
+371         if (!memclass(page_zone(page), classzone))
+372             continue;
+373 
+374         /* Racy check to avoid trylocking when not worthwhile */
+375         if (!page-&gt;buffers &amp;&amp; (page_count(page) != 1 || !page-&gt;mapping))
+376             goto page_mapped;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>356</B>Get the <TT>struct page</TT> for this entry in the LRU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>358-359</B>It is a bug if the page either belongs to the
+<TT>active_list</TT> or is currently marked as active</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>361-362</B>Move the page to the top of the <TT>inactive_list</TT> so
+that if the page is not freed, we can just continue knowing that it will be
+simply examined later</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>368-369</B>If the page count has already reached 0, skip over
+it. In <TT>__free_pages()</TT>, the page count is dropped with
+<TT>put_page_testzero()</TT> before <TT>__free_pages_ok()</TT> is
+called to free it. This leaves a window where a page with a zero count is
+left on the LRU before it is freed. There is a special case to trap this at
+the beginning of <TT>__free_pages_ok()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>371-372</B>Skip over this page if it belongs to a zone we are not
+currently interested in</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>375-376</B>If the page is mapped by a process, then goto
+<TT>page_mapped</TT> where the <TT>max_mapped</TT> is decremented and
+next page examined. If <TT>max_mapped</TT> reaches 0, process pages will
+be swapped out</DD></DL><PRE CLASS="verbatim">382         if (unlikely(TryLockPage(page))) {
+383             if (PageLaunder(page) &amp;&amp; (gfp_mask &amp; __GFP_FS)) {
+384                 page_cache_get(page);
+385                 spin_unlock(&amp;pagemap_lru_lock);
+386                 wait_on_page(page);
+387                 page_cache_release(page);
+388                 spin_lock(&amp;pagemap_lru_lock);
+389             }
+390             continue;
+391         }
+</PRE><P>Page is locked and the launder bit is set. In this case, it is the second
+time this page has been found dirty. The first time it was scheduled for IO
+and placed back on the list. This time we wait until the IO is complete and
+then try to free the page.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>382-383</B>If we could not lock the page, the <TT>PG_launder</TT> bit
+is set and the GFP flags allow the caller to perform FS operations, then...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>384</B>Take a reference to the page so it does not disappear while we
+sleep</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>385</B>Free the LRU lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>386</B>Wait until the IO is complete</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>387</B>Release the reference to the page. If it reaches 0, the page will be
+freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>388</B>Re-acquire the LRU lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>390</B>Move to the next page</DD></DL><PRE CLASS="verbatim">392 
+393         if (PageDirty(page) &amp;&amp; 
+                is_page_cache_freeable(page) &amp;&amp; 
+                page-&gt;mapping) {
+394             /*
+395              * It is not critical here to write it only if
+396              * the page is unmapped beause any direct writer
+397              * like O_DIRECT would set the PG_dirty bitflag
+398              * on the phisical page after having successfully
+399              * pinned it and after the I/O to the page is finished,
+400              * so the direct writes to the page cannot get lost.
+401              */
+402             int (*writepage)(struct page *);
+403 
+404             writepage = page-&gt;mapping-&gt;a_ops-&gt;writepage;
+405             if ((gfp_mask &amp; __GFP_FS) &amp;&amp; writepage) {
+406                 ClearPageDirty(page);
+407                 SetPageLaunder(page);
+408                 page_cache_get(page);
+409                 spin_unlock(&amp;pagemap_lru_lock);
+410 
+411                 writepage(page);
+412                 page_cache_release(page);
+413 
+414                 spin_lock(&amp;pagemap_lru_lock);
+415                 continue;
+416             }
+417         }
+</PRE><P>This handles the case where a page is dirty, is not mapped by any process,
+has no buffers and is backed by a file or device mapping. The page is cleaned
+and will be reclaimed by the previous block of code when the IO is complete.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>393</B><TT>PageDirty()</TT> checks the <TT>PG_dirty</TT> bit,
+<TT>is_page_cache_freeable()</TT> will return true if it is not mapped
+by any process and has no buffers</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>404</B>Get a pointer to the necessary <TT>writepage()</TT> function for
+this mapping or device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>405-416</B>This block of code can only be executed if a
+<TT>writepage()</TT> function is available and the GFP flags allow file
+operations</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>406-407</B>Clear the dirty bit and mark that the page is being laundered</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>408</B>Take a reference to the page so it will not be freed unexpectedly</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>409</B>Unlock the LRU list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>411</B>Call the filesystem-specific <TT>writepage()</TT> function which is
+taken from the <TT>address_space_operations</TT> belonging to
+<TT>page</TT>&#X2192;<TT>mapping</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>412</B>Release the reference to the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>414-415</B>Re-acquire the LRU list lock and move to the next page</DD></DL><PRE CLASS="verbatim">424         if (page-&gt;buffers) {
+425             spin_unlock(&amp;pagemap_lru_lock);
+426 
+427             /* avoid to free a locked page */
+428             page_cache_get(page);
+429 
+430             if (try_to_release_page(page, gfp_mask)) {
+431                 if (!page-&gt;mapping) {
+438                     spin_lock(&amp;pagemap_lru_lock);
+439                     UnlockPage(page);
+440                     __lru_cache_del(page);
+441 
+442                     /* effectively free the page here */
+443                     page_cache_release(page);
+444 
+445                     if (--nr_pages)
+446                         continue;
+447                     break;
+448                 } else {
+454                     page_cache_release(page);
+455 
+456                     spin_lock(&amp;pagemap_lru_lock);
+457                 }
+458             } else {
+459                 /* failed to drop the buffers so stop here */
+460                 UnlockPage(page);
+461                 page_cache_release(page);
+462 
+463                 spin_lock(&amp;pagemap_lru_lock);
+464                 continue;
+465             }
+466         }
+</PRE><P>Page has buffers associated with it that must be freed.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>425</B>Release the LRU lock as we may sleep</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>428</B>Take a reference to the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>430</B>Call <TT>try_to_release_page()</TT> which will attempt to release
+the buffers associated with the page. Returns 1 if it succeeds</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>431-447</B>This is a case where an anonymous page that was in the swap
+cache has now had it's buffers cleared and removed. As it was on the swap
+cache, it was placed on the LRU by <TT>add_to_swap_cache()</TT> so remove
+it now frmo the LRU and drop the reference to the page. In
+<TT>swap_writepage()</TT>, it calls <TT>remove_exclusive_swap_page()</TT>
+which will delete the page from the swap cache when there are no more
+processes mapping the page. This block will free the page after the buffers
+have been written out if it was backed by a swap file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>438-440</B>Take the LRU list lock, unlock the page, delete it from the
+page cache and free it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>445-446</B>Update <TT>nr_pages</TT> to show a page has been freed and
+move to the next page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>447</B>If <TT>nr_pages</TT> drops to 0, then exit the loop as the work
+is completed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>449-456</B>If the page does have an associated mapping then simply drop
+the reference to the page and re-acquire the LRU lock. More work will be
+performed later to remove the page from the page cache at line 499</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>459-464</B>If the buffers could not be freed, then unlock the page, drop
+the reference to it, re-acquire the LRU lock and move to the next page</DD></DL><PRE CLASS="verbatim">468         spin_lock(&amp;pagecache_lock);
+469 
+470         /*
+471          * this is the non-racy check for busy page.
+472          */
+473         if (!page-&gt;mapping || !is_page_cache_freeable(page)) {
+474             spin_unlock(&amp;pagecache_lock);
+475             UnlockPage(page);
+476 page_mapped:
+477             if (--max_mapped &gt;= 0)
+478                 continue;
+479 
+484             spin_unlock(&amp;pagemap_lru_lock);
+485             swap_out(priority, gfp_mask, classzone);
+486             return nr_pages;
+487         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>468</B>From this point on, pages in the swap cache are likely to be
+examined which is protected by the <TT>pagecache_lock</TT> which must be
+now held</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>473-487</B>An anonymous page with no buffers is mapped by a process</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>474-475</B>Release the page cache lock and the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>477-478</B>Decrement <TT>max_mapped</TT>. If it has not reached 0,
+move to the next page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>484-485</B>Too many mapped pages have been found in the page cache. The LRU
+lock is released and <TT>swap_out()</TT> is called to begin swapping out whole
+processes</DD></DL><PRE CLASS="verbatim">493         if (PageDirty(page)) {
+494             spin_unlock(&amp;pagecache_lock);
+495             UnlockPage(page);
+496             continue;
+497         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>493-497</B>The page has no references but could have been dirtied by
+the last process to free it if the dirty bit was set in the PTE. It is left
+in the page cache and will get laundered later. Once it has been cleaned,
+it can be safely deleted</DD></DL><PRE CLASS="verbatim">498 
+499         /* point of no return */
+500         if (likely(!PageSwapCache(page))) {
+501             __remove_inode_page(page);
+502             spin_unlock(&amp;pagecache_lock);
+503         } else {
+504             swp_entry_t swap;
+505             swap.val = page-&gt;index;
+506             __delete_from_swap_cache(page);
+507             spin_unlock(&amp;pagecache_lock);
+508             swap_free(swap);
+509         }
+510 
+511         __lru_cache_del(page);
+512         UnlockPage(page);
+513 
+514         /* effectively free the page here */
+515         page_cache_release(page);
+516 
+517         if (--nr_pages)
+518             continue;
+519         break;
+520     }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>500-503</B>If the page does not belong to the swap cache, it is part of the
+inode queue so it is removed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>504-508</B>Remove it from the swap cache as there is no more references to
+it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>511</B>Delete it from the page cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>512</B>Unlock the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>515</B>Free the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>517-518</B>Decrement <TT>nr_page</TT> and move to the next page if it
+is not 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>519</B>If it reaches 0, the work of the function is complete</DD></DL><PRE CLASS="verbatim">521     spin_unlock(&amp;pagemap_lru_lock);
+522 
+523     return nr_pages;
+524 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>521-524</B>Function exit. Free the LRU lock and return the number of pages
+left to free</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc135"></A><A NAME="htoc439">J.5</A>  Shrinking all caches</H2><H3 CLASS="subsection"><A NAME="htoc440">J.5.1</A>  Function: shrink_caches</H3><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: shrink_caches"></A> <A NAME="@codeindex318"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand013.html#fig: shrink_caches">10.4</A>. </P><PRE CLASS="verbatim">560 static int shrink_caches(zone_t * classzone, int priority, 
+                 unsigned int gfp_mask, int nr_pages)
+561 {
+562     int chunk_size = nr_pages;
+563     unsigned long ratio;
+564 
+565     nr_pages -= kmem_cache_reap(gfp_mask);
+566     if (nr_pages &lt;= 0)
+567         return 0;
+568 
+569     nr_pages = chunk_size;
+570     /* try to keep the active list 2/3 of the size of the cache */
+571     ratio = (unsigned long) nr_pages * 
+            nr_active_pages / ((nr_inactive_pages + 1) * 2);
+572     refill_inactive(ratio);
+573 
+574     nr_pages = shrink_cache(nr_pages, classzone, gfp_mask, priority);
+575     if (nr_pages &lt;= 0)
+576         return 0;
+577 
+578     shrink_dcache_memory(priority, gfp_mask);
+579     shrink_icache_memory(priority, gfp_mask);
+580 #ifdef CONFIG_QUOTA
+581     shrink_dqcache_memory(DEF_PRIORITY, gfp_mask);
+582 #endif
+583 
+584     return nr_pages;
+585 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>560</B>The parameters are as follows;
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>classzone</B> is the zone that pages should be freed from
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>priority</B> determines how much work will be done to free pages
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>gfp_mask</B> determines what sort of actions may be taken
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>nr_pages</B> is the number of pages remaining to be freed
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>565-567</B>Ask the slab allocator to free up some pages with
+<TT>kmem_cache_reap()</TT> (See Section <A HREF="understand025.html#func: kmem_cache_reap">H.1.5.1</A>). If enough are
+freed, the function returns otherwise <TT>nr_pages</TT> will be freed from
+other caches</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>571-572</B>Move pages from the <TT>active_list</TT> to the
+<TT>inactive_list</TT> by calling <TT>refill_inactive()</TT> (See Section <A HREF="#func: refill_inactive">J.3.1</A>). 
+The number of pages moved depends on how many pages need to be freed and to
+have <TT>active_list</TT> about two thirds the size of the page cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>574-575</B>Shrink the page cache, if enough pages are freed, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>578-582</B>Shrink the dcache, icache and dqcache. These are small objects
+in themselves but the cascading effect frees up a lot of disk buffers</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>584</B>Return the number of pages remaining to be freed</DD></DL><H3 CLASS="subsection"><A NAME="htoc441">J.5.2</A>  Function: try_to_free_pages</H3><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: try_to_free_pages"></A> <A NAME="@codeindex319"></A></P><P>This function cycles through all <TT>pgdat</TT>s and tries to balance the
+preferred allocation zone (usually <TT>ZONE_NORMAL</TT>) for each of them. This
+function is only called from one place, <TT>buffer.c:free_more_memory()</TT>
+when the buffer manager fails to create new buffers or grow existing ones. It
+calls <TT>try_to_free_pages()</TT> with <TT>GFP_NOIO</TT> as the
+<TT>gfp_mask</TT>.</P><P>This results in the first zone in
+<TT>pg_data_t</TT>&#X2192;<TT>node_zonelists</TT> having pages freed so that
+buffers can grow. This array is the preferred order of zones to allocate
+from and usually will begin with <TT>ZONE_NORMAL</TT> which is required by the
+buffer manager. On NUMA architectures, some nodes may have <TT>ZONE_DMA</TT>
+as the preferred zone if the memory bank is dedicated to IO devices and UML
+also uses only this zone. As the buffer manager is restricted in the zones
+is uses, there is no point balancing other zones.</P><PRE CLASS="verbatim">607 int try_to_free_pages(unsigned int gfp_mask)
+608 {
+609     pg_data_t *pgdat;
+610     zonelist_t *zonelist;
+611     unsigned long pf_free_pages;
+612     int error = 0;
+613 
+614     pf_free_pages = current-&gt;flags &amp; PF_FREE_PAGES;
+615     current-&gt;flags &amp;= ~PF_FREE_PAGES;
+616 
+617     for_each_pgdat(pgdat) {
+618         zonelist = pgdat-&gt;node_zonelists + 
+                 (gfp_mask &amp; GFP_ZONEMASK);
+619         error |= try_to_free_pages_zone(
+                    zonelist-&gt;zones[0], gfp_mask);
+620     }
+621 
+622     current-&gt;flags |= pf_free_pages;
+623     return error;
+624 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>614-615</B>This clears the <TT>PF_FREE_PAGES</TT> flag if it is set
+so that pages freed by the process will be returned to the global pool rather
+than reserved for the process itself</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>617-620</B>Cycle through all nodes and call <TT>try_to_free_pages()</TT>
+for the preferred zone in each node</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>618</B>This function is only called with <TT>GFP_NOIO</TT> as a
+parameter. When ANDed with <TT>GFP_ZONEMASK</TT>, it will always result
+in 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>622-623</B>Restore the process flags and return the result</DD></DL><H3 CLASS="subsection"><A NAME="htoc442">J.5.3</A>  Function: try_to_free_pages_zone</H3><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: try_to_free_pages_zone"></A> <A NAME="@codeindex320"></A></P><P>Try to free <TT>SWAP_CLUSTER_MAX</TT> pages from the requested zone. As
+will as being used by <B>kswapd</B>, this function is the entry for the
+buddy allocator's direct-reclaim path.</P><PRE CLASS="verbatim">587 int try_to_free_pages_zone(zone_t *classzone, 
+                               unsigned int gfp_mask)
+588 {
+589     int priority = DEF_PRIORITY;
+590     int nr_pages = SWAP_CLUSTER_MAX;
+591 
+592     gfp_mask = pf_gfp_mask(gfp_mask);
+593     do {
+594         nr_pages = shrink_caches(classzone, priority, 
+                         gfp_mask, nr_pages);
+595         if (nr_pages &lt;= 0)
+596             return 1;
+597     } while (--priority);
+598 
+599     /*
+600      * Hmm.. Cache shrink failed - time to kill something?
+601      * Mhwahahhaha! This is the part I really like. Giggle.
+602      */
+603     out_of_memory();
+604     return 0;
+605 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>589</B>Start with the lowest priority. Statically defined to be 6</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>590</B>Try and free <TT>SWAP_CLUSTER_MAX</TT> pages. Statically
+defined to be 32</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>592</B><TT>pf_gfp_mask()</TT> checks the <TT>PF_NOIO</TT> flag
+in the current process flags. If no IO can be performed, it ensures there
+is no incompatible flags in the GFP mask</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>593-597</B>Starting with the lowest priority and increasing with each pass,
+call <TT>shrink_caches()</TT> until nr_pages has been freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>595-596</B>If enough pages were freed, return indicating that the work is
+complete</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>603</B>If enough pages could not be freed even at highest priority (where
+at worst the full <TT>inactive_list</TT> is scanned) then check to see if
+we are out of memory. If we are, then a process will be selected to be killed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>604</B>Return indicating that we failed to free enough pages</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc136"></A><A NAME="htoc443">J.6</A>  Swapping Out Process Pages</H2><P>This section covers the path where too many process mapped pages have been
+found in the LRU lists. This path will start scanning whole processes and
+reclaiming the mapped pages.</P><H3 CLASS="subsection"><A NAME="htoc444">J.6.1</A>  Function: swap_out</H3><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: swap_out"></A> <A NAME="@codeindex321"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand013.html#fig: swap_out">10.5</A>. This
+function linearaly searches through every processes page tables trying
+to swap out <TT>SWAP_CLUSTER_MAX</TT> number of pages. The process
+it starts with is the <TT>swap_mm</TT> and the starting address is
+<TT>mm</TT>&#X2192;<TT>swap_address</TT></P><PRE CLASS="verbatim">296 static int swap_out(unsigned int priority, unsigned int gfp_mask, 
+            zone_t * classzone)
+297 {
+298     int counter, nr_pages = SWAP_CLUSTER_MAX;
+299     struct mm_struct *mm;
+300 
+301     counter = mmlist_nr;
+302     do {
+303         if (unlikely(current-&gt;need_resched)) {
+304             __set_current_state(TASK_RUNNING);
+305             schedule();
+306         }
+307 
+308         spin_lock(&amp;mmlist_lock);
+309         mm = swap_mm;
+310         while (mm-&gt;swap_address == TASK_SIZE || mm == &amp;init_mm) {
+311             mm-&gt;swap_address = 0;
+312             mm = list_entry(mm-&gt;mmlist.next, 
+                        struct mm_struct, mmlist);
+313             if (mm == swap_mm)
+314                 goto empty;
+315             swap_mm = mm;
+316         }
+317 
+318         /* Make sure the mm doesn't disappear 
+             when we drop the lock.. */
+319         atomic_inc(&amp;mm-&gt;mm_users);
+320         spin_unlock(&amp;mmlist_lock);
+321 
+322         nr_pages = swap_out_mm(mm, nr_pages, &amp;counter, classzone);
+323 
+324         mmput(mm);
+325 
+326         if (!nr_pages)
+327             return 1;
+328     } while (--counter &gt;= 0);
+329 
+330     return 0;
+331 
+332 empty:
+333     spin_unlock(&amp;mmlist_lock);
+334     return 0;
+335 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>301</B>Set the counter so the process list is only scanned once</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>303-306</B>Reschedule if the quanta has been used up to prevent CPU
+hogging</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>308</B>Acquire the lock protecting the mm list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>309</B>Start with the <TT>swap_mm</TT>. It is interesting this is never
+checked to make sure it is valid. It is possible, albeit unlikely that the
+process with the <TT>mm</TT> has exited since the last scan <EM>and</EM>
+the slab holding the <TT>mm_struct</TT> has been reclaimed during a
+cache shrink making the pointer totally invalid. The lack of bug reports
+might be because the slab rarely gets reclaimed and would be difficult to
+trigger in reality</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>310-316</B>Move to the next process if the <TT>swap_address</TT> has
+reached the <TT>TASK_SIZE</TT> or if the mm is the <TT>init_mm</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>311</B>Start at the beginning of the process space</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>312</B>Get the mm for this process</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>313-314</B>If it is the same, there is no running processes that can be
+examined</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>315</B>Record the <TT>swap_mm</TT> for the next pass</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>319</B>Increase the reference count so that the mm does not get freed while
+we are scanning</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>320</B>Release the mm lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>322</B>Begin scanning the mm with <TT>swap_out_mm()</TT>(See Section <A HREF="#func: swap_out_mm">J.6.2</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>324</B>Drop the reference to the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>326-327</B>If the required number of pages has been freed, return success</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>328</B>If we failed on this pass, increase the priority so more processes
+will be scanned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>330</B>Return failure</DD></DL><H3 CLASS="subsection"><A NAME="htoc445">J.6.2</A>  Function: swap_out_mm</H3><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: swap_out_mm"></A> <A NAME="@codeindex322"></A></P><P>Walk through each VMA and call <TT>swap_out_mm()</TT> for each one.</P><PRE CLASS="verbatim">256 static inline int swap_out_mm(struct mm_struct * mm, int count, 
+                  int * mmcounter, zone_t * classzone)
+257 {
+258     unsigned long address;
+259     struct vm_area_struct* vma;
+260 
+265     spin_lock(&amp;mm-&gt;page_table_lock);
+266     address = mm-&gt;swap_address;
+267     if (address == TASK_SIZE || swap_mm != mm) {
+268         /* We raced: don't count this mm but try again */
+269         ++*mmcounter;
+270         goto out_unlock;
+271     }
+272     vma = find_vma(mm, address);
+273     if (vma) {
+274         if (address &lt; vma-&gt;vm_start)
+275             address = vma-&gt;vm_start;
+276 
+277         for (;;) {
+278             count = swap_out_vma(mm, vma, address, 
+                         count, classzone);
+279             vma = vma-&gt;vm_next;
+280             if (!vma)
+281                 break;
+282             if (!count)
+283                 goto out_unlock;
+284             address = vma-&gt;vm_start;
+285         }
+286     }
+287     /* Indicate that we reached the end of address space */
+288     mm-&gt;swap_address = TASK_SIZE;
+289 
+290 out_unlock:
+291     spin_unlock(&amp;mm-&gt;page_table_lock);
+292     return count;
+293 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>265</B>Acquire the page table lock for this mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>266</B>Start with the address contained in swap_address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>267-271</B>If the address is <TT>TASK_SIZE</TT>, it means that a
+thread raced and scanned this process already. Increase mmcounter so that
+<TT>swap_out_mm()</TT> knows to go to another process</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>272</B>Find the VMA for this address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>273</B>Presuming a VMA was found then ....</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>274-275</B>Start at the beginning of the VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>277-285</B>Scan through this and each subsequent VMA calling
+<TT>swap_out_vma()</TT> (See Section <A HREF="#func: swap_out_vma">J.6.3</A>) for each one. If the
+requisite number of pages (count) is freed, then finish scanning and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>288</B>Once the last VMA has been scanned, set <TT>swap_address</TT>
+to <TT>TASK_SIZE</TT> so that this process will be skipped over by
+<TT>swap_out_mm()</TT> next time</DD></DL><H3 CLASS="subsection"><A NAME="htoc446">J.6.3</A>  Function: swap_out_vma</H3><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: swap_out_vma"></A> <A NAME="@codeindex323"></A></P><P>Walk through this VMA and for each PGD in it, call <TT>swap_out_pgd()</TT>.</P><PRE CLASS="verbatim">227 static inline int swap_out_vma(struct mm_struct * mm, 
+                   struct vm_area_struct * vma, 
+                   unsigned long address, int count, 
+                   zone_t * classzone)
+228 {
+229     pgd_t *pgdir;
+230     unsigned long end;
+231 
+232     /* Don't swap out areas which are reserved */
+233     if (vma-&gt;vm_flags &amp; VM_RESERVED)
+234         return count;
+235 
+236     pgdir = pgd_offset(mm, address);
+237 
+238     end = vma-&gt;vm_end;
+239     BUG_ON(address &gt;= end);
+240     do {
+241         count = swap_out_pgd(mm, vma, pgdir, 
+                     address, end, count, classzone);
+242         if (!count)
+243             break;
+244         address = (address + PGDIR_SIZE) &amp; PGDIR_MASK;
+245         pgdir++;
+246     } while (address &amp;&amp; (address &lt; end));
+247     return count;
+248 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>233-234</B>Skip over this VMA if the <TT>VM_RESERVED</TT> flag is
+set. This is used by some device drivers such as the SCSI generic driver</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>236</B>Get the starting PGD for the address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>238</B>Mark where the end is and <TT>BUG()</TT> it if the starting
+address is somehow past the end</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>240</B>Cycle through PGDs until the end address is reached</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>241</B>Call <TT>swap_out_pgd()</TT>(See Section <A HREF="#func: swap_out_pgd">J.6.4</A>) keeping
+count of how many more pages need to be freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>242-243</B>If enough pages have been freed, break and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>244-245</B>Move to the next PGD and move the address to the next PGD
+aligned address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>247</B>Return the remaining number of pages to be freed</DD></DL><H3 CLASS="subsection"><A NAME="htoc447">J.6.4</A>  Function: swap_out_pgd</H3><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: swap_out_pgd"></A> <A NAME="@codeindex324"></A></P><P>Step through all PMD's in the supplied PGD and call <TT>swap_out_pmd()</TT></P><PRE CLASS="verbatim">197 static inline int swap_out_pgd(struct mm_struct * mm, 
+                   struct vm_area_struct * vma, pgd_t *dir, 
+                   unsigned long address, unsigned long end, 
+                   int count, zone_t * classzone)
+198 {
+199     pmd_t * pmd;
+200     unsigned long pgd_end;
+201 
+202     if (pgd_none(*dir))
+203         return count;
+204     if (pgd_bad(*dir)) {
+205         pgd_ERROR(*dir);
+206         pgd_clear(dir);
+207         return count;
+208     }
+209 
+210     pmd = pmd_offset(dir, address);
+211 
+212     pgd_end = (address + PGDIR_SIZE) &amp; PGDIR_MASK;  
+213     if (pgd_end &amp;&amp; (end &gt; pgd_end))
+214         end = pgd_end;
+215     
+216     do {
+217         count = swap_out_pmd(mm, vma, pmd, 
+                                 address, end, count, classzone);
+218         if (!count)
+219             break;
+220         address = (address + PMD_SIZE) &amp; PMD_MASK;
+221         pmd++;
+222     } while (address &amp;&amp; (address &lt; end));
+223     return count;
+224 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>202-203</B>If there is no PGD, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>204-208</B>If the PGD is bad, flag it as such and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>210</B>Get the starting PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>212-214</B>Calculate the end to be the end of this PGD or the end of the
+VMA been scanned, whichever is closer</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>216-222</B>For each PMD in this PGD, call <TT>swap_out_pmd()</TT>
+(See Section <A HREF="#func: swap_out_pmd">J.6.5</A>). If enough pages get freed, break and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>223</B>Return the number of pages remaining to be freed</DD></DL><H3 CLASS="subsection"><A NAME="htoc448">J.6.5</A>  Function: swap_out_pmd</H3><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: swap_out_pmd"></A> <A NAME="@codeindex325"></A></P><P>For each PTE in this PMD, call <TT>try_to_swap_out()</TT>. On completion,
+<TT>mm</TT>&#X2192;<TT>swap_address</TT> is updated to show where we finished to
+prevent the same page been examined soon after this scan.</P><PRE CLASS="verbatim">158 static inline int swap_out_pmd(struct mm_struct * mm, 
+                   struct vm_area_struct * vma, pmd_t *dir, 
+                   unsigned long address, unsigned long end, 
+                   int count, zone_t * classzone)
+159 {
+160     pte_t * pte;
+161     unsigned long pmd_end;
+162 
+163     if (pmd_none(*dir))
+164         return count;
+165     if (pmd_bad(*dir)) {
+166         pmd_ERROR(*dir);
+167         pmd_clear(dir);
+168         return count;
+169     }
+170     
+171     pte = pte_offset(dir, address);
+172     
+173     pmd_end = (address + PMD_SIZE) &amp; PMD_MASK;
+174     if (end &gt; pmd_end)
+175         end = pmd_end;
+176 
+177     do {
+178         if (pte_present(*pte)) {
+179             struct page *page = pte_page(*pte);
+180 
+181             if (VALID_PAGE(page) &amp;&amp; !PageReserved(page)) {
+182                 count -= try_to_swap_out(mm, vma, 
+                                 address, pte, 
+                                 page, classzone);
+183                 if (!count) {
+184                     address += PAGE_SIZE;
+185                     break;
+186                 }
+187             }
+188         }
+189         address += PAGE_SIZE;
+190         pte++;
+191     } while (address &amp;&amp; (address &lt; end));
+192     mm-&gt;swap_address = address;
+193     return count;
+194 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>163-164</B>Return if there is no PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>165-169</B>If the PMD is bad, flag it as such and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>171</B>Get the starting PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>173-175</B>Calculate the end to be the end of the PMD or the end of the
+VMA, whichever is closer </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>177-191</B>Cycle through each PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>178</B>Make sure the PTE is marked present</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>179</B>Get the struct page for this PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>181</B>If it is a valid page and it is not reserved then ...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>182</B>Call <TT>try_to_swap_out()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>183-186</B>If enough pages have been swapped out, move the address to the
+next page and break to return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>189-190</B>Move to the next page and PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>192</B>Update the swap_address to show where we last finished off</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>193</B>Return the number of pages remaining to be freed</DD></DL><H3 CLASS="subsection"><A NAME="htoc449">J.6.6</A>  Function: try_to_swap_out</H3><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: try_to_swap_out"></A> <A NAME="@codeindex326"></A></P><P>This function tries to swap out a page from a process. It is quite a large
+function so will be dealt with in parts. Broadly speaking they are</P><UL CLASS="itemize"><LI CLASS="li-itemize">Function preamble, ensure this is a page that should be swapped out</LI><LI CLASS="li-itemize">Remove the page and PTE from the page tables</LI><LI CLASS="li-itemize">Handle the case where the page is already in the swap cache</LI><LI CLASS="li-itemize">Handle the case where the page is dirty or has associated buffers</LI><LI CLASS="li-itemize">Handle the case where the page is been added to the swap cache </LI></UL><PRE CLASS="verbatim"> 47 static inline int try_to_swap_out(struct mm_struct * mm, 
+                    struct vm_area_struct* vma, 
+                    unsigned long address, 
+                    pte_t * page_table, 
+                    struct page *page, 
+                    zone_t * classzone)
+ 48 {
+ 49     pte_t pte;
+ 50     swp_entry_t entry;
+ 51 
+ 52     /* Don't look at this pte if it's been accessed recently. */
+ 53     if ((vma-&gt;vm_flags &amp; VM_LOCKED) ||
+        ptep_test_and_clear_young(page_table)) {
+ 54         mark_page_accessed(page);
+ 55         return 0;
+ 56     }
+ 57 
+ 58     /* Don't bother unmapping pages that are active */
+ 59     if (PageActive(page))
+ 60         return 0;
+ 61 
+ 62     /* Don't bother replenishing zones not under pressure.. */
+ 63     if (!memclass(page_zone(page), classzone))
+ 64         return 0;
+ 65 
+ 66     if (TryLockPage(page))
+ 67         return 0;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>53-56</B>If the page is locked (for tasks like IO) or the PTE shows
+the page has been accessed recently then clear the referenced bit and call
+<TT>mark_page_accessed()</TT> (See Section <A HREF="#func: mark_page_accessed">J.2.3.1</A>) to make
+the struct page reflect the age. Return 0 to show it was not swapped out</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>59-60</B>If the page is on the <TT>active_list</TT>, do not swap it out</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>63-64</B>If the page belongs to a zone we are not interested in, do not
+swap it out</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>66-67</B>If the page is already locked for IO, skip it</DD></DL><PRE CLASS="verbatim"> 74     flush_cache_page(vma, address);
+ 75     pte = ptep_get_and_clear(page_table);
+ 76     flush_tlb_page(vma, address);
+ 77 
+ 78     if (pte_dirty(pte))
+ 79         set_page_dirty(page);
+ 80 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>74</B>Call the architecture hook to flush this page from all CPUs</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>75</B>Get the PTE from the page tables and clear it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>76</B>Call the architecture hook to flush the TLB</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-79</B>If the PTE was marked dirty, mark the <TT>struct page</TT>
+dirty so it will be laundered correctly</DD></DL><PRE CLASS="verbatim"> 86     if (PageSwapCache(page)) {
+ 87         entry.val = page-&gt;index;
+ 88         swap_duplicate(entry);
+ 89 set_swap_pte:
+ 90         set_pte(page_table, swp_entry_to_pte(entry));
+ 91 drop_pte:
+ 92         mm-&gt;rss--;
+ 93         UnlockPage(page);
+ 94         {
+ 95             int freeable = 
+                 page_count(page) - !!page-&gt;buffers &lt;= 2;
+ 96             page_cache_release(page);
+ 97             return freeable;
+ 98         }
+ 99     }
+</PRE><P>Handle the case where the page is already in the swap cache</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>86</B>Enter this block only if the page is already in the swap cache. Note
+that it can also be entered by calling goto to the <TT>set_swap_pte</TT>
+and <TT>drop_pte</TT> labels</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>87-88</B>Fill in the index value for the swap entry.
+<TT>swap_duplicate()</TT> verifies the swap identifier is valid and increases
+the counter in the swap_map if it is</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>90</B>Fill the PTE with information needed to get the page from swap</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>92</B>Update RSS to show there is one less page being mapped by the
+process</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>93</B>Unlock the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>95</B>The page is free-able if the count is currently 2 or less and has no
+buffers. If the count is higher, it is either being mapped by other processes
+or is a file-backed page and the &#X201C;user&#X201D; is the page cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>96</B>Decrement the reference count and free the page if it reaches 0.
+Note that if this is a file-backed page, it will not reach 0 even if there are
+no processes mapping it. The page will be later reclaimed from the page cache
+by <TT>shrink_cache()</TT> (See Section <A HREF="#func: shrink_cache">J.4.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>97</B>Return if the page was freed or not</DD></DL><PRE CLASS="verbatim">115     if (page-&gt;mapping)
+116         goto drop_pte;
+117     if (!PageDirty(page))
+118         goto drop_pte;
+124     if (page-&gt;buffers)
+125         goto preserve;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>115-116</B>If the page has an associated mapping, simply drop it from the
+page tables. When no processes are mapping it, it will be reclaimed from the
+page cache by <TT>shrink_cache()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>117-118</B>If the page is clean, it is safe to simply drop it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>124-125</B>If it has associated buffers due to a truncate followed by a
+page fault, then re-attach the page and PTE to the page tables as it cannot
+be handled yet</DD></DL><PRE CLASS="verbatim">126 
+127     /*
+128      * This is a dirty, swappable page.  First of all,
+129      * get a suitable swap entry for it, and make sure
+130      * we have the swap cache set up to associate the
+131      * page with that swap entry.
+132      */
+133     for (;;) {
+134         entry = get_swap_page();
+135         if (!entry.val)
+136             break;
+137         /* Add it to the swap cache and mark it dirty
+138          * (adding to the page cache will clear the dirty
+139          * and uptodate bits, so we need to do it again)
+140          */
+141         if (add_to_swap_cache(page, entry) == 0) {
+142             SetPageUptodate(page);
+143             set_page_dirty(page);
+144             goto set_swap_pte;
+145         }
+146         /* Raced with "speculative" read_swap_cache_async */
+147         swap_free(entry);
+148     }
+149 
+150     /* No swap space left */
+151 preserve:
+152     set_pte(page_table, pte);
+153     UnlockPage(page);
+154     return 0;
+155 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>134</B>Allocate a swap entry for this page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>135-136</B>If one could not be allocated, break out where the PTE and page
+will be re-attached to the process page tables</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>141</B>Add the page to the swap cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>142</B>Mark the page as up to date in memory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>143</B>Mark the page dirty so that it will be written out to swap soon</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>144</B>Goto <TT>set_swap_pte</TT> which will update the PTE with
+information needed to get the page from swap later</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>147</B>If the add to swap cache failed, it means that the page was placed
+in the swap cache already by a readahead so drop the work done here</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>152</B>Reattach the PTE to the page tables</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>153</B>Unlock the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>154</B>Return that no page was freed</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc137"></A><A NAME="htoc450">J.7</A>  Page Swap Daemon</H2><P>This section details the main loops used by the <B>kswapd</B> daemon which
+is woken-up when memory is low. The main functions covered are the ones that
+determine if <B>kswapd</B> can sleep and how it determines which nodes
+need balancing.</P><H3 CLASS="subsection"><A NAME="htoc451">J.7.1</A>  Initialising kswapd</H3><H4 CLASS="subsubsection"><A NAME="htoc452">J.7.1.1</A>  Function: kswapd_init</H4><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: kswapd_init"></A> <A NAME="@codeindex327"></A></P><P>Start the kswapd kernel thread</P><PRE CLASS="verbatim">767 static int __init kswapd_init(void)
+768 {
+769     printk("Starting kswapd\n");
+770     swap_setup();
+771     kernel_thread(kswapd, NULL, CLONE_FS 
+                                  | CLONE_FILES 
+                                  | CLONE_SIGNAL);
+772     return 0;
+773 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>770</B><TT>swap_setup()</TT>(See Section <A HREF="understand028.html#func: swap_setup">K.4.2</A>) setups up how
+many pages will be prefetched when reading from backing storage based on
+the amount of physical memory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>771</B>Start the <B>kswapd</B> kernel thread</DD></DL><H3 CLASS="subsection"><A NAME="htoc453">J.7.2</A>  kswapd Daemon</H3><H4 CLASS="subsubsection"><A NAME="htoc454">J.7.2.1</A>  Function: kswapd</H4><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: kswapd"></A> <A NAME="@codeindex328"></A></P><P>The main function of the <B>kswapd</B> kernel thread.</P><PRE CLASS="verbatim">720 int kswapd(void *unused)
+721 {
+722     struct task_struct *tsk = current;
+723     DECLARE_WAITQUEUE(wait, tsk);
+724 
+725     daemonize();
+726     strcpy(tsk-&gt;comm, "kswapd");
+727     sigfillset(&amp;tsk-&gt;blocked);
+728     
+741     tsk-&gt;flags |= PF_MEMALLOC;
+742 
+746     for (;;) {
+747         __set_current_state(TASK_INTERRUPTIBLE);
+748         add_wait_queue(&amp;kswapd_wait, &amp;wait);
+749 
+750         mb();
+751         if (kswapd_can_sleep())
+752             schedule();
+753 
+754         __set_current_state(TASK_RUNNING);
+755         remove_wait_queue(&amp;kswapd_wait, &amp;wait);
+756 
+762         kswapd_balance();
+763         run_task_queue(&amp;tq_disk);
+764     }
+765 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>725</B>Call <TT>daemonize()</TT> which will make this a kernel thread,
+remove the mm context, close all files and re-parent the process</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>726</B>Set the name of the process</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>727</B>Ignore all signals</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>741</B>By setting this flag, the physical page allocator will always try to
+satisfy requests for pages. As this process will always be trying to free
+pages, it is worth satisfying requests</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>746-764</B>Endlessly loop</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>747-748</B>This adds <B>kswapd</B> to the wait queue in preparation
+to sleep</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>750</B>The Memory Block function (<TT>mb()</TT>) ensures that all reads
+and writes that occurred before this line will be visible to all CPU's</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>751</B><TT>kswapd_can_sleep()</TT>(See Section <A HREF="#func: kswapd_can_sleep">J.7.2.2</A>)
+cycles through all nodes and zones checking the <TT>need_balance</TT>
+field. If any of them are set to 1, kswapd can not sleep</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>752</B>By calling <TT>schedule()</TT>, <B>kswapd</B> will now sleep
+until woken again by the physical page allocator in <TT>__alloc_pages()</TT>
+(See Section <A HREF="understand023.html#func: __alloc_pages">F.1.3</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>754-755</B>Once woken up, <B>kswapd</B> is removed from the wait
+queue as it is now running</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>762</B><TT>kswapd_balance()</TT>(See Section <A HREF="#func: kswapd_balance">J.7.2.4</A>) cycles
+through all zones and calls 
+<TT>try_to_free_pages_zone()</TT>(See Section <A HREF="#func: try_to_free_pages_zone">J.5.3</A>) for 
+each zone that requires balance</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>763</B>Run the IO task queue to start writing data out to disk</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc455">J.7.2.2</A>  Function: kswapd_can_sleep</H4><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: kswapd_can_sleep"></A> <A NAME="@codeindex329"></A></P><P>Simple function to cycle through all pgdats to call
+<TT>kswapd_can_sleep_pgdat()</TT> on each. </P><PRE CLASS="verbatim">695 static int kswapd_can_sleep(void)
+696 {
+697     pg_data_t * pgdat;
+698 
+699     for_each_pgdat(pgdat) {
+700         if (!kswapd_can_sleep_pgdat(pgdat))
+701             return 0;
+702     }
+703 
+704     return 1;
+705 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>699-702</B><TT>for_each_pgdat()</TT> does exactly as the name
+implies. It cycles through all available pgdat's and in this case calls
+<TT>kswapd_can_sleep_pgdat()</TT> (See Section <A HREF="#func: kswapd_can_sleep_pgdat">J.7.2.3</A>)
+for each. On the x86, there will only be one <TT>pgdat</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc456">J.7.2.3</A>  Function: kswapd_can_sleep_pgdat</H4><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: kswapd_can_sleep_pgdat"></A> <A NAME="@codeindex330"></A></P><P>Cycles through all zones to make sure none of them need
+balance. The <TT>zone</TT>&#X2192;<TT>need_balanace</TT> flag is set by
+<TT>__alloc_pages()</TT> when the number of free pages in the zone reaches
+the <TT>pages_low</TT> watermark.</P><PRE CLASS="verbatim">680 static int kswapd_can_sleep_pgdat(pg_data_t * pgdat)
+681 {
+682     zone_t * zone;
+683     int i;
+684 
+685     for (i = pgdat-&gt;nr_zones-1; i &gt;= 0; i--) {
+686         zone = pgdat-&gt;node_zones + i;
+687         if (!zone-&gt;need_balance)
+688             continue;
+689         return 0;
+690     }
+691 
+692     return 1;
+693 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>685-689</B>Simple for loop to cycle through all zones</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>686</B>The <TT>node_zones</TT> field is an array of all available
+zones so adding <TT>i</TT> gives the index</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>687-688</B>If the zone does not need balance, continue</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>689</B>0 is returned if any needs balance indicating <B>kswapd</B>
+can not sleep</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>692</B>Return indicating kswapd can sleep if the for loop completes</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc457">J.7.2.4</A>  Function: kswapd_balance</H4><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: kswapd_balance"></A> <A NAME="@codeindex331"></A></P><P>Continuously cycle through each pgdat until none require balancing</P><PRE CLASS="verbatim">667 static void kswapd_balance(void)
+668 {
+669     int need_more_balance;
+670     pg_data_t * pgdat;
+671 
+672     do {
+673         need_more_balance = 0;
+674 
+675         for_each_pgdat(pgdat)
+676             need_more_balance |= kswapd_balance_pgdat(pgdat);
+677     } while (need_more_balance);
+678 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>672-677</B>Cycle through all <TT>pgdat</TT>s until none of them report
+that they need balancing</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>675</B>For each pgdat, call <TT>kswapd_balance_pgdat()</TT> to check if
+the node requires balancing. If any node required balancing,
+<TT>need_more_balance</TT> will be set to 1</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc458">J.7.2.5</A>  Function: kswapd_balance_pgdat</H4><P> <EM>Source: mm/vmscan.c</EM> <A NAME="func: kswapd_balance_pgdat"></A> <A NAME="@codeindex332"></A></P><P>This function will check if a node requires balance by examining
+each of the nodes in it. If any zone requires balancing,
+<TT>try_to_free_pages_zone()</TT> will be called.</P><PRE CLASS="verbatim">641 static int kswapd_balance_pgdat(pg_data_t * pgdat)
+642 {
+643     int need_more_balance = 0, i;
+644     zone_t * zone;
+645 
+646     for (i = pgdat-&gt;nr_zones-1; i &gt;= 0; i--) {
+647         zone = pgdat-&gt;node_zones + i;
+648         if (unlikely(current-&gt;need_resched))
+649             schedule();
+650         if (!zone-&gt;need_balance)
+651             continue;
+652         if (!try_to_free_pages_zone(zone, GFP_KSWAPD)) {
+653             zone-&gt;need_balance = 0;
+654             __set_current_state(TASK_INTERRUPTIBLE);
+655             schedule_timeout(HZ);
+656             continue;
+657         }
+658         if (check_classzone_need_balance(zone))
+659             need_more_balance = 1;
+660         else
+661             zone-&gt;need_balance = 0;
+662     }
+663 
+664     return need_more_balance;
+665 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>646-662</B>Cycle through each zone and call
+<TT>try_to_free_pages_zone()</TT> (See Section <A HREF="#func: try_to_free_pages_zone">J.5.3</A>)
+if it needs re-balancing</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>647</B><TT>node_zones</TT> is an array and i is an index within it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>648-649</B>Call <TT>schedule()</TT> if the quanta is expired to prevent
+<B>kswapd</B> hogging the CPU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>650-651</B>If the zone does not require balance, move to the next one</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>652-657</B>If the function returns 0, it means the
+<TT>out_of_memory()</TT> function was called because a sufficient number
+of pages could not be freed. <B>kswapd</B> sleeps for 1 second to give
+the system a chance to reclaim the killed processes pages and perform
+IO. The zone is marked as balanced so <B>kswapd</B> will ignore this zone
+until the the allocator function <TT>__alloc_pages()</TT> complains again</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>658-661</B>If is was successful, <TT>check_classzone_need_balance()</TT>
+is called to see if the zone requires further balancing or not</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>664</B>Return 1 if one zone requires further balancing</DD></DL><P>	</P><HR>
+[ <A HREF="understand026.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand028.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

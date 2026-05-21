@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Non-Contiguous Memory Allocation</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand009.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand011.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc48">Chapter 7</A>  Non-Contiguous Memory Allocation</H1><P>
+<A NAME="chap: Non-Contiguous Memory Allocation"></A></P><P>It is preferable when dealing with large amounts of memory to use physically
+contiguous pages in memory both for cache related and memory access latency
+reasons. Unfortunately, due to external fragmentation<A NAME="@mainindex643"></A> problems with the buddy allocator, this is not
+always possible. Linux provides a mechanism via <TT>vmalloc()</TT><A NAME="@mainindex644"></A>
+where non-contiguous physically memory can be used that is contiguous in
+virtual memory.</P><P>An area is reserved in the virtual address space between
+<TT>VMALLOC_START</TT><A NAME="@mainindex645"></A> and <TT>VMALLOC_END</TT><A NAME="@mainindex646"></A>. The location
+of <TT>VMALLOC_START</TT> depends on the amount of available physical
+memory but the region will always be at least <TT>VMALLOC_RESERVE</TT>
+in size, which on the x86 is 128MiB. The exact size of the region is discussed
+in Section <A HREF="understand007.html#sec: Linear Address Space">4.1</A>. </P><P>The page tables in this region are adjusted as necessary to point to physical
+pages which are allocated with the normal physical page allocator. This means
+that allocation must be a multiple of the hardware page size. As allocations
+require altering the kernel page tables, there is a limitation on how much
+memory can be mapped with <TT>vmalloc()</TT> as only the virtual addresses
+space between <TT>VMALLOC_START</TT> and <TT>VMALLOC_END</TT>
+is available. As a result, it is used sparingly in the core kernel. In
+<TT>2.4.22</TT>, it is only used for storing the swap map information
+(see Chapter <A HREF="understand014.html#chap: Swap Management">11</A>) and for loading kernel
+modules into memory.</P><P>This small chapter begins with a description of how the kernel tracks which
+areas in the vmalloc address space are used and how regions are allocated
+and freed.</P><H2 CLASS="section"><A NAME="toc48"></A><A NAME="htoc49">7.1</A>  Describing Virtual Memory Areas</H2><P>
+<A NAME="@mainindex647"></A></P><P>The vmalloc address space is managed with a resource map
+allocator [<A HREF="understand031.html#vahalia96"><CITE>Vah96</CITE></A>]. The <TT>struct vm_struct</TT><A NAME="@mainindex648"></A>
+is responsible for storing the base,size pairs. It is defined in
+&lt;<TT>linux/vmalloc.h</TT>&gt; as:</P><PRE CLASS="verbatim"> 14 struct vm_struct {
+ 15         unsigned long flags;
+ 16         void * addr;
+ 17         unsigned long size;
+ 18         struct vm_struct * next;
+ 19 };
+</PRE><P>A fully-fledged VMA could have been used but it contains extra information
+that does not apply to vmalloc areas and would be wasteful. Here is a brief
+description of the fields in this small struct.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B> These set either to <TT>VM_ALLOC</TT><A NAME="@mainindex649"></A>, in the case of use
+with <TT>vmalloc()</TT> or <TT>VM_IOREMAP</TT><A NAME="@mainindex650"></A> when ioremap is used to
+map high memory into the kernel virtual address space;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>addr</B> This is the starting address of the memory block;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>size</B> This is, predictably enough, the size in bytes;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>next</B> is a pointer to the next <TT>vm_struct</TT>. They are ordered
+by address and the list is protected by the <TT>vmlist_lock</TT><A NAME="@mainindex651"></A> lock.</DD></DL><P>As is clear, the areas are linked together via the <TT>next</TT> field
+and are ordered by address for simple searches. Each area is separated by
+at least one page to protect against overruns. This is illustrated by the
+gaps in Figure <A HREF="#fig: vmalloc Address Space">7.1</A>.<A NAME="@mainindex652"></A> </P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html033.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 7.1: vmalloc Address Space</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: vmalloc Address Space"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>When the kernel wishes to allocate a new area, the <TT>vm_struct</TT> list
+is searched linearly by the function <TT>get_vm_area()</TT><A NAME="@mainindex653"></A>. Space for
+the struct is allocated with <TT>kmalloc()</TT>. When the virtual area is used
+for remapping an area for IO (commonly referred to as <EM>ioremapping</EM>),
+this function will be called directly to map the requested area.</P><H2 CLASS="section"><A NAME="toc49"></A><A NAME="htoc50">7.2</A>  Allocating A Non-Contiguous Area</H2><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html034.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 7.2: Call Graph: <TT>vmalloc()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: vmalloc"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The functions <TT>vmalloc()</TT>, <TT>vmalloc_dma()</TT><A NAME="@mainindex654"></A> and
+<TT>vmalloc_32()</TT><A NAME="@mainindex655"></A> are provided to allocate a memory area that
+is contiguous in virtual address space. They all take a single parameter
+<TT>size</TT> which is rounded up to the next page alignment. They all
+return a linear address for the new allocated area.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex656"></A><TT>void * vmalloc(unsigned long size)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate a number of pages in vmalloc space that satisfy the
+requested size</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex657"></A><TT>void * vmalloc_dma(unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate a number of pages from <TT>ZONE_DMA</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex658"></A><TT>void * vmalloc_32(unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate memory that is suitable for 32 bit addressing. This
+ensures that the physical page frames are in <TT>ZONE_NORMAL</TT> which 32 bit
+devices will require</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 7.1: Non-Contiguous Memory Allocation API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Non-Contiguous Memory Allocation API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>As is clear from the call graph shown in Figure <A HREF="#fig: vmalloc">7.2</A>,
+there are two steps to allocating the area. The first step taken by
+<TT>get_vm_area()</TT> is to find a region large enough to store the
+request. It searches through a linear linked list of <TT>vm_struct</TT>s
+and returns a new struct describing the allocated region.</P><P>The second step is to allocate the necessary PGD entries with
+<TT>vmalloc_area_pages()</TT>, PMD entries with <TT>alloc_area_pmd()</TT>
+and PTE entries with <TT>alloc_area_pte()</TT> before finally allocating
+the page with <TT>alloc_page()</TT>. </P><P>The page table updated by <TT>vmalloc()</TT> is not the current process but
+the reference page table stored at <TT>init_mm</TT>&#X2192;<TT>pgd</TT>. This
+means that a process accessing the vmalloc area will cause a page fault
+exception as its page tables are not pointing to the correct area. There is
+a special case in the page fault handling code which knows that the fault
+occured in the vmalloc area and updates the current process page tables using
+information from the master page table. How the use of <TT>vmalloc()</TT>
+relates to the buddy allocator and page faulting is illustrated in Figure
+<A HREF="#fig: Relationship between vmalloc(), alloc_page() and Page Faulting">7.3</A>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html035.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 7.3: Relationship between <TT>vmalloc()</TT>, <TT>alloc_page()</TT> and Page Faulting</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Relationship between vmalloc(), alloc_page() and Page Faulting"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc50"></A><A NAME="htoc51">7.3</A>  Freeing A Non-Contiguous Area</H2><P>The function <TT>vfree()</TT><A NAME="@mainindex659"></A> is responsible for freeing a virtual
+area. It linearly searches the list of <TT>vm_struct</TT>s looking
+for the desired region and then calls <TT>vmfree_area_pages()</TT> on the
+region of memory to be freed.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html036.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 7.4: Call Graph: <TT>vfree()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: vfree"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>
+`
+<TT>vmfree_area_pages()</TT> is the exact opposite of
+<TT>vmalloc_area_pages()</TT>. It walks the page tables freeing up the
+page table entries and associated pages for the region.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex660"></A><TT>void vfree(void *addr)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Free a region of memory allocated with <TT>vmalloc()</TT>,
+<TT>vmalloc_dma()</TT> or <TT>vmalloc_32()</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 7.2: Non-Contiguous Memory Free API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Non-Contiguous Memory Free API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc51"></A><A NAME="htoc52">7.4</A>  Whats New in 2.6</H2><P>
+<A NAME="sec: Non-Contiguous Memory Allocation"></A></P><P>Non-contiguous memory allocation remains essentially the same in 2.6. The
+main difference is a slightly different internal API which affects when the
+pages are allocated. In 2.4, <TT>vmalloc_area_pages()</TT> is responsible
+for beginning a page table walk and then allocating pages when the PTE is
+reached in the function <TT>alloc_area_pte()</TT>. In 2.6, all the pages are
+allocated in advance by <TT>__vmalloc()</TT> and placed in an array which is
+passed to <TT>map_vm_area()</TT> for insertion into the kernel page tables.</P><P>The <TT>get_vm_area()</TT> API has changed very slightly. When called, it
+behaves the same as previously as it searches the entire vmalloc virtual
+address space for a free area. However, a caller can search just a subset of
+the vmalloc address space by calling <TT>__get_vm_area()</TT> directly and
+specifying the range. This is only used by the ARM architecture when loading
+modules.</P><P>The last significant change is the introduction of a new interface
+<TT>vmap()</TT><A NAME="@mainindex661"></A> for the insertion of an array of pages in the vmalloc
+address space and is only used by the sound subsystem core. This interface was
+backported to 2.4.22 but it is totally unused. It is either the result of an
+accidental backport or was merged to ease the application of vendor-specific
+patches that require <TT>vmap()</TT>.
+
+	</P><HR>
+[ <A HREF="understand009.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand011.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

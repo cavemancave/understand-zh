@@ -1,0 +1,547 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Page Frame Reclamation</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand012.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand014.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc69">Chapter 10</A>  Page Frame Reclamation</H1><P>
+<A NAME="chap: Page Frame Reclamation"></A>
+<A NAME="@mainindex828"></A></P><P>A running system will eventually use all available page frames for purposes
+like disk buffers, dentries, inode entries, process pages and so on. Linux
+needs to select old pages which can be freed and invalidated for new uses
+before physical memory is exhausted. This chapter will focus exclusively
+on how Linux implements its page replacement policy and how different types
+of pages are invalidated.</P><P>The methods Linux uses to select pages are rather empirical in nature and
+the theory behind the approach is based on multiple different ideas. It has
+been shown to work well in practice and adjustments are made based on user
+feedback and benchmarks. The basics of the page replacement policy is the
+first item of discussion in this Chapter.</P><P>The second topic of discussion is the <EM>Page cache</EM><A NAME="@mainindex829"></A>. All data that
+is read from disk is stored in the page cache to reduce the amount of disk
+IO that must be performed. Strictly speaking, this is not directly related
+to page frame reclamation, but the LRU lists and page cache are closely
+related. The relevant section will focus on how pages are added to the page
+cache and quickly located.</P><P>This will being us to the third topic, the LRU lists<A NAME="@mainindex830"></A>. With
+the exception of the slab allocator, all pages in use by the system are
+stored on LRU lists and linked together via <TT>page</TT>&#X2192;<TT>lru</TT> so
+they can be easily scanned for replacement. The slab pages are not stored
+on the LRU lists as it is considerably more difficult to age a page based
+on the objects used by the slab. The section will focus on how pages move
+through the LRU lists before they are reclaimed.</P><P>From there, we'll cover how pages belonging to other caches, such as
+the dcache, and the slab allocator are reclaimed before talking about how
+process-mapped pages are removed. Process mapped pages are not easily swappable
+as there is no way to map <TT>struct page</TT>s to PTEs except to search
+every page table which is far too expensive. If the page cache has a large
+number of process-mapped pages in it, process page tables will be walked and
+pages swapped out by <TT>swap_out()</TT><A NAME="@mainindex831"></A> until enough pages have been
+freed but this will still have trouble with shared pages. If a page is shared,
+a swap entry is allocated, the PTE filled with the necessary information to
+find the page in swap again and the reference count decremented. Only when
+the count reaches zero will the page be freed. Pages like this are considered
+to be in the <EM>Swap cache</EM><A NAME="@mainindex832"></A>.</P><P>Finally, this chaper will cover the page replacement daemon
+<B>kswapd</B><A NAME="@mainindex833"></A>, how it is implemented and what it's responsibilities are.</P><H2 CLASS="section"><A NAME="toc66"></A><A NAME="htoc70">10.1</A>  Page Replacement Policy</H2><P>
+<A NAME="sec: Page Replacement Policy"></A>
+<A NAME="@mainindex834"></A></P><P>During discussions the page replacement policy is frequently said to be a
+<EM>Least Recently Used (LRU)</EM><A NAME="@mainindex835"></A>-based algorithm but this is not strictly
+speaking true as the lists are not strictly maintained in LRU order. The
+LRU in Linux consists of two lists called the <TT>active_list</TT><A NAME="@mainindex836"></A> and
+<TT>inactive_list</TT><A NAME="@mainindex837"></A>. The objective is for the <TT>active_list</TT>
+to contain the <EM>working set</EM><A NAME="@mainindex838"></A> [<A HREF="understand031.html#denning70"><CITE>Den70</CITE></A>] of all processes and
+the <TT>inactive_list</TT> to contain reclaim canditates. As all reclaimable
+pages are contained in just two lists and pages belonging to any process
+may be reclaimed, rather than just those belonging to a faulting process,
+the replacement policy is a global one.</P><P>The lists resemble a simplified LRU 2Q [<A HREF="understand031.html#johnson94low"><CITE>JS94</CITE></A>]<A NAME="@mainindex839"></A>
+where two lists called <TT>Am</TT> and <TT>A1</TT> are maintained. With
+LRU 2Q, pages when first allocated are placed on a FIFO queue called
+<TT>A1</TT>. If they are referenced while on that queue, they are placed in
+a normal LRU managed list called <TT>Am</TT>. This is roughly analogous
+to using <TT>lru_cache_add()</TT> to place pages on a queue called
+<TT>inactive_list</TT> (A1) and using <TT>mark_page_accessed()</TT>
+to get moved to the <TT>active_list</TT> (Am). The algorithm describes
+how the size of the two lists have to be tuned but Linux takes a simpler
+approach by using <TT>refill_inactive()</TT><A NAME="@mainindex840"></A> to move pages from the
+bottom of <TT>active_list</TT> to <TT>inactive_list</TT> to keep
+<TT>active_list</TT> about two thirds the size of the total page cache.
+Figure <A >??</A> illustrates how the two lists are
+structured, how pages are added and how pages move between the lists with
+<TT>refill_inactive()</TT>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html059.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 10.1: Page Cache LRU Lists</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Page
+Cache LRU Lists"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The lists described for 2Q presumes Am is an LRU list but the list in Linux
+closer resembles a Clock algorithm [<A HREF="understand031.html#carr84"><CITE>Car84</CITE></A>] where the hand-spread is
+the size of the active list. When pages reach the bottom of the list, the
+referenced flag is checked, if it is set, it is moved back to the top of
+the list and the next page checked. If it is cleared, it is moved to the
+<TT>inactive_list</TT>.</P><P>The Move-To-Front heuristic<A NAME="@mainindex841"></A> means that the
+lists behave in an LRU-like manner but there are too many differences
+between the Linux replacement policy and LRU to consider it a stack
+algorithm [<A HREF="understand031.html#maekawa87"><CITE>MM87</CITE></A>]<A NAME="@mainindex842"></A>. Even if we ignore the problem
+of analysing multi-programmed systems [<A HREF="understand031.html#coffman80"><CITE>CD80</CITE></A>] and the fact the
+memory size for each process is not fixed , the policy does not satisfy the
+<EM>inclusion property</EM><A NAME="@mainindex843"></A> as the location of pages in the lists depend
+heavily upon the size of the lists as opposed to the time of last reference.
+Neither is the list priority ordered as that would require list updates with
+every reference. As a final nail in the stack algorithm coffin, the lists
+are almost ignored when paging out from processes as pageout decisions are
+related to their location in the virtual address space of the process rather
+than the location within the page lists.</P><P>In summary, the algorithm does exhibit LRU-like behaviour and it has been shown
+by benchmarks to perform well in practice. There are only two cases where the
+algorithm is likely to behave really badly. The first is if the candidates
+for reclamation are principally anonymous pages. In this case, Linux will
+keep examining a large number of pages before linearly scanning process page
+tables searching for pages to reclaim but this situation is fortunately rare.</P><P>The second situation is where there is a single process with many file
+backed resident pages in the <TT>inactive_list</TT> that are being
+written to frequently. Processes and <B>kswapd</B> may go into a loop
+of constantly &#X201C;laundering&#X201D; these pages and placing them at the top of
+the <TT>inactive_list</TT> without freeing anything. In this case, few
+pages are moved from the <TT>active_list</TT> to <TT>inactive_list</TT>
+as the ratio between the two lists sizes remains not change significantly.</P><H2 CLASS="section"><A NAME="toc67"></A><A NAME="htoc71">10.2</A>  Page Cache</H2><P>
+<A NAME="sec: Page Cache"></A>
+<A NAME="@mainindex844"></A></P><P>The page cache is a set of data structures which contain pages that are
+backed by regular files, block devices or swap. There are basically four
+types of pages that exist in the cache:</P><UL CLASS="itemize"><LI CLASS="li-itemize">Pages that were faulted in as a result of reading a memory mapped file;</LI><LI CLASS="li-itemize">Blocks read from a block device or filesystem are packed into special
+pages called buffer pages. The number of blocks that may fit depends
+on the size of the block and the page size of the architecture;</LI><LI CLASS="li-itemize">Anonymous pages exist in a special aspect of the page cache called the
+swap cache when slots are allocated in the backing storage for page-out,
+discussed further in Chapter <A HREF="understand014.html#chap: Swap Management">11</A>;</LI><LI CLASS="li-itemize">Pages belonging to shared memory regions are treated in a similar
+fashion to anonymous pages. The only difference is that shared pages
+are added to the swap cache and space reserved in backing storage
+immediately after the first write to the page.</LI></UL><P>The principal reason for the existance of this cache is to eliminate
+unnecessary disk reads. Pages read from disk are stored in a <EM>page
+hash</EM><A NAME="@mainindex845"></A> table which is hashed on the <TT>struct address_space</TT> and
+the offset which is always searched before the disk is accessed. An API is
+provided that is responsible for manipulating the page cache which is listed
+in Table <A HREF="#tab: Page Cache API">10.1</A>.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> 
+<A NAME="@mainindex846"></A><TT>void add_to_page_cache(struct page * page, struct address_space * mapping, unsigned long offset)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Adds a page to the LRU with <TT>lru_cache_add()</TT> in
+addition to adding it to the inode queue and page hash tables</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex847"></A><TT>void add_to_page_cache_unique(struct page * page,
+struct address_space *mapping, unsigned long offset, struct page **hash)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This is imilar to <TT>add_to_page_cache()</TT> except it
+checks that the page is not already in the page cache. This is required when
+the caller does not hold the <TT>pagecache_lock</TT> spinlock</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex848"></A><TT>void remove_inode_page(struct page *page)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This function removes a page from the inode and
+hash queues with <TT>remove_page_from_inode_queue()</TT><A NAME="@mainindex849"></A> and
+<TT>remove_page_from_hash_queue()</TT><A NAME="@mainindex850"></A>, effectively removing the page
+from the page cache</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex851"></A><TT>struct page * page_cache_alloc(struct address_space *x)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This is a wrapper around <TT>alloc_pages()</TT> which uses
+<TT>x</TT>&#X2192;<TT>gfp_mask</TT> as the GFP mask</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex852"></A><TT>void page_cache_get(struct page *page)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Increases the reference count to a page already in the page cache</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex853"></A><TT>int page_cache_read(struct file * file, unsigned long offset)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This function adds a page corresponding to an
+<TT>offset</TT> with a <TT>file</TT> if it is not already
+there. If necessary, the page will be read from disk using an
+<TT>address_space_operations</TT>&#X2192;<TT>readpage</TT> function</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex854"></A><TT>void page_cache_release(struct page *page)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> An alias for <TT>__free_page()</TT>. The reference count is
+decremented and if it drops to 0, the page will be freed</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 10.1: Page Cache API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Page Cache API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H3 CLASS="subsection">10.2.1  Page Cache Hash Table</H3><P>
+<A NAME="@mainindex855"></A></P><P>There is a requirement that pages in the page cache be
+quickly located. To facilitate this, pages are inserted
+into a table <TT>page_hash_table</TT><A NAME="@mainindex856"></A> and the fields
+<TT>page</TT>&#X2192;<TT>next_hash</TT> and <TT>page</TT>&#X2192;<TT>pprev_hash</TT>
+are used to handle collisions.</P><P>The table is declared as follows in <TT>mm/filemap.c</TT>:</P><PRE CLASS="verbatim"> 45 atomic_t page_cache_size = ATOMIC_INIT(0);
+ 46 unsigned int page_hash_bits;
+ 47 struct page **page_hash_table;
+</PRE><P><A NAME="@mainindex857"></A>The table is allocated during system
+initialisation by <TT>page_cache_init()</TT><A NAME="@mainindex858"></A> which takes the number of
+physical pages in the system as a parameter. The desired size of the table
+(<TT>htable_size</TT>) is enough to hold pointers to every <TT>struct
+page</TT> in the system and is calculated by</P><PRE>
+htable_size = num_physpages * sizeof(struct page *)
+</PRE><P>To allocate a table, the system begins with an <TT>order</TT> allocation large
+enough to contain the entire table. It calculates this value by starting at 0
+and incrementing it until 2<SUP><I>order</I></SUP> &gt; <I>htable</I>_<I>size</I>. This
+may be roughly expressed as the integer component of the following simple
+equation.</P><PRE>
+order = log2(num_physpages * 2 - 1)
+</PRE><P>An attempt is made to allocate this order of pages with
+<TT>__get_free_pages()</TT>. If the allocation fails, lower orders will
+be tried and if no allocation is satisfied, the system panics.</P><P>The value of <TT>page_hash_bits</TT><A NAME="@mainindex859"></A> is based on the size of the
+table for use with the hashing function <TT>_page_hashfn()</TT><A NAME="@mainindex860"></A>.
+The value is calculated by successive divides by two but in real terms,
+this is equivalent to:</P><PRE>
+page_hash_bits =  log2( (PAGE_SIZE * 2^order) / (sizeof(struct page *)) )
+</PRE><P>This makes the table a power-of-two hash table which negates the need to
+use a modulus which is a common choice for hashing functions.</P><H3 CLASS="subsection">10.2.2  Inode Queue</H3><P>
+<A NAME="@mainindex861"></A></P><P>The <EM>inode queue</EM> is part of the <TT>struct address_space</TT>
+introduced in Section <A HREF="understand007.html#sec: File/Device backed memory regions">4.4.2</A>. The struct contains three lists: <TT>clean_pages</TT>
+is a list of clean
+pages associated with the inode; <TT>dirty_pages</TT> which have been
+written to since the list sync to disk; and <TT>locked_pages</TT>
+which are those currently locked. These three lists in combination
+are considered to be the inode queue for a given mapping and the
+<TT>page</TT>&#X2192;<TT>list</TT> field is used to link pages on it. Pages
+are added to the inode queue with <TT>add_page_to_inode_queue()</TT>
+which places pages on the <TT>clean_pages</TT> lists and removed with
+<TT>remove_page_from_inode_queue()</TT>.</P><H3 CLASS="subsection">10.2.3  Adding Pages to the Page Cache</H3><P>
+<A NAME="@mainindex862"></A></P><P>Pages read from a file or block device are generally added to
+the page cache to avoid further disk IO. Most filesystems use
+the high level function <TT>generic_file_read()</TT> as their
+<TT>file_operations</TT>&#X2192;<TT>read()</TT>. The shared memory filesystem,
+which is covered in Chatper <A HREF="understand015.html#chap: Shared Memory Virtual Filesystem">12</A>,
+is one noteworthy exception but, in general, filesystems perform their
+operations through the page cache. For the purposes of this section, we'll
+illustrate how <TT>generic_file_read()</TT> operates and how it adds pages
+to the page cache.</P><P>For normal IO<SUP><A NAME="text14" HREF="#note14">1</A></SUP>, <TT>generic_file_read()</TT> begins
+with a few basic checks before calling <TT>do_generic_file_read()</TT>. This
+searches the page cache, by calling <TT>__find_page_nolock()</TT><A NAME="@mainindex863"></A>
+with the <TT>pagecache_lock</TT> held, to see if the page already exists in
+it. If it does not, a new page is allocated with <TT>page_cache_alloc()</TT>,
+which is a simple wrapper around <TT>alloc_pages()</TT>, and added to the
+page cache with <TT>__add_to_page_cache()</TT>. Once a page frame is
+present in the page cache, <TT>generic_file_readahead()</TT> is called which
+uses <TT>page_cache_read()</TT><A NAME="@mainindex864"></A> to read the page from disk. It reads the
+page using <TT>mapping</TT>&#X2192;<TT>a_ops</TT>&#X2192;<TT>readpage()</TT>,
+where <TT>mapping</TT> is the <TT>address_space</TT> managing the file.
+<TT>readpage()</TT> is the filesystem specific function used to read a page
+on disk.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html060.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 10.2: Call Graph: <TT>generic_file_read()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: generic_file_read"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Anonymous pages are added to the swap cache when they are unmapped
+from a process, which will be discussed further in Section <A HREF="understand014.html#sec: Swap Cache">11.4</A>.
+Until an attempt is made to swap them out, they have no
+<TT>address_space</TT> acting as a mapping or any offset within a file
+leaving nothing to hash them into the page cache with. Note that these
+pages still exist on the LRU lists however. Once in the swap cache, the
+only real difference between anonymous pages and file backed pages is that
+anonymous pages will use <TT>swapper_space</TT> as their <TT>struct
+address_space</TT>.</P><P>Shared memory pages are added during one of two cases. The first is during
+<TT>shmem_getpage_locked()</TT> which is called when a page has to be
+either fetched from swap or allocated as it is the first reference. The
+second is when the swapout code calls <TT>shmem_unuse()</TT>. This occurs
+when a swap area is being deactivated and a page, backed by swap space, is
+found that does not appear to belong to any process. The inodes related to
+shared memory are exhaustively searched until the correct page is found. In
+both cases, the page is added with <TT>add_to_page_cache()</TT>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html061.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 10.3: Call Graph: <TT>add_to_page_cache()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: add_to_page_cache"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc68"></A><A NAME="htoc72">10.3</A>  LRU Lists</H2><P>
+<A NAME="@mainindex865"></A></P><P>As stated in Section <A HREF="#sec: Page Replacement Policy">10.1</A>, the LRU lists consist of two lists called <TT>active_list</TT><A NAME="@mainindex866"></A>
+and
+<TT>inactive_list</TT><A NAME="@mainindex867"></A>. They are declared in <TT>mm/page_alloc.c</TT>
+and are protected by the <TT>pagemap_lru_lock</TT> spinlock. They, broadly
+speaking, store the &#X201C;hot&#X201D; and &#X201C;cold&#X201D; pages respectively, or in other words,
+the <TT>active_list</TT> contains all the working sets in the system and
+<TT>inactive_list</TT> contains reclaim canditates. The API which deals
+with the LRU lists that is listed in Table <A HREF="#tab: LRU List API">10.2</A>.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> 
+<A NAME="@mainindex868"></A><TT>void lru_cache_add(struct page * page)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Add a cold page to the <TT>inactive_list</TT>. Will be moved
+to <TT>active_list</TT> with a call to <TT>mark_page_accessed()</TT>
+if the page is known to be hot, such as when a page is faulted in.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex869"></A><TT>void lru_cache_del(struct page *page)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Removes a page from the LRU lists by calling
+either <TT>del_page_from_active_list()</TT> or
+<TT>del_page_from_inactive_list()</TT>, whichever is appropriate.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex870"></A><TT>void mark_page_accessed(struct page *page)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Mark that the page has been accessed. If it was not recently
+referenced (in the <TT>inactive_list</TT> and <TT>PG_referenced</TT>
+flag not set), the referenced flag is set. If it is referenced a second
+time, <TT>activate_page()</TT> is called, which marks the page hot, and
+the referenced flag is cleared</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex871"></A><TT>void activate_page(struct page * page)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Removes a page from the <TT>inactive_list</TT> and places it on
+<TT>active_list</TT>. It is very rarely called directly as the caller has to
+know the page is on <TT>inactive_list</TT>. <TT>mark_page_accessed()</TT>
+should be used instead</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 10.2: LRU List API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: LRU List API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H3 CLASS="subsection">10.3.1  Refilling <TT>inactive_list</TT></H3><P>
+<A NAME="@mainindex872"></A></P><P>When caches are being shrunk, pages are moved from the
+<TT>active_list</TT> to the <TT>inactive_list</TT> by the function
+<TT>refill_inactive()</TT><A NAME="@mainindex873"></A>. It takes as a parameter the number of pages
+to move, which is calculated in <TT>shrink_caches()</TT> as a ratio depending
+on <TT>nr_pages</TT>, the number of pages in <TT>active_list</TT> and
+the number of pages in <TT>inactive_list</TT>. The number of pages to move
+is calculated as</P><PRE> 
+nr_pages * nr_active_pages / ((nr_inactive_pages + 1) * 2) 
+</PRE><P>This keeps the <TT>active_list</TT> about two thirds the size of the
+<TT>inactive_list</TT> and the number of pages to move is determined as
+a ratio based on how many pages we desire to swap out (<TT>nr_pages</TT>).</P><P>Pages are taken from the end of the <TT>active_list</TT>. If the
+<TT>PG_referenced</TT> flag is set, it is cleared and the page is put back at
+top of the <TT>active_list</TT> as it has been recently used and is still
+&#X201C;hot&#X201D;. This is sometimes referred to as rotating<A NAME="@mainindex874"></A> the
+list. If the flag is cleared, it is moved to the <TT>inactive_list</TT>
+and the <TT>PG_referenced</TT> flag set so that it will be quickly
+promoted to the <TT>active_list</TT> if necessary.</P><H3 CLASS="subsection">10.3.2  Reclaiming Pages from the LRU Lists</H3><P>
+<A NAME="sec: Reclaiming Pages from the Page Cache"></A>
+<A NAME="@mainindex875"></A></P><P>The function <TT>shrink_cache()</TT><A NAME="@mainindex876"></A> is the part of the replacement
+algorithm which takes pages from the <TT>inactive_list</TT>
+and decides how they should be swapped out. The two starting
+parameters which determine how much work will be performed are
+<TT>nr_pages</TT><A NAME="@mainindex877"></A> and <TT>priority</TT>. <TT>nr_pages</TT>
+starts out as <TT>SWAP_CLUSTER_MAX</TT>, currently defined as 32
+in <TT>mm/vmscan.c</TT>. The variable <TT>priority</TT> starts as
+<TT>DEF_PRIORITY</TT>, currently defined as 6 in <TT>mm/vmscan.c</TT>.</P><P>Two parameters, <TT>max_scan</TT><A NAME="@mainindex878"></A> and <TT>max_mapped</TT><A NAME="@mainindex879"></A>
+determine how much work the function will do and are affected by the
+<TT>priority</TT>. Each time the function <TT>shrink_caches()</TT> is
+called without enough pages being freed, the priority will be decreased
+until the highest priority 1 is reached.</P><P>The variable <TT>max_scan</TT> is the maximum number of pages will be
+scanned by this function and is simply calculated as</P><PRE>max_scan = nr_inactive_pages / priority</PRE><P>where <TT>nr_inactive_pages</TT> is the number of pages in the
+<TT>inactive_list</TT>. This means that at lowest priority 6, at most one
+sixth of the pages in the <TT>inactive_list</TT> will be scanned and at
+highest priority, all of them will be.</P><P>The second parameter is <TT>max_mapped</TT> which determines how many
+process pages are allowed to exist in the page cache before whole processes
+will be swapped out. This is calculated as the minimum of either one tenth
+of <TT>max_scan</TT> or</P><PRE>nr_pages &lt;&lt; (10 - priority)</PRE><P>In other words, at lowest priority, the maximum number of mapped pages allowed
+is either one tenth of <TT>max_scan</TT> or 16 times the number of pages
+to swap out (<TT>nr_pages</TT>) whichever is the lower number. At high
+priority, it is either one tenth of <TT>max_scan</TT> or 512 times the
+number of pages to swap out.</P><P>From there, the function is basically a very large for-loop which scans at
+most <TT>max_scan</TT> pages to free up <TT>nr_pages</TT> pages from the
+end of the <TT>inactive_list</TT> or until the <TT>inactive_list</TT>
+is empty. After each page, it checks to see whether it should reschedule
+itself so that the swapper does not monopolise the CPU.</P><P>For each type of page found on the list, it makes a different decision on what
+to do. The different page types and actions taken are handled in this order:</P><P><EM>Page is mapped by a process</EM>. This jumps to the <TT>page_mapped</TT>
+label which we will meet again in a later case. The <TT>max_mapped</TT>
+count is decremented. If it reaches 0, the page tables of processes will be
+linearly searched and swapped out by the function <TT>swap_out()</TT></P><P><EM>Page is locked and the PG_launder bit is set</EM>. The page is locked
+for IO so could be skipped over. However, if the <TT>PG_launder</TT>
+bit is set, it means that this is the second time the page has been found
+locked so it is better to wait until the IO completes and get rid of it. A
+reference to the page is taken with <TT>page_cache_get()</TT> so that the
+page will not be freed prematurely and <TT>wait_on_page()</TT> is called
+which sleeps until the IO is complete. Once it is completed, the reference
+count is decremented with <TT>page_cache_release()</TT>. When the count
+reaches zero, the page will be reclaimed.</P><P><EM>Page is dirty, is unmapped by all processes, has no buffers and
+belongs to a device or file mapping</EM>. As the page belongs to a file or
+device mapping, it has a valid <TT>writepage()</TT> function available via
+<TT>page</TT>&#X2192;<TT>mapping</TT>&#X2192;<TT>a_ops</TT>&#X2192;<TT>writepage</TT>.
+The <TT>PG_dirty</TT> bit is cleared and the <TT>PG_launder</TT>
+bit is set as it is about to start IO. A reference is taken for the page
+with <TT>page_cache_get()</TT> before calling the <TT>writepage()</TT>
+function to synchronise the page with the backing file before dropping the
+reference with <TT>page_cache_release()</TT>. Be aware that this case
+will also synchronise anonymous pages that are part of the swap cache with
+the backing storage as swap cache pages use <TT>swapper_space</TT> as a
+<TT>page</TT>&#X2192;<TT>mapping</TT>. The page remains on the LRU. When it is
+found again, it will be simply freed if the IO has completed and the page
+will be reclaimed. If the IO has not completed, the kernel will wait for
+the IO to complete as described in the previous case.</P><P><EM>Page has buffers associated with data on disk</EM>. A reference
+is taken to the page and an attempt is made to free the pages with
+<TT>try_to_release_page()</TT>. If it succeeds and is an anonymous page
+(no <TT>page</TT>&#X2192;<TT>mapping</TT>, the page is removed from the LRU
+and <TT>page_cache_released()</TT> called to decrement the usage count.
+There is only one case where an anonymous page has associated buffers and
+that is when it is backed by a swap file as the page needs to be written
+out in block-sized chunk. If, on the other hand, it is backed by a file or
+device, the reference is simply dropped and the page will be freed as usual
+when the count reaches 0.</P><P><EM>Page is anonymous and is mapped by more than one process</EM>. The LRU is unlocked and the page is unlocked before dropping into the
+same <TT>page_mapped</TT> label that was encountered in the first case. In
+other words, the <TT>max_mapped</TT> count is decremented and
+<TT>swap_out</TT> called when, or if, it reaches 0.</P><P><EM>Page has no process referencing it</EM>. This is the final case that is
+&#X201C;fallen&#X201D; into rather than explicitly checked for. If the page is in the
+swap cache, it is removed from it as the page is now sychronised with the
+backing storage and has no process referencing it. If it was part of a file,
+it is removed from the inode queue, deleted from the page cache and freed.</P><H2 CLASS="section"><A NAME="toc69"></A><A NAME="htoc73">10.4</A>  Shrinking all caches</H2><P>
+<A NAME="sec: Shrinking all caches"></A></P><P>The function responsible for shrinking the various caches is
+<TT>shrink_caches()</TT><A NAME="@mainindex880"></A> which takes a few simple steps to
+free up some memory. The maximum number of pages that will be
+written to disk in any given pass is <TT>nr_pages</TT> which
+is initialised by <TT>try_to_free_pages_zone()</TT> to be
+<TT>SWAP_CLUSTER_MAX</TT><A NAME="@mainindex881"></A>. The limitation is there so that if
+<B>kswapd</B> schedules a large number of pages to be written to disk,
+it will sleep occasionally to allow the IO to take place. As pages are freed,
+<TT>nr_pages</TT> is decremented to keep count.</P><P>The amount of work that will be performed also depends on the
+<TT>priority</TT> initialised by <TT>try_to_free_pages_zone()</TT>
+to be <TT>DEF_PRIORITY</TT><A NAME="@mainindex882"></A>. For each pass that does not free up
+enough pages, the priority is decremented for the highest priority been 1.</P><P>The function first calls <TT>kmem_cache_reap()</TT> (see Section 
+<A HREF="understand011.html#Sec: Cache Reaping">8.1.7</A>) which selects a slab cache to shrink. If
+<TT>nr_pages</TT> number of pages are freed, the work is complete and
+the function returns otherwise it will try to free <TT>nr_pages</TT>
+from other caches.</P><P>If other caches are to be affected, <TT>refill_inactive()</TT> will move
+pages from the <TT>active_list</TT> to the <TT>inactive_list</TT>
+before shrinking the page cache by reclaiming pages at the end of the
+<TT>inactive_list</TT> with <TT>shrink_cache()</TT>.</P><P>Finally, it shrinks three special caches, the <EM>dcache</EM>
+(<TT>shrink_dcache_memory()</TT>), the <EM>icache</EM>
+(<TT>shrink_icache_memory()</TT>) and the <EM>dqcache</EM>
+(<TT>shrink_dqcache_memory()</TT>). These objects are quite small in
+themselves but a cascading effect allows a lot more pages to be freed in
+the form of buffer and disk caches. </P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html062.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 10.4: Call Graph: <TT>shrink_caches()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: shrink_caches"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc70"></A><A NAME="htoc74">10.5</A>  Swapping Out Process Pages</H2><P>
+<A NAME="@mainindex883"></A><A NAME="@mainindex884"></A></P><P>When <TT>max_mapped</TT> pages have been found in the page cache,
+<TT>swap_out()</TT><A NAME="@mainindex885"></A> is called to start swapping out process pages. Starting
+from the <TT>mm_struct</TT> pointed to by <TT>swap_mm</TT><A NAME="@mainindex886"></A> and the
+address <TT>mm</TT>&#X2192;<TT>swap_address</TT>, the page tables are searched
+forward until <TT>nr_pages</TT> have been freed.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html063.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 10.5: Call Graph: <TT>swap_out()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: swap_out"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>All process mapped pages are examined regardless of where they are in the
+lists or when they were last referenced but pages which are part of the
+<TT>active_list</TT> or have been recently referenced will be skipped
+over. The examination of hot pages is a bit costly but insignificant in
+comparison to linearly searching all processes for the PTEs that reference
+a particular <TT>struct page</TT>.</P><P>Once it has been decided to swap out pages from a process, an attempt will
+be made to swap out at least <TT>SWAP_CLUSTER_MAX</TT> number of pages
+and the full list of <TT>mm_struct</TT>s will only be examined once to
+avoid constant looping when no pages are available. Writing out the pages in
+bulk increases the chance that pages close together in the process address
+space will be written out to adjacent slots on disk.</P><P>The marker <TT>swap_mm</TT> is initialised to point to <TT>init_mm</TT>
+and the <TT>swap_address</TT> is initialised to 0 the first time it is
+used. A task has been fully searched when the <TT>swap_address</TT> is equal
+to <TT>TASK_SIZE</TT>. Once a task has been selected to swap pages from,
+the reference count to the <TT>mm_struct</TT> is incremented so that it
+will not be freed early and <TT>swap_out_mm()</TT><A NAME="@mainindex887"></A> is called with the
+selected <TT>mm_struct</TT> as a parameter. This function walks each
+VMA the process holds and calls <TT>swap_out_vma()</TT><A NAME="@mainindex888"></A> for it. This
+is to avoid having to walk the entire page table which will be largely
+sparse. <TT>swap_out_pgd()</TT> and <TT>swap_out_pmd()</TT> walk the
+page tables for given VMA until finally <TT>try_to_swap_out()</TT><A NAME="@mainindex889"></A>
+is called on the actual page and PTE.</P><P>The function <TT>try_to_swap_out()</TT> first checks to make sure that the
+page is not part of the <TT>active_list</TT>, has been recently referenced or
+belongs to a zone that we are not interested in. Once it has been established
+this is a page to be swapped out, it is removed from the process page tables.
+The newly removed PTE is then checked to see if it is dirty. If it is, the
+<TT>struct page</TT> flags will be updated to match so that it will
+get synchronised with the backing storage. If the page is already a part
+of the swap cache, the RSS is simply updated and the reference to the page
+is dropped, otherwise the process is added to the swap cache. How pages are
+added to the swap cache and synchronised with backing storage is discussed
+in Chapter <A HREF="understand014.html#chap: Swap Management">11</A>. </P><H2 CLASS="section"><A NAME="toc71"></A><A NAME="htoc75">10.6</A>  Pageout Daemon (<B>kswapd</B>)</H2><P>
+<A NAME="@mainindex890"></A><A NAME="@mainindex891"></A></P><P>During system startup, a kernel thread called <B>kswapd</B> is
+started from <TT>kswapd_init()</TT><A NAME="@mainindex892"></A> which continuously executes the
+function <TT>kswapd()</TT><A NAME="@mainindex893"></A> in <TT>mm/vmscan.c</TT> which usually
+sleeps. This daemon is responsible for reclaiming pages when memory is
+running low. Historically, <B>kswapd</B> used to wake up every 10
+seconds but now it is only woken by the physical page allocator when the
+<TT>pages_low</TT> number of free pages in a zone is reached (see Section
+<A HREF="understand005.html#sec: Zone Watermarks">2.2.1</A>). 
+</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html064.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 10.6: Call Graph: <TT>kswapd()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: kswapd"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>It is this daemon that performs most of the tasks needed to maintain
+the page cache correctly, shrink slab caches and swap out processes
+if necessary. Unlike swapout daemons such, as Solaris [<A HREF="understand031.html#mauro01"><CITE>MM01</CITE></A>],
+which are woken up with increasing frequency as there is memory pressure,
+<B>kswapd</B> keeps freeing pages until the <TT>pages_high</TT>
+watermark is reached. Under extreme memory pressure, processes will do the
+work of <B>kswapd</B> synchronously by calling <TT>balance_classzone()</TT>
+which calls <TT>try_to_free_pages_zone()</TT>. As shown in Figure
+<A HREF="#fig: kswapd">10.6</A>, it is at <TT>try_to_free_pages_zone()</TT> where the
+physical page allocator synchonously performs the same task as
+<B>kswapd</B> when the zone is under heavy pressure.</P><P>When <B>kswapd</B> is woken up, it performs the following:</P><UL CLASS="itemize"><LI CLASS="li-itemize">Calls <TT>kswapd_can_sleep()</TT><A NAME="@mainindex894"></A> which cycles through all zones
+checking the <TT>need_balance</TT> field in the <TT>struct
+zone_t</TT>. If any of them are set, it can not sleep;</LI><LI CLASS="li-itemize">If it cannot sleep, it is removed from the <TT>kswapd_wait</TT><A NAME="@mainindex895"></A>
+wait queue;</LI><LI CLASS="li-itemize">Calls the functions <TT>kswapd_balance()</TT><A NAME="@mainindex896"></A>,
+which cycles through all zones. It will free pages in a zone with
+<TT>try_to_free_pages_zone()</TT> if <TT>need_balance</TT> is set
+and will keep freeing until the <TT>pages_high</TT> watermark is reached;</LI><LI CLASS="li-itemize">The task queue for <TT>tq_disk</TT><A NAME="@mainindex897"></A> is run so that pages queued
+will be written out;</LI><LI CLASS="li-itemize">Add <B>kswapd</B> back to the <TT>kswapd_wait</TT> queue and go
+back to the first step.</LI></UL><H2 CLASS="section"><A NAME="toc72"></A><A NAME="htoc76">10.7</A>  What's New in 2.6</H2><P>
+<A NAME="new: Page Frame Reclamation"></A></P><H5 CLASS="paragraph">kswapd</H5><P> As stated in Section <A HREF="understand005.html#new: Describing Physical Memory">2.6</A>, 
+there is now a <B>kswapd</B> for every memory node in the system.
+These daemons are still started from <TT>kswapd()</TT> and they all execute
+the same code except their work is confined to their local node. The
+main changes to the implementation of <B>kswapd</B> are related to the
+<TT>kswapd-per-node</TT> change.</P><P>The basic operation of <B>kswapd</B> remains the same. Once woken, it
+calls <TT>balance_pgdat()</TT> for the <TT>pgdat</TT> it is responsible
+for. <TT>balance_pgdat()</TT> has two modes of operation. When called
+with <TT>nr_pages == 0</TT>, it will continually try to free pages from
+each zone in the local <TT>pgdat</TT> until <TT>pages_high</TT> is
+reached. When <TT>nr_pages</TT> is specified, it will try and free either
+<TT>nr_pages</TT> or <TT>MAX_CLUSTER_MAX * 8</TT>, whichever is the
+smaller number of pages.</P><H5 CLASS="paragraph">Balancing Zones</H5><P> The two main functions called by
+<TT>balance_pgdat()</TT> to free pages are <TT>shrink_slab()</TT> and
+<TT>shrink_zone()</TT>. <TT>shrink_slab()</TT> was covered in Section
+<A HREF="understand011.html#new: Slab Allocator">8.8</A> so will not be repeated here. The function 
+<TT>shrink_zone()</TT> is called to free a number of pages based
+on how urgent it is to free pages. This function behaves very
+similar to how 2.4 works. <TT>refill_inactive_zone()</TT> will
+move a number of pages from <TT>zone</TT>&#X2192;<TT>active_list</TT> to
+<TT>zone</TT>&#X2192;<TT>inactive_list</TT>. Remember as covered in Section
+<A HREF="understand005.html#new: Describing Physical Memory">2.6</A>, that LRU lists are now per-zone and
+not global as they are in 2.4. <TT>shrink_cache()</TT> is called to remove
+pages from the LRU and reclaim pages.</P><H5 CLASS="paragraph">Pageout Pressure</H5><P> In 2.4, the pageout priority determined
+how many pages would be scanned. In 2.6, there is a decaying average
+that is updated by <TT>zone_adj_pressure()</TT>. This adjusts the
+<TT>zone</TT>&#X2192;<TT>pressure</TT> field to indicate how many pages should be
+scanned for replacement. When more pages are required, this will be pushed up
+towards the highest value of <TT>DEF_PRIORITY &lt;&lt; 10</TT> and then decays
+over time. The value of this average affects how many pages will be scanned in
+a zone for replacement. The objective is to have page replacement start working
+and slow gracefully rather than act in a bursty nature.</P><H5 CLASS="paragraph">Manipulating LRU Lists</H5><P> In 2.4, a spinlock would be acquired
+when removing pages from the LRU list. This made the lock very heavily
+contended so, to relieve contention, operations involving the LRU lists
+take place via <TT>struct</TT> <TT>pagevec</TT><A NAME="@mainindex898"></A> structures. This
+allows pages to be added or removed from the LRU lists in batches of up to
+<TT>PAGEVEC_SIZE</TT> numbers of pages.</P><P>To illustrate, when <TT>refill_inactive_zone()</TT> and
+<TT>shrink_cache()</TT> are removing pages, they acquire the
+<TT>zone</TT>&#X2192;<TT>lru_lock</TT> lock, remove large blocks of pages
+and store them on a temporary list. Once the list of pages to remove is
+assembled, <TT>shrink_list()</TT> is called to perform the actual freeing
+of pages which can now perform most of it's task without needing the
+<TT>zone</TT>&#X2192;<TT>lru_lock</TT> spinlock.</P><P>When adding the pages back, a new page vector struct is initialised
+with <TT>pagevec_init()</TT>. Pages are added to the vector with
+<TT>pagevec_add()</TT> and then committed to being placed on the LRU list
+in bulk with <TT>pagevec_release()</TT>.</P><P>There is a sizable API associated with <TT>pagevec</TT> structs which
+can be seen in &lt;<TT>linux/pagevec.h</TT>&gt; with most of the implementation
+in <TT>mm/swap.c</TT>.
+
+	</P><HR CLASS="footnoterule"><DL CLASS="thefootnotes"><DT CLASS="dt-thefootnotes">
+<A NAME="note14" HREF="#text14">1</A></DT><DD CLASS="dd-thefootnotes">Direct IO is handled differently with
+<TT>generic_file_direct_IO()</TT>.
+</DD></DL>
+<HR>
+[ <A HREF="understand012.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand014.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

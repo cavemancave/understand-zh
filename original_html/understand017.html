@@ -1,0 +1,72 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>The Final Word</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand016.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand018.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc105">Chapter 14</A>  The Final Word</H1><P>
+<A NAME="chap: Conclusion"></A></P><P>Make no mistake, memory management is a large, complex and time consuming
+field to research and difficult to apply to practical implementations. As
+it is very difficult to model how systems behave in real multi-programmed
+systems [<A HREF="understand031.html#coffman80"><CITE>CD80</CITE></A>], developers often rely on intuition to guide them
+and examination of virtual memory algorithms depends on simulations of
+specific workloads. Simulations are necessary as modeling how scheduling,
+paging behaviour and multiple processes interact presents a considerable
+challenge. Page replacement policies, a field that has been the focus of
+considerable amounts of research, is a good example as it is only ever shown
+to work well for specified workloads. The problem of adjusting algorithms
+and policies to different workloads is addressed by having administrators
+tune systems as much as by research and algorithms.</P><P>The Linux kernel is also large, complex and fully understood by a relatively
+small core group of people. It's development is the result of contributions of
+thousands of programmers with a varying range of specialties, backgrounds and
+spare time. The first implementations are developed based on the all-important
+foundation that theory provides. Contributors built upon this framework with
+changes based on real world observations.</P><P>It has been asserted on the Linux Memory Management mailing
+list that the VM is poorly documented and difficult to pick
+up as &#X201C;the implementation is a nightmare to follow&#X201D;<SUP><A NAME="text19" HREF="#note19">1</A></SUP>
+and the lack of documentation on practical VMs is not just confined
+to Linux. Matt Dillon, one of the principal developers of the FreeBSD
+VM<SUP><A NAME="text20" HREF="#note20">2</A></SUP>
+and considered a &#X201C;VM Guru&#X201D; stated in an interview<SUP><A NAME="text21" HREF="#note21">3</A></SUP> that documentation can be
+&#X201C;hard to come by&#X201D;. One of the principal difficulties with deciphering
+the implementation is the fact the developer must have a background in
+memory management theory to see why implementation decisions were made as
+a pure understanding of the code is insufficient for any purpose other than
+micro-optimisations.</P><P>This book attempted to bridge the gap between memory management theory and
+the practical implementation in Linux and tie both fields together in a single
+place. It tried to describe what life is like in Linux as a memory manager in a
+manner that was relatively independent of hardware architecture considerations.
+I hope after reading this, and progressing onto the code commentary, that you,
+the reader feels a lot more comfortable with tackling the VM subsystem. As a
+final parting shot, Figure 
+<A HREF="#fig: Broad Overview on how VM Sub-Systems Interact">14.1</A> broadly illustrates
+how of the sub-systems we discussed in detail interact with each other.</P><P>On a final personal note, I hope that this book encourages other people to
+produce similar works for other areas of the kernel. I know I'll buy them!</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html078.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 14.1: Broad Overview on how VM Sub-Systems Interact</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Broad Overview on how VM Sub-Systems Interact"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>			
+	</P><HR CLASS="footnoterule"><DL CLASS="thefootnotes"><DT CLASS="dt-thefootnotes">
+<A NAME="note19" HREF="#text19">1</A></DT><DD CLASS="dd-thefootnotes">
+<EM>http://mail.nl.linux.org/linux-mm/2002-05/msg00035.html</EM>
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note20" HREF="#text20">2</A></DT><DD CLASS="dd-thefootnotes">His past involvement with the Linux VM is evident from
+<EM>http://mail.nl.linux.org/linux-mm/2000-05/msg00419.html</EM>
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note21" HREF="#text21">3</A></DT><DD CLASS="dd-thefootnotes">
+<EM>http://kerneltrap.com/node.php?id=8</EM>
+</DD></DL>
+<HR>
+[ <A HREF="understand016.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand018.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

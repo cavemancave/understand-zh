@@ -1,0 +1,545 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Introduction</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand003.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand005.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc1">Chapter 1</A>  Introduction</H1><P>
+<A NAME="chap: Introduction"></A></P><P>Linux is a relatively new operating system that has begun to enjoy a lot
+of attention from the business, academic and free software worlds. As the
+operating system matures, its feature set, capabilities and performance
+grow but so, out of necessity does its size and complexity. The table in
+Figure <A >??</A> shows the size
+of the kernel source code in bytes and lines of code of the <TT>mm/</TT>
+part of the kernel tree. This does not include the machine dependent code
+or any of the buffer management code and does not even pretend to be an
+accurate metric for complexity but still serves as a small indicator.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD ALIGN=left NOWRAP><B>Version</B></TD><TD ALIGN=left NOWRAP><B>Release Date</B></TD><TD ALIGN=right NOWRAP><B>Total Size</B></TD><TD ALIGN=right NOWRAP><B>Size
+of mm/</B></TD><TD ALIGN=right NOWRAP><B>Line count</B></TD></TR>
+<TR><TD ALIGN=left NOWRAP>
+1.0</TD><TD ALIGN=left NOWRAP>March 13th, 1992</TD><TD ALIGN=right NOWRAP>5.9MiB</TD><TD ALIGN=right NOWRAP>96KiB</TD><TD ALIGN=right NOWRAP>3109</TD></TR>
+<TR><TD ALIGN=left NOWRAP>1.2.13</TD><TD ALIGN=left NOWRAP>February 8th, 1995</TD><TD ALIGN=right NOWRAP>11MiB</TD><TD ALIGN=right NOWRAP>136KiB</TD><TD ALIGN=right NOWRAP>4531</TD></TR>
+<TR><TD ALIGN=left NOWRAP>2.0.39</TD><TD ALIGN=left NOWRAP>January 9th 2001</TD><TD ALIGN=right NOWRAP>35MiB</TD><TD ALIGN=right NOWRAP>204KiB</TD><TD ALIGN=right NOWRAP>6792</TD></TR>
+<TR><TD ALIGN=left NOWRAP>2.2.22</TD><TD ALIGN=left NOWRAP>September 16th, 2002</TD><TD ALIGN=right NOWRAP>93MiB</TD><TD ALIGN=right NOWRAP>292KiB</TD><TD ALIGN=right NOWRAP>9554</TD></TR>
+<TR><TD ALIGN=left NOWRAP>2.4.22</TD><TD ALIGN=left NOWRAP>August 25th, 2003</TD><TD ALIGN=right NOWRAP>181MiB</TD><TD ALIGN=right NOWRAP>436KiB</TD><TD ALIGN=right NOWRAP>15724</TD></TR>
+<TR><TD ALIGN=left NOWRAP>2.6.0-test4</TD><TD ALIGN=left NOWRAP>August 22nd, 2003</TD><TD ALIGN=right NOWRAP>261MiB	</TD><TD ALIGN=right NOWRAP>604KiB	</TD><TD ALIGN=right NOWRAP>21714</TD></TR>
+</TABLE>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 1.1: Kernel size as an indicator of complexity</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Kernel size as an indicator of
+complexity"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>As is the habit of open source developers in general, new developers
+asking questions are sometimes told to refer directly to the
+source with the &#X201C;polite&#X201D; acronym RTFS<SUP><A NAME="text1" HREF="#note1">1</A></SUP> or else are referred to the kernel newbies mailing list
+(<EM>http://www.kernelnewbies.org</EM>). With the Linux Virtual Memory
+(VM) manager, this used to be a suitable response as the time required to
+understand the VM could be measured in weeks and the books available devoted
+enough time to the memory management chapters to make the relatively small
+amount of code easy to navigate.</P><P>The books that describe the operating system such as <EM>Understanding
+the Linux Kernel</EM> [<A HREF="understand031.html#bovet00"><CITE>BC00</CITE></A>] [<A HREF="understand031.html#bovet03"><CITE>BC03</CITE></A>],
+<A NAME="@mainindex1"></A> tend to cover the entire
+kernel rather than one topic with the notable exception of device
+drivers [<A HREF="understand031.html#rubini01"><CITE>RC01</CITE></A>]. These books, particularly <EM>Understanding
+the Linux Kernel</EM>, provide invaluable insight into kernel internals but they
+miss the details which are specific to the VM and not of general interest. For
+example, it is detailed in this book why <TT>ZONE_NORMAL</TT> is exactly 896MiB
+and exactly how per-cpu caches are implemented. Other aspects of the VM,
+such as the boot memory allocator and the virtual memory filesystem which
+are not of general kernel interest are also covered by this book.</P><P>Increasingly, to get a comprehensive view on how the kernel functions, one
+is required to read through the source code line by line. This book tackles
+the VM specifically so that this investment of time to understand it will
+be measured in weeks and not months. The details which are missed by the
+main part of the book will be caught by the code commentary.</P><P>In this chapter, there will be in informal introduction to the basics of
+acquiring information on an open source project and some methods for managing,
+browsing and comprehending the code. If you do not intend to be reading the
+actual source, you may skip to Chapter <A HREF="understand005.html#chap: Describing Physical Memory">2</A>. </P><H2 CLASS="section"><A NAME="toc7"></A><A NAME="htoc2">1.1</A>  Getting Started</H2><P>One of the largest initial obstacles to understanding code is deciding
+where to start and how to easily manage, browse and get an overview of the
+overall code structure. If requested on mailing lists, people will provide
+some suggestions on how to proceed but a comprehensive methodology is rarely
+offered aside from suggestions to keep reading the source until it makes
+sense. In the following sections, some useful rules of thumb for open source
+code comprehension will be introduced and specifically on how they may be
+applied to the kernel. </P><H3 CLASS="subsection">1.1.1  Configuration and Building</H3><P>
+<A NAME="chap: Where To Start"></A>
+<A NAME="@mainindex2"></A></P><P>With any open source project, the first step is to download the source and
+read the installation documentation. By convention, the source will have
+a <TT>README</TT> or <TT>INSTALL</TT> file at the top-level of the
+source tree [<A HREF="understand031.html#fitzgerald02"><CITE>FF02</CITE></A>]. In fact, some automated build tools such
+as <B>automake</B> require the install file to exist. These files
+will contain instructions for configuring and installing the package or
+will give a reference to where more information may be found. Linux is no
+exception as it includes a <TT>README</TT> which describes how the kernel
+may be configured and built.</P><P>The second step is to build the software. In earlier days, the requirement
+for many projects was to edit the <TT>Makefile</TT> by hand but this
+is rarely the case now. Free software usually uses at least<A NAME="@mainindex3"></A>
+<B>autoconf</B><SUP><A NAME="text2" HREF="#note2">2</A></SUP>
+to automate testing of the build environment and<A NAME="@mainindex4"></A>
+<B>automake</B><SUP><A NAME="text3" HREF="#note3">3</A></SUP>
+to simplify the creation of <TT>Makefile</TT>s so building is often as
+simple as:</P><PRE CLASS="verbatim">mel@joshua: project $ ./configure &amp;&amp; make
+</PRE><P>Some older projects, such as the Linux kernel, use their own configuration
+tools and some large projects such as the Apache webserver have numerous
+configuration options but usually the configure script is the starting
+point. In the case of the kernel, the configuration is handled by the
+<TT>Makefile</TT>s and supporting tools. The simplest means of configuration
+is to:</P><PRE CLASS="verbatim">mel@joshua: linux-2.4.22 $ make config
+</PRE><P>This asks a long series of questions on what type of kernel should be
+built. Once all the questions have been answered, compiling the kernel
+is simply:</P><PRE CLASS="verbatim">mel@joshua: linux-2.4.22 $ make bzImage &amp;&amp; make modules
+</PRE><P>A comprehensive guide on configuring and compiling a kernel is available with
+the Kernel HOWTO<SUP><A NAME="text4" HREF="#note4">4</A></SUP>
+and will not be covered in detail with this book. For now, we will presume
+you have one fully built kernel and it is time to begin figuring out how
+the new kernel actually works.</P><H3 CLASS="subsection">1.1.2  Sources of Information</H3><P>
+<A NAME="@mainindex5"></A></P><P>Open Source projects will usually have a home page,
+especially since free project hosting sites such as
+<EM>http://www.sourceforge.net</EM><A NAME="@mainindex6"></A> are available. The
+home site will contain links to available documentation and instructions on
+how to join the mailing list, if one is available. Some sort of documentation
+will always exist, even if it is as minimal as a simple <TT>README</TT> file,
+so read whatever is available. If the project is old and reasonably large, the
+web site will probably feature a <EM>Frequently Asked Questions (FAQ)</EM><A NAME="@mainindex7"></A>.</P><P>Next, join the development mailing list and lurk, which means to subscribe
+to a mailing list and read it without posting. Mailing lists are the
+preferred form of developer communication followed by, to a lesser extent,
+<EM>Internet Relay Chat (IRC)</EM><A NAME="@mainindex8"></A> and online newgroups, commonly referred
+to as <EM>UseNet</EM><A NAME="@mainindex9"></A>. As mailing lists often contain discussions on
+implementation details, it is important to read at least the previous months
+archives to get a feel for the developer community and current activity. The
+mailing list archives should be the first place to search if you have a
+question or query on the implementation that is not covered by available
+documentation. If you have a question to ask the developers, take time to
+research the questions and ask it the &#X201C;Right Way&#X201D; [<A HREF="understand031.html#raymond01"><CITE>RM01</CITE></A>]. While
+there are people who will answer &#X201C;obvious&#X201D; questions, it will not do your
+credibility any favours to be constantly asking questions that were answered
+a week previously or are clearly documented.</P><P>Now, how does all this apply to Linux? First, the documentation. There is a
+<TT>README</TT> at the top of the source tree and a wealth of information is
+available in the <TT>Documentation/</TT> directory. There also is a number
+of books on UNIX design [<A HREF="understand031.html#vahalia96"><CITE>Vah96</CITE></A>], Linux specifically [<A HREF="understand031.html#bovet00"><CITE>BC00</CITE></A>]
+and of course this book to explain what to expect in the code.</P><P><A NAME=""></A>ne of the best online sources of information
+available on kernel development is the &#X201C;Kernel Page&#X201D; in the weekly edition
+of <EM>Linux Weekly News (http://www.lwn.net)</EM><A NAME="@mainindex10"></A>. It also reports on a wide range of Linux related topics and is
+worth a regular read. The kernel does not have a home web site as such but
+the closest equivalent is <EM>http://www.kernelnewbies.org</EM><A NAME="@mainindex11"></A> which is a vast source of information on the kernel that is
+invaluable to new and experienced people alike.</P><P><A NAME=""></A>here is a FAQ available for the <EM>Linux Kernel
+Mailing List (LKML)</EM><A NAME="@mainindex12"></A> at <EM>http://www.tux.org/lkml/</EM> that covers
+questions, ranging from the kernel development process to how to join the list
+itself. The list is archived at many sites but a common choice to reference
+is <EM>http://marc.theaimsgroup.com/?l=linux-kernel</EM>. Be aware that
+the mailing list is very high volume list which can be a very daunting
+read but a weekly summary is provided by the <EM>Kernel Traffic</EM><A NAME="@mainindex13"></A>
+site at <EM>http://kt.zork.net/kernel-traffic/</EM>.</P><P>The sites and sources mentioned so far contain general kernel information
+but there are memory management specific sources. There is a Linux-MM web
+site<A NAME="@mainindex14"></A> at <EM>http://www.linux-mm.org</EM> which
+contains links to memory management specific documentation and a linux-mm
+mailing list. The list is relatively light in comparison to the main list
+and is archived at <EM>http://mail.nl.linux.org/linux-mm/</EM>.</P><P>The last site that to consult is the <EM>Kernel Trap</EM><A NAME="@mainindex15"></A> site at
+<EM>http://www.kerneltrap.org</EM>. The site contains many useful articles
+on kernels in general. It is not specific to Linux but it does contain many
+Linux related articles and interviews with kernel developers.</P><P>As is clear, there is a vast amount of information that is available that
+may be consulted before resorting to the code. With enough experience, it
+will eventually be faster to consult the source directly but when getting
+started, check other sources of information first.</P><H2 CLASS="section"><A NAME="toc8"></A><A NAME="htoc3">1.2</A>  Managing the Source</H2><P>
+<A NAME="sec: Managing the Source"></A></P><P>The mainline or stock kernel is principally distributed as a compressed tape
+archive (.tar.bz) file which is available from your nearest kernel source
+repository, in Ireland's case <EM>ftp://ftp.ie.kernel.org/</EM>. The stock
+kernel is always considered to be the one released by the tree maintainer. For
+example, at time of writing, the stock kernels for 2.2.x are those released
+by Alan Cox<SUP><A NAME="text5" HREF="#note5">5</A></SUP>, for 2.4.x by Marcelo Tosatti and for 2.5.x
+by Linus Torvalds. At each release, the full tar file is available as well
+as a smaller <EM>patch</EM> which contains the differences between the two
+releases. Patching is the preferred method of upgrading because of bandwidth
+considerations. Contributions made to the kernel are almost always in the
+form of patches which are <EM>unified diffs</EM><A NAME="@mainindex16"></A> generated by the GNU
+tool <B>diff</B><A NAME="@mainindex17"></A>.</P><H5 CLASS="paragraph">Why patches</H5><P>
+<A NAME="@mainindex18"></A><A NAME="@mainindex19"></A></P><P>Sending patches to the mailing list initially sounds clumsy but it is
+remarkable efficient in the kernel development environment. The principal
+advantage of patches is that it is much easier to read what changes have been
+made than to compare two full versions of a file side by side. A developer
+familiar with the code can easily see what impact the changes will have and
+if it should be merged. In addition, it is very easy to quote the email that
+includes the patch and request more information about it.</P><H5 CLASS="paragraph">Subtrees</H5><P> <A NAME="@mainindex20"></A>At various intervals, individual
+influential developers may have their own version of the kernel distributed
+as a large patch to the main tree. These subtrees generally contain features
+or cleanups which have not been merged to the mainstream yet or are still
+being tested. Two notable subtrees is the <EM>-rmap</EM> tree maintained by
+Rik Van Riel, a long time influential VM developer and the <EM>-mm</EM> tree
+maintained by Andrew Morton, the current maintainer of the stock development
+VM. The -rmap tree contains a large set of features that for various reasons
+are not available in the mainline. It is heavily influenced by the FreeBSD
+VM and has a number of significant differences to the stock VM. The -mm tree
+is quite different to -rmap in that it is a testing tree with patches that
+are being tested before merging into the stock kernel.</P><H5 CLASS="paragraph">BitKeeper</H5><P> <A NAME="@mainindex21"></A>In more recent times, some
+developers have started using a source code control system called BitKeeper
+(<EM>http://www.bitmover.com</EM>), a proprietary version control system
+that was designed with the Linux as the principal consideration. BitKeeper
+allows developers to have their own distributed version of the tree and
+other users may &#X201C;pull&#X201D; sets of patches called <EM>changesets</EM> from
+each others trees. This distributed nature is a very important distinction
+from traditional version control software which depends on a central server.</P><P>BitKeeper allows comments to be associated with each patch which is displayed
+as part of the release information for each kernel. For Linux, this means
+that the email that originally submitted the patch is preserved making the
+progress of kernel development and the meaning of different patches a lot
+more transparent. On release, a list of the patch titles from each developer
+is announced as well as a detailed list of all patches included.</P><P>As BitKeeper is a proprietary product, email and patches are still considered
+the only method for generating discussion on code changes. In fact,
+some patches will not be considered for acceptance unless there is first
+some discussion on the main mailing list as code quality is considered to
+be directly related to the amount of peer review [<A HREF="understand031.html#raymond02"><CITE>Ray02</CITE></A>]. As the
+BitKeeper maintained source tree is exported in formats accessible to open
+source tools like CVS, patches are still the preferred means of discussion. It
+means that no developer is required to use BitKeeper for making contributions
+to the kernel but the tool is still something that developers should be
+aware of.</P><H3 CLASS="subsection">1.2.1  Diff and Patch</H3><P>
+<A NAME="sec: Diff and Patch"></A>
+<A NAME="@mainindex22"></A></P><P>The two tools for creating and applying patches are <B>diff</B><A NAME="@mainindex23"></A> and
+<B>patch</B><A NAME="@mainindex24"></A>, both of which are GNU utilities available from the GNU
+website<SUP><A NAME="text6" HREF="#note6">6</A></SUP>. <B>diff</B> is used to
+generate patches and <B>patch</B> is used to apply them. While the tools
+have numerous options, there is a &#X201C;preferred usage&#X201D;.</P><P>Patches generated with <B>diff</B> should always be <EM>unified
+diff</EM>, include the C function that the change affects and be generated
+from one directory above the kernel source root. A unified diff include
+more information that just the differences between two lines. It begins
+with a two line header with the names and creation date of the two files
+that <B>diff</B> is comparing. After that, the &#X201C;diff&#X201D; will consist
+of one or more &#X201C;hunks&#X201D;. The beginning of each hunk is marked with a line
+beginning with <TT>@@</TT> which includes the starting line in the source
+code and how many lines there is before and after the hunk is applied. The
+hunk includes &#X201C;context&#X201D; lines which show lines above and below the changes
+to aid a human reader. Each line begins with a <TT>+</TT>, <TT>-</TT> or
+blank. If the mark is <TT>+</TT>, the line is added. If a <TT>-</TT>, the
+line is removed and a blank is to leave the line alone as it is there just
+to provide context. The reasoning behind generating from one directory above
+the kernel root is that it is easy to see quickly what version the patch has
+been applied against and it makes the scripting of applying patches easier
+if each patch is generated the same way.</P><P>Let us take for example, a very simple change has been made to
+<TT>mm/page_alloc.c</TT> which adds a small piece of commentary. The
+patch is generated as follows. Note that this command should be all one one
+line minus the backslashes.</P><PRE CLASS="verbatim">mel@joshua: kernels/ $ diff -up                    \
+                linux-2.4.22-clean/mm/page_alloc.c \
+                linux-2.4.22-mel/mm/page_alloc.c   &gt; example.patch
+</PRE><P>This generates a unified context diff (-u switch) between two files and places
+the patch in <TT>example.patch</TT> as shown in Figure 
+<A HREF="#fig: Example Patch">1.2.1</A>. It also displays the name of the affected C function.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<PRE CLASS="verbatim">--- linux-2.4.22-clean/mm/page_alloc.c Thu Sep  4 03:53:15 2003
++++ linux-2.4.22-mel/mm/page_alloc.c Thu Sep  3 03:54:07 2003
+@@ -76,8 +76,23 @@
+  * triggers coalescing into a block of larger size.            
+  *
+  * -- wli
++ *  
++ *  There is a brief explanation of how a buddy algorithm works at
++ *  http://www.memorymanagement.org/articles/alloc.html . A better idea
++ *  is to read the explanation from a book like UNIX Internals by
++ *  Uresh Vahalia
++ *  
+  */
+ 
++/** 
++ *
++ * __free_pages_ok - Returns pages to the buddy allocator
++ * @page: The first page of the block to be freed
++ * @order: 2^order number of pages are freed
++ *
++ * This function returns the pages allocated by __alloc_pages and tries to 
++ * merge buddies if possible. Do not call directly, use free_pages()
++ **/
+ static void FASTCALL(__free_pages_ok (struct page *page, unsigned int order));
+ static void __free_pages_ok (struct page *page, unsigned int order)
+ {
+</PRE>
+</DIV>
+<A NAME="fig: Example Patch"></A>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 1.1: Example Patch</TD></TR>
+</TABLE></DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>From this patch, it is clear even at a casual glance what files are affected
+(<TT>page_alloc.c</TT>), what line it starts at (76) and the new lines
+added are clearly marked with a + . In a patch, there may be several &#X201C;hunks&#X201D;
+which are marked with a line starting with @@ . Each hunk will be treated
+separately during patch application.</P><P>Broadly speaking, patches come in two varieties; plain text such as the one
+above which are sent to the mailing list and compressed patches that are
+compressed with either <B>gzip</B> (.gz extension) or <B>bzip2</B>
+(.bz2 extension). It is usually safe to assume that patches were generated
+one directory above the root of the kernel source tree. This means that while
+the patch is generated one directory above, it may be applied with the option
+<TT>-p1</TT> while the current directory is the kernel source tree root.
+Broadly speaking, this means a plain text patch to a clean tree can
+be easily applied as follows:</P><PRE CLASS="verbatim">mel@joshua: kernels/ $ cd linux-2.4.22-clean/
+mel@joshua: linux-2.4.22-clean/ $ patch -p1 &lt; ../example.patch
+patching file mm/page_alloc.c
+mel@joshua: linux-2.4.22-clean/ $ 
+</PRE><P>To apply a compressed patch, it is a simple extension to just decompress
+the patch to standard out (stdout) first.</P><PRE CLASS="verbatim">mel@joshua: linux-2.4.22-mel/ $ gzip -dc ../example.patch.gz | patch -p1
+</PRE><P>If a hunk can be applied but the line numbers are different, the hunk
+number and the number of lines needed to offset will be output. These are
+generally safe warnings and may be ignored. If there are slight differences
+in the context, it will be applied and the level of &#X201C;fuzziness&#X201D; will be
+printed which should be double checked. If a hunk fails to apply, it will
+be saved to <TT>filename.c.rej</TT> and the original file will be saved
+to <TT>filename.c.orig</TT> and have to be applied manually.</P><H3 CLASS="subsection">1.2.2  Basic Source Management with <B>PatchSet</B></H3><P>
+<A NAME="@mainindex25"></A></P><P>The untarring of sources, management of patches and building of
+kernels is initially interesting but quickly palls. To cut down on
+the tedium of patch management, a simple tool was developed while
+writing this book called <B>PatchSet</B> which is designed
+the easily manage the kernel source and patches eliminating a large
+amount of the tedium. It is fully documented and freely available from
+<EM>http://www.csn.ul.ie/</EM><EM>&#X223C;</EM><EM>mel/projects/patchset/</EM> and on the
+companion CD.</P><H5 CLASS="paragraph">Downloading</H5><P> Downloading kernels and patches in itself is
+quite tedious and scripts are provided to make the task simpler. First,
+the configuration file <TT>etc/patchset.conf</TT> should be edited
+and the <TT>KERNEL_MIRROR</TT> parameter updated for your local
+<EM>http://www.kernel.org/</EM> mirror. Once that is done, use the script
+<B>download</B> to download patches and kernel sources. A simple
+use of the script is as follows</P><PRE CLASS="verbatim">mel@joshua: patchset/ $ download 2.4.18
+# Will download the 2.4.18 kernel source
+
+mel@joshua: patchset/ $ download -p 2.4.19
+# Will download a patch for 2.4.19
+
+mel@joshua: patchset/ $ download -p -b 2.4.20
+# Will download a bzip2 patch for 2.4.20
+</PRE><P>Once the relevant sources or patches have been downloaded, it is time to
+configure a kernel build.</P><H5 CLASS="paragraph">Configuring Builds</H5><P> Files called <EM>set configuration files</EM>
+are used to specify what kernel source tar to use, what patches to apply,
+what kernel configuration (generated by <B>make config</B>) to use and
+what the resulting kernel is to be called. A sample specification file to
+build kernel <TT>2.4.20-rmap15f</TT> is;</P><PRE CLASS="verbatim">linux-2.4.18.tar.gz
+2.4.20-rmap15f
+config_generic
+
+1 patch-2.4.19.gz
+1 patch-2.4.20.bz2
+1 2.4.20-rmap15f
+</PRE><P>This first line says to unpack a source tree starting with
+<TT>linux-2.4.18.tar.gz</TT>. The second line specifies that the kernel
+will be called <TT>2.4.20-rmap15f</TT>. <TT>2.4.20</TT> was selected
+for this example as rmap patches against a later stable release were
+not available at the time of writing. To check for updated rmap patches,
+see <EM>http://surriel.com/patches/</EM>. The third line specifies which
+kernel <TT>.config</TT> file to use for compiling the kernel. Each line
+after that has two parts. The first part says what patch depth to use i.e.
+what number to use with the -p switch to patch. As discussed earlier in
+Section <A HREF="#sec: Diff and Patch">1.2.1</A>, this is usually 1 for applying patches
+while in the source directory. The second is the name of the patch stored in
+the patches directory. The above example will apply two patches to update
+the kernel from <TT>2.4.18</TT> to <TT>2.4.20</TT> before building
+the <TT>2.4.20-rmap15f</TT> kernel tree.</P><P>If the kernel configuration file required is very simple, then use the
+<B>createset</B> script to generate a set file for you. It simply takes a
+kernel version as a parameter and guesses how to build it based on available
+sources and patches.</P><PRE CLASS="verbatim">mel@joshua: patchset/ $ createset 2.4.20
+</PRE><H5 CLASS="paragraph">Building a Kernel</H5><P>The package comes with three scripts. The
+first script, called <B>make-kernel.sh</B>, will unpack the kernel
+to the <TT>kernels/</TT> directory and build it if requested. If the
+target distribution is Debian, it can also create Debian packages for
+easy installation by specifying the <TT>-d</TT> switch. The second,
+called <B>make-gengraph.sh</B>, will unpack the kernel but instead of
+building an installable kernel, it will generate the files required to use
+<B>CodeViz</B>, discussed in the next section, for creating call graphs. The
+last, called <TT>make-lxr.sh</TT>, will install a kernel for use with LXR.</P><H5 CLASS="paragraph">Generating Diffs</H5><P> Ultimately, you will need to see the difference
+between files in two trees or generate a &#X201C;diff&#X201C; of changes you have made
+yourself. Three small scripts are provided to make this task easier. The
+first is <B>setclean</B> which sets the source tree to compare from. The
+second is <B>setworking</B> to set the path of the kernel tree you are
+comparing against or working on. The third is <B>difftree</B> which will
+generate diffs against files or directories in the two trees. To generate the
+diff shown in Figure <A HREF="#fig: Example Patch">1.2.1</A>, the following would have worked;</P><PRE CLASS="verbatim">mel@joshua: patchset/ $ setclean linux-2.4.22-clean
+mel@joshua: patchset/ $ setworking linux-2.4.22-mel
+mel@joshua: patchset/ $ difftree mm/page_alloc.c
+</PRE><P>The generated diff is a unified diff with the C function context included
+and complies with the recommended usage of <B>diff</B>. Two additional
+scripts are available which are very useful when tracking changes between
+two trees. They are <B>diffstruct</B><A NAME="@mainindex26"></A> and <B>difffunc</B><A NAME="@mainindex27"></A>. These
+are for printing out the differences between individual structures and
+functions. When used first, the <TT>-f</TT> switch must be used to record
+what source file the structure or function is declared in but it is only
+needed the first time.</P><H2 CLASS="section"><A NAME="toc9"></A><A NAME="htoc4">1.3</A>  Browsing the Code</H2><P>
+<A NAME="sec: Browsing the Code"></A>
+<A NAME="@mainindex28"></A></P><P>When code is small and manageable, it is not particularly difficult to browse
+through the code as operations are clustered together in the same file and
+there is not much coupling between modules. The kernel unfortunately does
+not always exhibit this behaviour. Functions of interest may be spread across
+multiple files or contained as inline functions in headers. To complicate
+matters, files of interest may be buried beneath architecture specific
+directories making tracking them down time consuming.</P><P>One solution for easy code browsing is
+<B>ctags</B><A NAME="@mainindex29"></A>(<EM>http://ctags.sourceforge.net/</EM>) which
+generates tag files from a set of source files. These tags can be used to
+jump to the C file and line where the identifier is declared with editors
+such as <B>Vi</B> and <B>Emacs</B>. In the event there is multiple
+instances of the same tag, such as with multiple functions with the same
+name, the correct one may be selected from a list. This method works best
+when one is editing the code as it allows very fast navigation through the
+code to be confined to one terminal window.</P><P>A more friendly browsing method is available with the <EM>Linux
+Cross-Referencing (LXR)</EM><A NAME="@mainindex30"></A> tool hosted at <EM>http://lxr.linux.no/</EM>. This
+tool provides the ability to represent source code as browsable web
+pages. Identifiers such as global variables, macros and functions become
+hyperlinks. When clicked, the location where it is defined is displayed
+along with every file and line referencing the definition. This makes code
+navigation very convenient and is almost essential when reading the code
+for the first time.</P><P>The tool is very simple to install and and browsable version of the kernel
+<TT>2.4.22</TT> source is available on the CD included with this book. All
+code extracts throughout the book are based on the output of LXR so that
+the line numbers would be clearly visible in excerpts.</P><H3 CLASS="subsection">1.3.1  Analysing Code Flow</H3><P>As separate modules share code across multiple C files, it can be difficult to
+see what functions are affected by a given code path without tracing through
+all the code manually. For a large or deep code path, this can be extremely
+time consuming to answer what should be a simple question.</P><P>One simple, but effective tool to use is <B>CodeViz</B><A NAME="@mainindex31"></A>
+which is a call graph generator and is included with the
+CD. It uses a modified compiler for either C or C++ to collect
+information necessary to generate the graph. The tool is hosted at
+<EM>http://www.csn.ul.ie/</EM><EM>&#X223C;</EM><EM>mel/projects/codeviz/</EM>.</P><P>During compilation with the modified compiler, files with a <TT>.cdep</TT>
+extension are generated for each C file. This <TT>.cdep</TT> file contains
+all function declarations and calls made in the C file. These files are
+distilled with a program called <B>genfull</B> to generate a full call graph
+of the entire source code which can be rendered with <B>dot</B>, part of the
+<B>GraphViz</B><A NAME="@mainindex32"></A> project hosted at <EM>http://www.graphviz.org/</EM>.</P><P>In the kernel compiled for the computer this book was written on, there
+were a total of 40,165 entries in the <TT>full.graph</TT> file generated by
+<B>genfull</B>. This call graph is essentially useless on its own because of
+its size so a second tool is provided called <B>gengraph</B>. This program,
+at basic usage, takes the name of one or more functions as an argument and
+generates postscript file with the call graph of the requested function as
+the root node. The postscript file may be viewed with <B>ghostview</B>
+or <B>gv</B>.</P><P>The generated graphs can be to unnecessary depth or show functions that
+the user is not interested in, therefore there are three limiting options
+to graph generation. The first is limit by depth where functions that are
+greater than <TT>N</TT> levels deep in a call chain are ignored. The second
+is to totally ignore a function so it will not appear on the call graph or
+any of the functions they call. The last is to display a function, but not
+traverse it which is convenient when the function is covered on a separate
+call graph or is a known API whose implementation is not currently of interest.</P><P>All call graphs shown in these documents are generated with the
+<B>CodeViz</B> tool as it is often much easier to understand a subsystem
+at first glance when a call graph is available. It has been tested with a
+number of other open source projects based on C and has wider application
+than just the kernel.</P><H3 CLASS="subsection">1.3.2  Simple Graph Generation</H3><P>
+<A NAME="@mainindex33"></A></P><P>If both <B>PatchSet</B> and <B>CodeViz</B> are installed,
+the first call graph in this book shown in Figure <A HREF="understand006.html#fig: paging_init">3.4</A>
+can be generated and viewed with the following set of commands. For brevity,
+the output of the commands is omitted:</P><PRE CLASS="verbatim">mel@joshua: patchset $ download 2.4.22
+mel@joshua: patchset $ createset 2.4.22
+mel@joshua: patchset $ make-gengraph.sh 2.4.22
+mel@joshua: patchset $ cd kernels/linux-2.4.22
+mel@joshua: linux-2.4.22 $ gengraph -t -s "alloc_bootmem_low_pages \
+                                   zone_sizes_init" -f paging_init
+mel@joshua: linux-2.4.22 $ gv paging_init.ps
+</PRE><H2 CLASS="section"><A NAME="toc10"></A><A NAME="htoc5">1.4</A>  Reading the Code</H2><P>
+<A NAME="@mainindex34"></A></P><P>When a new developer or researcher asks how to start reading the code, they
+are often recommended to start with the initialisation code and work from
+there. This may not be the best approach for everyone as initialisation is
+quite architecture dependent and requires detailed hardware knowledge to
+decipher it. It also gives very little information on how a subsystem like
+the VM works as it is during the late stages of initialisation that memory
+is set up in the way the running system sees it.</P><P>The best starting point to understanding the VM is this book and the code
+commentary. It describes a VM that is reasonably comprehensive without being
+overly complicated. Later VMs are more complex but are essentially extensions
+of the one described here.</P><P>For when the code has to be approached afresh with a later VM, it is
+always best to start in an isolated region that has the minimum number
+of dependencies. In the case of the VM, the best starting point is the
+<EM>Out Of Memory (OOM)</EM> manager in <TT>mm/oom_kill.c</TT>. It is a
+very gentle introduction to one corner of the VM where a process is selected
+to be killed in the event that memory in the system is low. It is because it
+touches so many different aspects of the VM that is covered last in this book!
+The second subsystem to then examine is the non-contiguous
+memory allocator located in <TT>mm/vmalloc.c</TT> and discussed in Chapter
+<A HREF="understand010.html#chap: Non-Contiguous Memory Allocation">7</A> as it is reasonably contained
+within one file. The third system should be physical page allocator located
+in <TT>mm/page_alloc.c</TT> and discussed in Chapter 
+<A HREF="understand009.html#chap: Physical Page Allocation">6</A> for similar reasons. The fourth system
+of interest is the creation of VMAs and memory areas for processes discussed
+in Chapter <A HREF="understand007.html#chap: Process Address Space">4</A>. Between these systems, they
+have the bulk of the code patterns that are prevalent throughout the rest
+of the kernel code making the deciphering of more complex systems such as
+the page replacement policy or the buffer IO much easier to comprehend.</P><P><A NAME="@mainindex35"></A><A NAME="@mainindex36"></A> The second recommendation
+that is given by experienced developers is to benchmark and test the
+VM. There are many benchmark programs available but commonly used ones are
+<B>ConTest</B><A NAME="@mainindex37"></A>(<EM>http://members.optusnet.com.au/ckolivas/contest/</EM>),
+<B>SPEC</B><A NAME="@mainindex38"></A>(<EM>http://www.specbench.org/</EM>),
+<B>lmbench</B><A NAME="@mainindex39"></A>(<EM>http://www.bitmover.com/lmbench/</EM> and
+<B>dbench</B><A NAME="@mainindex40"></A>(<EM>http://freshmeat.net/projects/dbench/</EM>). For
+many purposes, these benchmarks will fit the requirements.</P><P>Unfortunately it is difficult to test just the VM accurately and
+benchmarking it is frequently based on timing a task such as a kernel
+compile. A tool called <B>VM Regress</B><A NAME="@mainindex41"></A> is available at
+<EM>http://www.csn.ul.ie/</EM><EM>&#X223C;</EM><EM>mel/vmregress/</EM> that lays the foundation
+required to build a fully fledged testing, regression and benchmarking tool
+for the VM. It uses a combination of kernel modules and userspace tools to
+test small parts of the VM in a reproducible manner and has one benchmark
+for testing the page replacement policy using a large reference string. It
+is intended as a framework for the development of a testing utility and has
+a number of Perl libraries and helper kernel modules to do much of the work
+but is still in the early stages of development so use with care.</P><H2 CLASS="section"><A NAME="toc11"></A><A NAME="htoc6">1.5</A>  Submitting Patches</H2><P>
+<A NAME="@mainindex42"></A></P><P>There are two files, <TT>SubmittingPatches</TT> and <TT>CodingStyle</TT>,
+in the <TT>Documentation/</TT> directory which cover the important basics.
+However, there is very little documentation describing how to get patches
+merged. This section will give a brief introduction on how, broadly speaking,
+patches are managed.</P><P>First and foremost, the coding style of the kernel needs to be adhered to as
+having a style inconsistent with the main kernel will be a barrier to getting
+merged regardless of the technical merit. Once a patch has been developed,
+the first problem is to decide where to send it. Kernel development has a
+definite, if non-apparent, hierarchy of who handles patches and how to get
+them submitted. As an example, we'll take the case of 2.5.x development.</P><P>The first check to make is if the patch is very small or trivial. If
+it is, post it to the main kernel mailing list. If there is no bad
+reaction, it can be fed to what is called the <EM>Trivial Patch
+Monkey</EM><A NAME="@mainindex43"></A><SUP><A NAME="text7" HREF="#note7">7</A></SUP>.
+The trivial patch monkey is exactly what it sounds like, it takes small
+patches and feeds them en-masse to the correct people. This is best suited
+for documentation, commentary or one-liner patches.</P><P>Patches are managed through what could be loosely called a set of rings
+with Linus in the very middle having the final say on what gets accepted
+into the main tree. Linus, with rare exceptions, accepts patches only from
+who he refers to as his &#X201C;lieutenants&#X201D;, a group of around 10 people who he
+trusts to &#X201C;feed&#X201D; him correct code. An example lieutenant is Andrew Morton,
+the VM maintainer at time of writing. Any change to the VM has to be accepted
+by Andrew before it will get to Linus. These people are generally maintainers
+of a particular system but sometimes will &#X201C;feed&#X201D; him patches from another
+subsystem if they feel it is important enough. </P><P>Each of the lieutenants are active developers on different subsystems. Just
+like Linus, they have a small set of developers they trust to be knowledgeable
+about the patch they are sending but will also pick up patches which
+affect their subsystem more readily. Depending on the subsystem, the
+list of people they trust will be heavily influenced by the list of
+maintainers in the <TT>MAINTAINERS</TT> file. The second major area of
+influence will be from the subsystem specific mailing list if there is
+one. The VM does not have a list of maintainers but it does have a mailing
+list<SUP><A NAME="text8" HREF="#note8">8</A></SUP>.</P><P>The maintainers and lieutenants are crucial to the acceptance of
+patches. Linus, broadly speaking, does not appear to wish to be convinced
+with argument alone on the merit for a significant patch but prefers to
+hear it from one of his lieutenants, which is understandable considering
+the volume of patches that exists.</P><P>In summary, a new patch should be emailed to the subsystem mailing list
+cc'd to the main list to generate discussion. If there is no reaction,
+it should be sent to the maintainer for that area of code if there is one
+and to the lieutenant if there is not. Once it has been picked up by a
+maintainer or lieutenant, chances are it will be merged. The important key
+is that patches and ideas must be released early and often so developers
+have a chance to look at it while it is still manageable. There are notable
+cases where massive patches merging with the main tree because there were
+long periods of silence with little or no discussion. A recent example of
+this is the Linux Kernel Crash Dump project which still has not been merged
+into the main stream because there has not enough favorable feedback from
+lieutenants or strong support from vendors.
+
+	</P><HR CLASS="footnoterule"><DL CLASS="thefootnotes"><DT CLASS="dt-thefootnotes">
+<A NAME="note1" HREF="#text1">1</A></DT><DD CLASS="dd-thefootnotes">Read The Flaming
+Source. It doesn't really stand for Flaming but there could be children
+watching.
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note2" HREF="#text2">2</A></DT><DD CLASS="dd-thefootnotes"><EM>http://www.gnu.org/software/autoconf/</EM>
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note3" HREF="#text3">3</A></DT><DD CLASS="dd-thefootnotes"><EM>http://www.gnu.org/software/automake/</EM>
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note4" HREF="#text4">4</A></DT><DD CLASS="dd-thefootnotes">http://www.tldp.org/HOWTO/Kernel-HOWTO/index.html
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note5" HREF="#text5">5</A></DT><DD CLASS="dd-thefootnotes">Last minute update, Alan is just after announcing he
+was going on sabbatical and will no longer maintain the 2.2.x tree. There
+is no maintainer at the moment.
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note6" HREF="#text6">6</A></DT><DD CLASS="dd-thefootnotes"><EM>http://www.gnu.org</EM>
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note7" HREF="#text7">7</A></DT><DD CLASS="dd-thefootnotes"><EM>http://www.kernel.org/pub/linux/kernel/people/rusty/trivial/</EM>
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note8" HREF="#text8">8</A></DT><DD CLASS="dd-thefootnotes"><EM>http://www.linux-mm.org/mailinglists.shtml</EM>
+</DD></DL>
+<HR>
+[ <A HREF="understand003.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand005.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

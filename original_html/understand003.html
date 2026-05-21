@@ -1,0 +1,206 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Preface</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand002.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand004.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter">Preface</H1><P>Linux is developed with a stronger practical emphasis than a theoretical
+one. When new algorithms or changes to existing implementations are suggested,
+it is common to request code to match the argument. Many of the algorithms
+used in the Virtual Memory (VM) system were designed by theorists but the
+implementations have now diverged from the theory considerably. In part, Linux
+does follow the traditional development cycle of design to implementation
+but it is more common for changes to be made in reaction to how the system
+behaved in the &#X201C;real-world&#X201D; and intuitive decisions by developers.</P><P>This means that the VM performs well in practice but there is very little
+VM specific documentation available except for a few incomplete overviews
+in a small number of websites, except the web site containing an earlier
+draft of this book of course! This has lead to the situation where the VM is
+fully understood only by a small number of core developers. New developers
+looking for information on how it functions are generally told to read the
+source and little or no information is available on the theoretical basis
+for the implementation. This requires that even a casual observer invest a
+large amount of time to read the code and study the field of Memory Management.</P><P>This book, gives a detailed tour of the Linux VM as implemented in
+<TT>2.4.22</TT> and gives a solid introduction of what to expect in
+2.6. As well as discussing the implementation, the theory it is is based on
+will also be introduced. This is not intended to be a memory management theory
+book but it is often much simpler to understand why the VM is implemented
+in a particular fashion if the underlying basis is known in advance.</P><P>To complement the description, the appendix includes a detailed code commentary
+on a significant percentage of the VM. This should drastically reduce
+the amount of time a developer or researcher needs to invest in understanding
+what is happening inside the Linux VM. As VM implementations tend to follow
+similar code patterns even between major versions. This means that with a
+solid understanding of the 2.4 VM, the later 2.5 development VMs and the
+final 2.6 release will be decipherable in a number of weeks.</P><H2 CLASS="section"><A NAME="toc1"></A>The Intended Audience</H2><P>Anyone interested in how the VM, a core kernel subsystem, works will find
+answers to many of their questions in this book. The VM, more than any other
+subsystem, affects the overall performance of the operating system. It is
+also one of the most poorly understood and badly documented subsystem in
+Linux, partially because there is, quite literally, so much of it. It is very
+difficult to isolate and understand individual parts of the code without first
+having a strong conceptual model of the whole VM, so this book intends to give
+a detailed description of what to expect without before going to the source.</P><P>This material should be of prime interest to new developers interested in
+adapting the VM to their needs and to readers who simply would like to know
+how the VM works. It also will benefit other subsystem developers who want
+to get the most from the VM when they interact with it and operating systems
+researchers looking for details on how memory management is implemented in
+a modern operating system. For others, who are just curious to learn more
+about a subsystem that is the focus of so much discussion, they will find an
+easy to read description of the VM functionality that covers all the details
+without the need to plough through source code.</P><P>However, it is assumed that the reader has read at least one general operating
+system book or one general Linux kernel orientated book and has a general
+knowledge of C before tackling this book. While every effort is made to make
+the material approachable, some prior knowledge of general operating systems
+is assumed.</P><H2 CLASS="section"><A NAME="toc2"></A>Book Overview</H2><P>In chapter <A HREF="understand004.html#chap: Introduction">1</A>, we go into detail on how the source
+code may be managed and deciphered. Three tools will be introduced that
+are used for the analysis, easy browsing and management of code. The
+main tools are the <EM>Linux Cross Referencing (LXR)</EM> tool which
+allows source code to be browsed as a web page and <EM>CodeViz</EM> for
+generating call graphs which was developed while researching this book.
+The last tool, <EM>PatchSet</EM> is for managing kernels and the application
+of patches. Applying patches manually can be time consuming and the use of
+version control software such as CVS (<EM>http://www.cvshome.org/</EM>) or
+BitKeeper (<EM>http://www.bitmover.com</EM>) are not always an option. With
+this tool, a simple specification file determines what source to use, what
+patches to apply and what kernel configuration to use.</P><P>In the subsequent chapters, each part of the Linux VM implementation will
+be discussed in detail, such as how memory is described in an architecture
+independent manner, how processes manage their memory, how the specific
+allocators work and so on. Each will refer to the papers that describe closest
+the behaviour of Linux as well as covering in depth the implementation, the
+functions used and their call graphs so the reader will have a clear view
+of how the code is structured. At the end of each chapter, there will be a
+&#X201C;What's New&#X201D; section which introduces what to expect in the 2.6 VM.</P><P>The appendices are a code commentary of a significant percentage of the VM.
+It gives a line by line description of some of the more complex aspects of
+the VM. The style of the VM tends to be reasonably consistent, even between
+major releases of the kernel so an in-depth understanding of the 2.4 VM will
+be an invaluable aid to understanding the 2.6 kernel when it is released.</P><H2 CLASS="section"><A NAME="toc3"></A>What's New in 2.6</H2><P>At the time of writing, <TT>2.6.0-test4</TT> has just been released
+so <TT>2.6.0-final</TT> is due &#X201C;any month now&#X201D; which means December
+2003 or early 2004. Fortunately the 2.6 VM, in most ways, is still quite
+recognisable in comparison to 2.4. However, there is some new material and
+concepts in 2.6 and it would be pity to ignore them so to address this,
+hence the &#X201C;What's New in 2.6&#X201D; sections. To some extent, these sections
+presume you have read the rest of the book so only glance at them during
+the first reading. If you decide to start reading 2.5 and 2.6 VM code, the
+basic description of what to expect from the &#X201C;Whats New&#X201D; sections should
+greatly aid your understanding. It is important to note that the sections
+are based on the <TT>2.6.0-test4</TT> kernel which should not change
+change significantly before 2.6. As they are still subject to change though,
+you should still treat the &#X201C;What's New&#X201D; sections as guidelines rather than
+definite facts.</P><H2 CLASS="section"><A NAME="toc4"></A>Companion CD</H2><P>
+<A NAME="@mainindex0"></A></P><P>A companion CD is included with this book which is intended to be used
+on systems with GNU/Linux installed. Mount the CD on <TT>/cdrom</TT>
+as followed;</P><PRE CLASS="verbatim">root@joshua:/$ mount /dev/cdrom /cdrom -o exec
+</PRE><P>A copy of <B>Apache 1.3.27</B> (<EM>http://www.apache.org/</EM>)
+has been built and configured to run but it requires the CD
+be mounted on <TT>/cdrom/</TT>. To start it, run the script
+<B>/cdrom/start_server</B>. If there are no errors, the output should
+look like:</P><PRE CLASS="verbatim">mel@joshua:~$ /cdrom/start_server
+Starting CodeViz Server: done
+Starting Apache Server:  done
+
+The URL to access is http://localhost:10080/
+</PRE><P>If the server starts successfully, point your browser to
+<EM>http://localhost:10080</EM> to avail of the CDs web services. Some
+features included with the CD are:</P><UL CLASS="itemize"><LI CLASS="li-itemize">A web server started is available which is started by
+<B>/cdrom/start_server</B>. After starting it, the URL to access
+is <EM>http://localhost:10080</EM>. It has been tested with Red Hat
+7.3 and Debian Woody;</LI><LI CLASS="li-itemize">The whole book is included in HTML, PDF and plain text formats from
+<TT>/cdrom/docs</TT>. It includes a searchable index for functions that
+have a commentary available. If a function is searched for that does not
+have a commentary, the browser will be automatically redirected to LXR;</LI><LI CLASS="li-itemize">A web browsable copy of the Linux <TT>2.4.22</TT> source is
+available courtesy of LXR</LI><LI CLASS="li-itemize">Generate call graphs with an online version of the
+<B>CodeViz</B> tool.</LI><LI CLASS="li-itemize">The <B>VM Regress</B>, <B>CodeViz</B> and
+<B>patchset</B> packages which are discussed
+in Chapter <A HREF="understand004.html#chap: Introduction">1</A> are available in
+<TT>/cdrom/software</TT>. <B>gcc-3.0.4</B> is also provided
+as it is required for building <B>CodeViz</B>.</LI></UL><P>To shutdown the server, run the script <B>/cdrom/stop_server</B> and
+the CD may then be unmounted.</P><H2 CLASS="section"><A NAME="toc5"></A>Typographic Conventions</H2><P>
+<A NAME="sec: Typographic Conventions"></A></P><P>The conventions used in this document are simple. New concepts that are
+introduced as well as URLs are in <EM>italicised</EM> font. Binaries and
+package names are are in <B>bold</B>. Structures, field names, compile
+time defines and variables are in a <TT>constant-width</TT> font. At times
+when talking about a field in a structure, both the structure and field name
+will be included like <TT>page</TT>&#X2192;<TT>list</TT> for example. Filenames are
+in a constant-width font but include files have angle brackets around them
+like &lt;<TT>linux/mm.h</TT>&gt; and may be found in the <TT>include/</TT>
+directory of the kernel source.</P><H2 CLASS="section"><A NAME="toc6"></A>Acknowledgments</H2><P>The compilation of this book was not a trivial task. This book was researched
+and developed in the open and it would be remiss of me not to mention some of
+the people who helped me at various intervals. If there is anyone I missed,
+I apologise now.</P><P>First, I would like to thank John O'Gorman who tragically passed away while
+the material for this book was being researched. It was his experience and
+guidance that largely inspired the format and quality of this book.</P><P>Secondly, I would like to thank Mark L. Taub from Prentice Hall PTR for
+giving me the opportunity to publish this book. It has being a rewarding
+experience and it made trawling through all the code worthwhile. Massive
+thanks go to my reviewers who provided clear and detailed feedback long
+after I thought I had finished writing. Finally, on the publishers front,
+I would like to thank Bruce Perens for allowing me to publish under the
+Bruce Peren's Open Book Series (<EM>http://www.perens.com/Books</EM>).</P><P>With the technical research, a number of people provided invaluable insight.
+Abhishek Nayani, was a source of encouragement and enthusiasm early in the
+research. Ingo Oeser kindly provided invaluable assistance early on with a
+detailed explanation on how data is copied from userspace to kernel space
+including some valuable historical context. He also kindly offered to help
+me if I felt I ever got lost in the twisty maze of kernel code. Scott Kaplan
+made numerous corrections to a number of systems from non-contiguous memory
+allocation, to page replacement policy. Jonathon Corbet provided the most
+detailed account of the history of the kernel development with the kernel
+page he writes for Linux Weekly News. Zack Brown, the chief behind Kernel
+Traffic, is the sole reason I did not drown in kernel related mail. IBM, as
+part of the Equinox Project, provided an xSeries 350 which was invaluable
+for running my own test kernels on machines larger than what I previously
+had access to. Finally, Patrick Healy was crucial to ensuring that this book
+was consistent and approachable to people who are familiar, but not experts,
+on Linux or memory management.</P><P>A number of people helped with smaller technical issues and general
+inconsistencies where material was not covered in sufficient depth. They are
+Muli Ben-Yehuda, Parag Sharma, Matthew Dobson, Roger Luethi, Brian Lowe and
+Scott Crosby. All of them sent corrections and queries on differnet parts
+of the document which ensured too much prior knowledge was assumed.</P><P>Carl Spalletta sent a number of queries and corrections to every aspect of
+the book in its earlier online form. Steve Greenland sent a large number
+of grammar corrections. Philipp Marek went above and beyond being helpful
+sending over 90 separate corrections and queries on various aspects. Long
+after I thought I was finished, Aris Sotiropoulos sent a large number of small
+corrections and suggestions. The last person, whose name I cannot remember
+but is an editor for a magazine sent me over 140 corrections against an
+early version to the document. You know who you are, thanks.</P><P>Eleven people sent a few corrections, though small, were still missed by
+several of my own checks. They are Marek Januszewski, Amit Shah, Adrian
+Stanciu, Andy Isaacson, Jean Francois Martinez, Glen Kaukola, Wolfgang Oertl,
+Michael Babcock, Kirk True, Chuck Luciano and David Wilson.</P><P>On the development of VM Regress, there were nine people who helped me keep
+it together. Danny Faught and Paul Larson both sent me a number of bug reports
+and helped ensure it worked with a variety of different kernels. Cliff White,
+from the OSDL labs ensured that VM Regress would have a wider application
+than my own test box. Dave Olien, also associated with the OSDL labs was
+responsible for updating VM Regress to work with 2.5.64 and later kernels.
+Albert Cahalan sent all the information I needed to make it function against
+later proc utilities. Finally, Andrew Morton, Rik van Riel and Scott Kaplan
+all provided insight on what direction the tool should be developed to be
+both valid and useful.</P><P>The last long list are people who sent me encouragement and thanks at various
+intervals. They are Martin Bligh, Paul Rolland, Mohamed Ghouse, Samuel
+Chessman, Ersin Er, Mark Hoy, Michael Martin, Martin Gallwey, Ravi Parimi,
+Daniel Codt, Adnan Shafi, Xiong Quanren, Dave Airlie, Der Herr Hofrat, Ida
+Hallgren, Manu Anand, Eugene Teo, Diego Calleja and Ed Cashin. Thanks, the encouragement
+was heartening.</P><P>In conclusion, I would like to thank a few people without whom, I would not
+have completed this. I would like to thank my parents who kept me going long
+after I should have been earning enough money to support myself. I would
+like to thank my girlfriend Karen, who patiently listened to rants, tech
+babble, angsting over the book and made sure I was the person with the best
+toys. Kudos to friends who dragged me away from the computer periodically
+and kept me relatively sane, including Daren who is cooking me dinner as I
+write this. Finally, I would like to thank the thousands of hackers that have
+contributed to GNU, the Linux kernel and other Free Software projects over the
+years who without I would not have an excellent system to write about. It was
+an inspiration to me to see such dedication when I first started programming
+on my own PC 6 years ago after finally figuring out that Linux was not an
+application for Windows used for reading email.
+</P><P>	
+	</P><HR>
+[ <A HREF="understand002.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand004.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

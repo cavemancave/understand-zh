@@ -1,0 +1,308 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Page Table Management</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand019.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand021.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc125">Appendix C</A>  Page Table Management</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc100"></A><A NAME="htoc126">C.1</A>  Page Table Initialisation</H2><H3 CLASS="subsection"><A NAME="htoc127">C.1.1</A>  Function: paging_init</H3><P> <EM>Source: arch/i386/mm/init.c</EM> <A NAME="func: paging_init"></A> <A NAME="@codeindex27"></A></P><P>This is the top-level function called from <TT>setup_arch()</TT>. When this
+function returns, the page tables have been fully setup. Be aware that this is
+all x86 specific.</P><PRE CLASS="verbatim">351 void __init paging_init(void)
+352 {
+353     pagetable_init();
+354 
+355     load_cr3(swapper_pg_dir);       
+356 
+357 #if CONFIG_X86_PAE
+362     if (cpu_has_pae)
+363         set_in_cr4(X86_CR4_PAE);
+364 #endif
+365 
+366     __flush_tlb_all();
+367 
+368 #ifdef CONFIG_HIGHMEM
+369     kmap_init();
+370 #endif
+371     zone_sizes_init();
+372 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>353</B><TT>pagetable_init()</TT><A NAME="@codeindex28"></A> is responsible for setting up a
+static page table using <TT>swapper_pg_dir</TT><A NAME="@codeindex29"></A> as the PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>355</B>Load the initialised <TT>swapper_pg_dir</TT> into
+the CR3 register so that the CPU will be able to use it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>362-363</B>If PAE is enabled, set the appropriate bit in the CR4 register</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>366</B>Flush all TLBs, including the global kernel ones</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>369</B><TT>kmap_init()</TT><A NAME="@codeindex30"></A> initialises the region of pagetables
+reserved for use with <TT>kmap()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>371</B><TT>zone_sizes_init()</TT> (See Section <A HREF="understand019.html#func: zone_sizes_init">B.1.2</A>)
+records the size of each of the zones before calling
+<TT>free_area_init()</TT> (See Section <A HREF="understand019.html#func: free_area_init">B.1.3</A>) to initialise each zone</DD></DL><H3 CLASS="subsection"><A NAME="htoc128">C.1.2</A>  Function: pagetable_init</H3><P> <EM>Source: arch/i386/mm/init.c</EM> <A NAME="func: pagetable_init"></A> <A NAME="@codeindex31"></A></P><P>This function is responsible for statically inialising a pagetable starting
+with a statically defined PGD called <TT>swapper_pg_dir</TT>. At the very
+least, a PTE will be available that points to every page frame in
+<TT>ZONE_NORMAL</TT>.</P><PRE CLASS="verbatim">205 static void __init pagetable_init (void)
+206 {
+207     unsigned long vaddr, end;
+208     pgd_t *pgd, *pgd_base;
+209     int i, j, k;
+210     pmd_t *pmd;
+211     pte_t *pte, *pte_base;
+212 
+213     /*
+214      * This can be zero as well - no problem, in that case we exit
+215      * the loops anyway due to the PTRS_PER_* conditions.
+216      */
+217     end = (unsigned long)__va(max_low_pfn*PAGE_SIZE);
+218 
+219     pgd_base = swapper_pg_dir;
+220 #if CONFIG_X86_PAE
+221     for (i = 0; i &lt; PTRS_PER_PGD; i++)
+222         set_pgd(pgd_base + i, __pgd(1 + __pa(empty_zero_page)));
+223 #endif
+224     i = __pgd_offset(PAGE_OFFSET);
+225     pgd = pgd_base + i;
+</PRE><P>This first block initialises the PGD. It does this by pointing each entry
+to the global zero page. Entries needed to reference available memory in
+<TT>ZONE_NORMAL</TT> will be allocated later.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>217</B>The variable <TT>end</TT> marks the end of physical memory in
+<TT>ZONE_NORMAL</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>219</B><TT>pgd_base</TT> is set to the beginning of the statically
+declared PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>220-223</B>If PAE is enabled, it is insufficent to leave each entry
+as simply 0 (which in effect points each entry to the global zero page)
+as each <TT>pgd_t</TT> is a struct. Instead, <TT>set_pgd</TT> must be
+called for each <TT>pgd_t</TT> to point the entyr to the global zero page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>224</B><TT>i</TT> is initialised as the offset within the PGD that
+corresponds to <TT>PAGE_OFFSET</TT>. In other words, this function will only
+be initialising the kernel portion of the linear address space, the userspace
+portion is left alone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>225</B><TT>pgd</TT> is initialised to the <TT>pgd_t</TT> corresponding
+to the beginning of the kernel portion of the linear address space</DD></DL><PRE CLASS="verbatim">227     for (; i &lt; PTRS_PER_PGD; pgd++, i++) {
+228         vaddr = i*PGDIR_SIZE;
+229         if (end &amp;&amp; (vaddr &gt;= end))
+230             break;
+231 #if CONFIG_X86_PAE
+232         pmd = (pmd_t *) alloc_bootmem_low_pages(PAGE_SIZE);
+233         set_pgd(pgd, __pgd(__pa(pmd) + 0x1));
+234 #else
+235         pmd = (pmd_t *)pgd;
+236 #endif
+237         if (pmd != pmd_offset(pgd, 0))
+238             BUG();
+</PRE><P>This loop begins setting up valid PMD entries to point to. In the PAE case,
+pages are allocated with <TT>alloc_bootmem_low_pages()</TT> and the PGD is
+set appropriately. Without PAE, there is no middle directory, so it is just
+&#X201C;folded&#X201D; back onto the PGD to preserve the illustion of a 3-level pagetable.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>227</B><TT>i</TT> is already initialised to the beginning of the kernel
+portion of the linear address space so keep looping until the last
+<TT>pgd_t</TT> at <TT>PTRS_PER_PGD</TT> is reached</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>228</B>Calculate the virtual address for this PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>229-230</B>If the end of <TT>ZONE_NORMAL</TT> is reached, exit the loop as
+further page table entries are not needed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>231-234</B>If PAE is enabled, allocate a page for the PMD and it with
+<TT>set_pgd()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>235</B>If PAE is not available, just set <TT>pmd</TT> to the current
+<TT>pgd_t</TT>. This is the &#X201C;folding back&#X201D; trick for emulating 3-level
+pagetables</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>237-238</B>Sanity check to make sure the PMD is valid</DD></DL><PRE CLASS="verbatim">239         for (j = 0; j &lt; PTRS_PER_PMD; pmd++, j++) {
+240             vaddr = i*PGDIR_SIZE + j*PMD_SIZE;
+241             if (end &amp;&amp; (vaddr &gt;= end))
+242                 break;
+243             if (cpu_has_pse) {
+244                 unsigned long __pe;
+245 
+246                 set_in_cr4(X86_CR4_PSE);
+247                 boot_cpu_data.wp_works_ok = 1;
+248                 __pe = _KERNPG_TABLE + _PAGE_PSE + __pa(vaddr);
+249                 /* Make it "global" too if supported */
+250                 if (cpu_has_pge) {
+251                     set_in_cr4(X86_CR4_PGE);
+252                     __pe += _PAGE_GLOBAL;
+253                 }
+254                 set_pmd(pmd, __pmd(__pe));
+255                 continue;
+256             }
+257 
+258             pte_base = pte = 
+                           (pte_t *) alloc_bootmem_low_pages(PAGE_SIZE);
+259 
+</PRE><P>Initialise each entry in the PMD. This loop will only execute unless PAE is
+enabled. Remember that without PAE, <TT>PTRS_PER_PMD</TT> is 1.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>240</B>Calculate the virtual address for this PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>241-242</B>If the end of <TT>ZONE_NORMAL</TT> is reached, finish</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>243-248</B>If the CPU support PSE, then use large TLB entries. This means
+that for kernel pages, a TLB entry will map 4MiB instead of the normal 4KiB and
+the third level of PTEs is unnecessary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>258</B><TT>__pe</TT> is set as the flags for a kernel pagetable
+(<TT>_KERNPG_TABLE</TT><A NAME="@codeindex32"></A>), the flag to indicate that this is an entry
+mapping 4MiB (<TT>_PAGE_PSE</TT>) and then set to the physical address
+for this virtual address with <TT>__pa()</TT>. Note that this means that 4MiB
+of physical memory is not being mapped by the pagetables</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>250-253</B>If the CPU supports PGE, then set it for this page table entry.
+This marks the entry as being &#X201C;global&#X201D; and visible to all processes</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>254-255</B>As the third level is not required because of PSE, set the
+PMD now with <TT>set_pmd()</TT> and continue to the next PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>258</B>Else, PSE is not support and PTEs are required so allocate a page
+for them</DD></DL><PRE CLASS="verbatim">260             for (k = 0; k &lt; PTRS_PER_PTE; pte++, k++) {
+261                 vaddr = i*PGDIR_SIZE + j*PMD_SIZE + k*PAGE_SIZE;
+262                 if (end &amp;&amp; (vaddr &gt;= end))
+263                     break;
+264                 *pte = mk_pte_phys(__pa(vaddr), PAGE_KERNEL);
+265             }
+266             set_pmd(pmd, __pmd(_KERNPG_TABLE + __pa(pte_base)));
+267             if (pte_base != pte_offset(pmd, 0))
+268                 BUG();
+269 
+270         }
+271     }
+</PRE><P>Initialise the PTEs.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>260-265</B>For each <TT>pte_t</TT>, calculate the virtual address
+currently being examined and create a PTE that points to the appropriate
+physical page frame</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>266</B>The PTEs have been initialised so set the PMD to point to it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>267-268</B>Make sure that the entry was established correctly</DD></DL><PRE CLASS="verbatim">273     /*
+274      * Fixed mappings, only the page table structure has to be
+275      * created - mappings will be set by set_fixmap():
+276      */
+277     vaddr = __fix_to_virt(__end_of_fixed_addresses - 1) &amp; PMD_MASK;
+278     fixrange_init(vaddr, 0, pgd_base);
+279 
+280 #if CONFIG_HIGHMEM
+281     /*
+282      * Permanent kmaps:
+283      */
+284     vaddr = PKMAP_BASE;
+285     fixrange_init(vaddr, vaddr + PAGE_SIZE*LAST_PKMAP, pgd_base);
+286 
+287     pgd = swapper_pg_dir + __pgd_offset(vaddr);
+288     pmd = pmd_offset(pgd, vaddr);
+289     pte = pte_offset(pmd, vaddr);
+290     pkmap_page_table = pte;
+291 #endif
+292 
+293 #if CONFIG_X86_PAE
+294     /*
+295      * Add low memory identity-mappings - SMP needs it when
+296      * starting up on an AP from real-mode. In the non-PAE
+297      * case we already have these mappings through head.S.
+298      * All user-space mappings are explicitly cleared after
+299      * SMP startup.
+300      */
+301     pgd_base[0] = pgd_base[USER_PTRS_PER_PGD];
+302 #endif
+303 }
+</PRE><P>At this point, page table entries have been setup which reference all parts of
+<TT>ZONE_NORMAL</TT>. The remaining regions needed are those for fixed mappings
+and those needed for mapping high memory pages with <TT>kmap()</TT>.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>277</B>The fixed address space is considered to start at
+<TT>FIXADDR_TOP</TT><A NAME="@codeindex33"></A> and &#X201C;finish&#X201D; earlier in the address space.
+<TT>__fix_to_virt()</TT><A NAME="@codeindex34"></A> takes an index as a parameter and returns
+the index'th page frame backwards (starting from <TT>FIXADDR_TOP</TT>)
+within the the fixed virtual address space.
+<TT>__end_of_fixed_addresses</TT><A NAME="@codeindex35"></A> is the last index used by the fixed
+virtual address space. In other words, this line returns the virtual address of
+the PMD that corresponds to the beginning of the fixed virtual address space</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>278</B>By passing 0 as the &#X201C;end&#X201D; to <TT>fixrange_init()</TT>, the
+function will start at <TT>vaddr</TT> and build valid PGDs and PMDs until
+the end of the virtual address space. PTEs are not needed for these addresses</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>280-291</B>Set up page tables for use with <TT>kmap()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>287-290</B>Get the PTE corresponding to the beginning of the region for use
+with <TT>kmap()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>301</B>This sets up a temporary identity mapping between the virtual
+address 0 and the physical address 0</DD></DL><H3 CLASS="subsection"><A NAME="htoc129">C.1.3</A>  Function: fixrange_init</H3><P> <EM>Source: arch/i386/mm/init.c</EM> <A NAME="func: fixrange_init"></A> <A NAME="@codeindex36"></A></P><P>This function creates valid PGDs and PMDs for fixed virtual address mappings.</P><PRE CLASS="verbatim">167 static void __init fixrange_init (unsigned long start, 
+                                      unsigned long end, 
+                                      pgd_t *pgd_base)
+168 {
+169     pgd_t *pgd;
+170     pmd_t *pmd;
+171     pte_t *pte;
+172     int i, j;
+173     unsigned long vaddr;
+174 
+175     vaddr = start;
+176     i = __pgd_offset(vaddr);
+177     j = __pmd_offset(vaddr);
+178     pgd = pgd_base + i;
+179 
+180     for ( ; (i &lt; PTRS_PER_PGD) &amp;&amp; (vaddr != end); pgd++, i++) {
+181 #if CONFIG_X86_PAE
+182         if (pgd_none(*pgd)) {
+183             pmd = (pmd_t *) alloc_bootmem_low_pages(PAGE_SIZE);
+184             set_pgd(pgd, __pgd(__pa(pmd) + 0x1));
+185             if (pmd != pmd_offset(pgd, 0))
+186                 printk("PAE BUG #02!\n");
+187         }
+188         pmd = pmd_offset(pgd, vaddr);
+189 #else
+190         pmd = (pmd_t *)pgd;
+191 #endif
+192         for (; (j &lt; PTRS_PER_PMD) &amp;&amp; (vaddr != end); pmd++, j++) {
+193             if (pmd_none(*pmd)) {
+194                 pte = (pte_t *) alloc_bootmem_low_pages(PAGE_SIZE);
+195                 set_pmd(pmd, __pmd(_KERNPG_TABLE + __pa(pte)));
+196                 if (pte != pte_offset(pmd, 0))
+197                     BUG();
+198             }
+199             vaddr += PMD_SIZE;
+200         }
+201         j = 0;
+202     }
+203 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>175</B>Set the starting virtual address (<TT>vadd</TT>) to the requested
+starting address provided as the parameter</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>176</B>Get the index within the PGD corresponding to <TT>vaddr</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>177</B>Get the index within the PMD corresponding to <TT>vaddr</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>178</B>Get the starting <TT>pgd_t</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>180</B>Keep cycling until <TT>end</TT> is reached. When
+<TT>pagetable_init()</TT> passes in 0, this loop will continue until the end
+of the PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>182-187</B>In the case of PAE, allocate a page for the PMD if one has not
+already been allocated</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>190</B>Without PAE, there is no PMD so treat the <TT>pgd_t</TT> as
+the <TT>pmd_t</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>192-200</B>For each entry in the PMD, allocate a page for the
+<TT>pte_t</TT> entries and set it within the pagetables. Note that
+<TT>vaddr</TT> is incremented in PMD-sized strides</DD></DL><H3 CLASS="subsection"><A NAME="htoc130">C.1.4</A>  Function: kmap_init</H3><P> <EM>Source: arch/i386/mm/init.c</EM> <A NAME="func: kmap_init"></A> <A NAME="@codeindex37"></A></P><P>This function only exists if <TT>CONFIG_HIGHMEM</TT> is set during
+compile time. It is responsible for caching where the beginning of the kmap
+region is, the PTE referencing it and the protection for the page tables. This
+means the PGD will not have to be checked every time <TT>kmap()</TT> is used.</P><PRE CLASS="verbatim"> 74 #if CONFIG_HIGHMEM
+ 75 pte_t *kmap_pte;
+ 76 pgprot_t kmap_prot;
+ 77 
+ 78 #define kmap_get_fixmap_pte(vaddr)                      \
+ 79     pte_offset(pmd_offset(pgd_offset_k(vaddr), (vaddr)), (vaddr))
+ 80 
+ 81 void __init kmap_init(void)
+ 82 {
+ 83     unsigned long kmap_vstart;
+ 84 
+ 85     /* cache the first kmap pte */
+ 86     kmap_vstart = __fix_to_virt(FIX_KMAP_BEGIN);
+ 87     kmap_pte = kmap_get_fixmap_pte(kmap_vstart);
+ e8 
+ 89     kmap_prot = PAGE_KERNEL;
+ 90 }
+ 91 #endif /* CONFIG_HIGHMEM */
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-79</B>As <TT>fixrange_init()</TT> has already set up valid PGDs and
+PMDs, there is no need to double check them so
+<TT>kmap_get_fixmap_pte()</TT><A NAME="@codeindex38"></A> is responsible for quickly traversing the
+page table</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>86</B>Cache the virtual address for the kmap region in
+<TT>kmap_vstart</TT><A NAME="@codeindex39"></A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>87</B>Cache the PTE for the start of the kmap region in
+<TT>kmap_pte</TT><A NAME="@codeindex40"></A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B>Cache the protection for the page table entries with
+<TT>kmap_prot</TT><A NAME="@codeindex41"></A></DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc101"></A><A NAME="htoc131">C.2</A>  Page Table Walking</H2><H3 CLASS="subsection"><A NAME="htoc132">C.2.1</A>  Function: follow_page</H3><P> <EM>Source: mm/memory.c</EM> <A NAME="func: follow_page"></A> <A NAME="@codeindex42"></A></P><P>This function returns the <TT>struct page</TT> used by the PTE at
+<TT>address</TT> in <TT>mm</TT>'s page tables.</P><PRE CLASS="verbatim">405 static struct page * follow_page(struct mm_struct *mm, 
+                                     unsigned long address, 
+                                     int write) 
+406 {
+407     pgd_t *pgd;
+408     pmd_t *pmd;
+409     pte_t *ptep, pte;
+410 
+411     pgd = pgd_offset(mm, address);
+412     if (pgd_none(*pgd) || pgd_bad(*pgd))
+413         goto out;
+414 
+415     pmd = pmd_offset(pgd, address);
+416     if (pmd_none(*pmd) || pmd_bad(*pmd))
+417         goto out;
+418 
+419     ptep = pte_offset(pmd, address);
+420     if (!ptep)
+421         goto out;
+422 
+423     pte = *ptep;
+424     if (pte_present(pte)) {
+425         if (!write ||
+426             (pte_write(pte) &amp;&amp; pte_dirty(pte)))
+427             return pte_page(pte);
+428     }
+429 
+430 out:
+431     return 0;
+432 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>405</B>The parameters are the <TT>mm</TT> whose page tables that is about
+to be walked, the <TT>address</TT> whose <TT>struct page</TT> is of
+interest and <TT>write</TT> which indicates if the page is about to be
+written to</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>411</B>Get the PGD for the <TT>address</TT> and make sure it is present
+and valid</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>415-417</B>Get the PMD for the <TT>address</TT> and make sure it is
+present and valid</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>419</B>Get the PTE for the <TT>address</TT> and make sure it
+exists</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>424</B>If the PTE is currently present, then we have something to return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>425-426</B>If the caller has indicated a write is about to take place,
+check to make sure that the PTE has write permissions set and if so, make the
+PTE dirty</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>427</B>If the PTE is present and the permissions are fine, return the
+<TT>struct page</TT> mapped by the PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>431</B>Return 0 indicating that the <TT>address</TT> has no associated
+<TT>struct page</TT></DD></DL><P>	</P><HR>
+[ <A HREF="understand019.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand021.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

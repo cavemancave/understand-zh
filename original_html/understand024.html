@@ -1,0 +1,427 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Non-Contiguous Memory Allocation</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand023.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand025.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc293">Appendix G</A>  Non-Contiguous Memory Allocation</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc116"></A><A NAME="htoc294">G.1</A>  Allocating A Non-Contiguous Area</H2><H3 CLASS="subsection"><A NAME="htoc295">G.1.1</A>  Function: vmalloc</H3><P> <EM>Source: include/linux/vmalloc.h</EM> <A NAME="func: vmalloc"></A> <A NAME="@codeindex207"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand010.html#fig: vmalloc">7.2</A>. 
+The following macros only by their <TT>GFP_</TT>
+flags (See Section <A HREF="understand009.html#Sec: GFP Flags">6.4</A>). The size parameter is page aligned by
+<TT>__vmalloc()</TT>(See Section <A HREF="#func: __vmalloc">G.1.2</A>).</P><PRE CLASS="verbatim"> 37 static inline void * vmalloc (unsigned long size)
+ 38 {
+ 39     return __vmalloc(size, GFP_KERNEL | __GFP_HIGHMEM, PAGE_KERNEL);
+ 40 }
+ 45 
+ 46 static inline void * vmalloc_dma (unsigned long size)
+ 47 {
+ 48     return __vmalloc(size, GFP_KERNEL|GFP_DMA, PAGE_KERNEL);
+ 49 }
+ 54  
+ 55 static inline void * vmalloc_32(unsigned long size)
+ 56 {
+ 57     return __vmalloc(size, GFP_KERNEL, PAGE_KERNEL);
+ 58 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>37</B>The flags indicate that to use either <TT>ZONE_NORMAL</TT> or
+<TT>ZONE_HIGHMEM</TT> as necessary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>46</B>The flag indicates to only allocate from <TT>ZONE_DMA</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>55</B>Only physical pages from <TT>ZONE_NORMAL</TT> will be allocated</DD></DL><H3 CLASS="subsection"><A NAME="htoc296">G.1.2</A>  Function: __vmalloc</H3><P> <EM>Source: mm/vmalloc.c</EM> <A NAME="func: __vmalloc"></A> <A NAME="@codeindex208"></A></P><P>This function has three tasks. It page aligns the size request,
+asks <TT>get_vm_area()</TT> to find an area for the request and uses
+<TT>vmalloc_area_pages()</TT> to allocate the PTEs for the pages.</P><PRE CLASS="verbatim">261 void * __vmalloc (unsigned long size, int gfp_mask, pgprot_t prot)
+262 {
+263     void * addr;
+264     struct vm_struct *area;
+265 
+266     size = PAGE_ALIGN(size);
+267     if (!size || (size &gt;&gt; PAGE_SHIFT) &gt; num_physpages)
+268         return NULL;
+269     area = get_vm_area(size, VM_ALLOC);
+270     if (!area)
+271         return NULL;
+272     addr = area-&gt;addr;
+273     if (__vmalloc_area_pages(VMALLOC_VMADDR(addr), size, gfp_mask,
+274                              prot, NULL)) {
+275         vfree(addr);
+276         return NULL;
+277     }
+278     return addr;
+279 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>261</B>The parameters are the size to allocate, the <TT>GFP_</TT>
+flags to use for allocation and what protection to give the PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>266</B>Align the <TT>size</TT> to a page size</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>267</B>Sanity check. Make sure the size is not 0 and that the size
+requested is not larger than the number of physical pages has been requested</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>269</B>Find an area of virtual address space to store the allocation with
+<TT>get_vm_area()</TT> (See Section <A HREF="#func: get_vm_area">G.1.3</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>272</B>The addr field has been filled by <TT>get_vm_area()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>273</B>Allocate the PTE entries needed for the allocation with
+<TT>__vmalloc_area_pages()</TT> (See Section <A HREF="#func: __vmalloc_area_pages">G.1.5</A>). If
+it fails, a non-zero value <TT>-ENOMEM</TT> is returned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>275-276</B>If the allocation fails, free any PTEs, pages and descriptions
+of the area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>278</B>Return the address of the allocated area</DD></DL><H3 CLASS="subsection"><A NAME="htoc297">G.1.3</A>  Function: get_vm_area</H3><P> <EM>Source: mm/vmalloc.c</EM> <A NAME="func: get_vm_area"></A> <A NAME="@codeindex209"></A></P><P>To allocate an area for the <TT>vm_struct</TT>, the slab allocator
+is asked to provide the necessary memory via <TT>kmalloc()</TT>. It then
+searches the <TT>vm_struct</TT> list linearaly looking for a region
+large enough to satisfy a request, including a page pad at the end of the area.</P><PRE CLASS="verbatim">195 struct vm_struct * get_vm_area(unsigned long size, 
+                                   unsigned long flags)
+196 {
+197     unsigned long addr, next;
+198     struct vm_struct **p, *tmp, *area;
+199 
+200     area = (struct vm_struct *) kmalloc(sizeof(*area), GFP_KERNEL);
+201     if (!area)
+202         return NULL;
+203
+204     size += PAGE_SIZE;
+205     if(!size) {
+206         kfree (area);
+207         return NULL;
+208     }
+209
+210     addr = VMALLOC_START;
+211     write_lock(&amp;vmlist_lock);
+212     for (p = &amp;vmlist; (tmp = *p) ; p = &amp;tmp-&gt;next) {
+213         if ((size + addr) &lt; addr)
+214             goto out;
+215         if (size + addr &lt;= (unsigned long) tmp-&gt;addr)
+216             break;
+217         next = tmp-&gt;size + (unsigned long) tmp-&gt;addr;
+218         if (next &gt; addr)
+219             addr = next;
+220         if (addr &gt; VMALLOC_END-size)
+221             goto out;
+222     }
+223     area-&gt;flags = flags;
+224     area-&gt;addr = (void *)addr;
+225     area-&gt;size = size;
+226     area-&gt;next = *p;
+227     *p = area;
+228     write_unlock(&amp;vmlist_lock);
+229     return area;
+230 
+231 out:
+232     write_unlock(&amp;vmlist_lock);
+233     kfree(area);
+234     return NULL;
+235 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>195</B>The parameters is the size of the requested region which should be
+a multiple of the page size and the area flags, either <TT>VM_ALLOC</TT>
+or <TT>VM_IOREMAP</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>200-202</B>Allocate space for the <TT>vm_struct</TT> description
+struct</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>204</B>Pad the request so there is a page gap between areas. This is to
+guard against overwrites</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>205-206</B>This is to ensure the size is not 0 after the padding due to an
+overflow. If something does go wrong, free the <TT>area</TT> just allocated
+and return NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>210</B>Start the search at the beginning of the vmalloc address space</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>211</B>Lock the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>212-222</B>Walk through the list searching for an area large enough for
+the request</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>213-214</B>Check to make sure the end of the addressable range has not
+been reached</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>215-216</B>If the requested area would fit between the current address and
+the next area, the search is complete</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>217</B>Make sure the address would not go over the end of the vmalloc
+address space</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>223-225</B>Copy in the area information</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>226-227</B>Link the new area into the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>228-229</B>Unlock the list and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>231</B>This label is reached if the request could not be satisfied</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>232</B>Unlock the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>233-234</B>Free the memory used for the area descriptor and return</DD></DL><H3 CLASS="subsection"><A NAME="htoc298">G.1.4</A>  Function: vmalloc_area_pages</H3><P> <EM>Source: mm/vmalloc.c</EM> <A NAME="func: vmalloc_area_pages"></A> <A NAME="@codeindex210"></A></P><P>This is just a wrapper around <TT>__vmalloc_area_pages()</TT>. This
+function exists for compatibility with older kernels. The name change was made
+to reflect that the new function <TT>__vmalloc_area_pages()</TT> is able to
+take an array of pages to use for insertion into the pagetables.</P><PRE CLASS="verbatim">189 int vmalloc_area_pages(unsigned long address, unsigned long size,
+190                        int gfp_mask, pgprot_t prot)
+191 {
+192         return __vmalloc_area_pages(address, size, gfp_mask, prot, NULL);
+193 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>192</B>Call <TT>__vmalloc_area_pages()</TT> with the same parameters.
+The <TT>pages</TT> array is passed as NULL as the pages will be allocated as
+necessary</DD></DL><H3 CLASS="subsection"><A NAME="htoc299">G.1.5</A>  Function: __vmalloc_area_pages</H3><P> <EM>Source: mm/vmalloc.c</EM> <A NAME="func: __vmalloc_area_pages"></A> <A NAME="@codeindex211"></A></P><P>This is the beginning of a standard page table walk function. This top level
+function will step through all PGDs within an address range. For each PGD,
+it will call <TT>pmd_alloc()</TT> to allocate a PMD directory and call
+<TT>alloc_area_pmd()</TT> for the directory.</P><PRE CLASS="verbatim">155 static inline int __vmalloc_area_pages (unsigned long address,
+156                                         unsigned long size,
+157                                         int gfp_mask,
+158                                         pgprot_t prot,
+159                                         struct page ***pages)
+160 {
+161     pgd_t * dir;
+162     unsigned long end = address + size;
+163     int ret;
+164 
+165     dir = pgd_offset_k(address);
+166     spin_lock(&amp;init_mm.page_table_lock);
+167     do {
+168         pmd_t *pmd;
+169         
+170         pmd = pmd_alloc(&amp;init_mm, dir, address);
+171         ret = -ENOMEM;
+172         if (!pmd)
+173             break;
+174 
+175         ret = -ENOMEM;
+176         if (alloc_area_pmd(pmd, address, end - address, 
+                       gfp_mask, prot, pages))
+177             break;
+178 
+179         address = (address + PGDIR_SIZE) &amp; PGDIR_MASK;
+180         dir++;
+181 
+182         ret = 0;
+183     } while (address &amp;&amp; (address &lt; end));
+184     spin_unlock(&amp;init_mm.page_table_lock);
+185     flush_cache_all();
+186     return ret;
+187 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>155</B>The parameters are;<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>address</B> is the starting address to allocate PMDs for
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>size</B> is the size of the region
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>gfp_mask</B> is the <TT>GFP_</TT> flags for <TT>alloc_pages()</TT> 
+(See Section <A HREF="understand023.html#func: alloc_pages">F.1.1</A>) 
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>prot</B> is the protection to give the PTE entry
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pages</B> is an array of pages to use for insertion instead of having
+<TT>alloc_area_pte()</TT> allocate them one at a time. Only the
+<TT>vmap()</TT> interface passes in an array
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>162</B>The end address is the starting address plus the size</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>165</B>Get the PGD entry for the starting address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>166</B>Lock the kernel reference page table</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>167-183</B>For every PGD within this address range, allocate a PMD
+directory and call <TT>alloc_area_pmd()</TT> (See Section <A HREF="#func: alloc_area_pmd">G.1.6</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>170</B>Allocate a PMD directory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>176</B>Call <TT>alloc_area_pmd()</TT> (See Section <A HREF="#func: alloc_area_pmd">G.1.6</A>)
+which will allocate a PTE for each PTE slot in the PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>179</B><TT>address</TT> becomes the base address of the next PGD entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>180</B>Move <TT>dir</TT> to the next PGD entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>184</B>Release the lock to the kernel page table</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>185</B><TT>flush_cache_all()</TT> will flush all CPU caches. This is
+necessary because the kernel page tables have changed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>186</B>Return success</DD></DL><H3 CLASS="subsection"><A NAME="htoc300">G.1.6</A>  Function: alloc_area_pmd</H3><P> <EM>Source: mm/vmalloc.c</EM> <A NAME="func: alloc_area_pmd"></A> <A NAME="@codeindex212"></A></P><P>This is the second stage of the standard page table walk to allocate PTE
+entries for an address range. For every PMD within a given address range
+on a PGD, <TT>pte_alloc()</TT> will creates a PTE directory and then
+<TT>alloc_area_pte()</TT> will be called to allocate the physical pages</P><PRE CLASS="verbatim">132 static inline int alloc_area_pmd(pmd_t * pmd, unsigned long address,
+133                         unsigned long size, int gfp_mask,
+134                         pgprot_t prot, struct page ***pages)
+135 {
+136     unsigned long end;
+137 
+138     address &amp;= ~PGDIR_MASK;
+139     end = address + size;
+140     if (end &gt; PGDIR_SIZE)
+141         end = PGDIR_SIZE;
+142     do {
+143         pte_t * pte = pte_alloc(&amp;init_mm, pmd, address);
+144         if (!pte)
+145             return -ENOMEM;
+146         if (alloc_area_pte(pte, address, end - address, 
+147                    gfp_mask, prot, pages))
+148             return -ENOMEM;
+149         address = (address + PMD_SIZE) &amp; PMD_MASK;
+150         pmd++;
+151     } while (address &lt; end);
+152     return 0;
+152 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>132</B>The parameters are;
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>pmd</B> is the PMD that needs the allocations
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>address</B> is the starting address to start from
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>size</B> is the size of the region within the PMD to allocate for
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>gfp_mask</B> is the <TT>GFP_</TT> flags for <TT>alloc_pages()</TT> (See Section <A HREF="understand023.html#func: alloc_pages">F.1.1</A>)
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>prot</B> is the protection to give the PTE entry
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pages</B> is an optional array of pages to use instead of allocating each
+page individually
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>138</B>Align the starting address to the PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>139-141</B>Calculate end to be the end of the allocation or the end of the
+PGD, whichever occurs first</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>142-151</B>For every PMD within the given address range, allocate a PTE
+directory and call <TT>alloc_area_pte()</TT>(See Section <A HREF="#func: alloc_area_pte">G.1.7</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>143</B>Allocate the PTE directory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>146-147</B>Call <TT>alloc_area_pte()</TT> which will allocate
+the physical pages if an array of pages is not already supplied with
+<TT>pages</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>149</B><TT>address</TT> becomes the base address of the next PMD entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>150</B>Move <TT>pmd</TT> to the next PMD entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>152</B>Return success</DD></DL><H3 CLASS="subsection"><A NAME="htoc301">G.1.7</A>  Function: alloc_area_pte</H3><P> <EM>Source: mm/vmalloc.c</EM> <A NAME="func: alloc_area_pte"></A> <A NAME="@codeindex213"></A></P><P>This is the last stage of the page table walk. For every PTE in the given PTE
+directory and address range, a page will be allocated and associated with the
+PTE.</P><PRE CLASS="verbatim"> 95 static inline int alloc_area_pte (pte_t * pte, unsigned long address,
+ 96                         unsigned long size, int gfp_mask,
+ 97                         pgprot_t prot, struct page ***pages)
+ 98 {
+ 99     unsigned long end;
+100 
+101     address &amp;= ~PMD_MASK;
+102     end = address + size;
+103     if (end &gt; PMD_SIZE)
+104         end = PMD_SIZE;
+105     do {
+106         struct page * page;
+107 
+108         if (!pages) {
+109             spin_unlock(&amp;init_mm.page_table_lock);
+110             page = alloc_page(gfp_mask);
+111             spin_lock(&amp;init_mm.page_table_lock);
+112         } else {
+113             page = (**pages);
+114             (*pages)++;
+115
+116             /* Add a reference to the page so we can free later */
+117             if (page)
+118                 atomic_inc(&amp;page-&gt;count);
+119
+120         }
+121         if (!pte_none(*pte))
+122             printk(KERN_ERR "alloc_area_pte: page already exists\n");
+123         if (!page)
+124             return -ENOMEM;
+125         set_pte(pte, mk_pte(page, prot));
+126         address += PAGE_SIZE;
+127         pte++;
+128     } while (address &lt; end);
+129     return 0;
+130 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>101</B>Align the address to a PMD directory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>103-104</B>The end address is the end of the request or the end of the
+directory, whichever occurs first</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>105-128</B>Loop through every PTE in this page. If a <TT>pages</TT> array
+is supplied, use pages from it to populate the table, otherwise allocate each
+one individually</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>108-111</B>If an array of <TT>pages</TT> is not supplied, unlock the
+kernel reference pagetable, allocate a page with <TT>alloc_page()</TT> and
+reacquire the spinlock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>112-120</B>Else, take one page from the array and increment it's usage
+count as it is about to be inserted into the reference page table</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>121-122</B>If the PTE is already in use, it means that the areas in the
+vmalloc region are overlapping somehow</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>123-124</B>Return failure if physical pages are not available</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>125</B>Set the <TT>page</TT> with the desired protection bits
+(<TT>prot</TT>) into the PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>126</B><TT>address</TT> becomes the address of the next PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>127</B>Move to the next PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>129</B>Return success</DD></DL><H3 CLASS="subsection"><A NAME="htoc302">G.1.8</A>  Function: vmap</H3><P> <EM>Source: mm/vmalloc.c</EM> <A NAME="func: vmap"></A> <A NAME="@codeindex214"></A></P><P>This function allows a caller-supplied array of <TT>pages</TT> to be inserted
+into the vmalloc address space. This is unused in 2.4.22 and I suspect it is an
+accidental backport from 2.6.x where it is used by the sound subsystem core.</P><PRE CLASS="verbatim">281 void * vmap(struct page **pages, int count,
+282             unsigned long flags, pgprot_t prot)
+283 {
+284     void * addr;
+285     struct vm_struct *area;
+286     unsigned long size = count &lt;&lt; PAGE_SHIFT;
+287 
+288     if (!size || size &gt; (max_mapnr &lt;&lt; PAGE_SHIFT))
+289         return NULL;
+290     area = get_vm_area(size, flags);
+291     if (!area) {
+292         return NULL;
+293     }
+294     addr = area-&gt;addr;
+295     if (__vmalloc_area_pages(VMALLOC_VMADDR(addr), size, 0,
+296                              prot, &amp;pages)) {
+297         vfree(addr);
+298         return NULL;
+299     }
+300     return addr;
+301 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>281</B>The parameters are;<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>pages</B> is the caller-supplied array of pages to insert
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>count</B> is the number of pages in the array
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B> is the flags to use for the <TT>vm_struct</TT>
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>prot</B> is the protection bits to set the PTE with
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>286</B>Calculate the size in bytes of the region to create based on the
+size of the array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>288-289</B>Make sure the size of the region does not exceed limits</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>290-293</B>Use <TT>get_vm_area()</TT> to find a region large enough for
+the mapping. If one is not found, return NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>294</B>Get the virtual address of the area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>295</B>Insert the array into the pagetable with
+<TT>__vmalloc_area_pages()</TT> (See Section <A HREF="#func: vmalloc_area_pages">G.1.4</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>297</B>If the insertion fails, free the region and return NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>298</B>Return the virtual address of the newly mapped region</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc117"></A><A NAME="htoc303">G.2</A>  Freeing A Non-Contiguous Area</H2><H3 CLASS="subsection"><A NAME="htoc304">G.2.1</A>  Function: vfree</H3><P> <EM>Source: mm/vmalloc.c</EM> <A NAME="func: vfree"></A> <A NAME="@codeindex215"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand010.html#fig: vfree">7.4</A>. This
+is the top level function responsible for freeing a non-contiguous
+area of memory. It performs basic sanity checks before finding the
+<TT>vm_struct</TT> for the requested <TT>addr</TT>. Once found, it
+calls <TT>vmfree_area_pages()</TT>.</P><PRE CLASS="verbatim">237 void vfree(void * addr)
+238 {
+239     struct vm_struct **p, *tmp;
+240 
+241     if (!addr)
+242         return;
+243     if ((PAGE_SIZE-1) &amp; (unsigned long) addr) {
+244         printk(KERN_ERR 
+               "Trying to vfree() bad address (%p)\n", addr);
+245         return;
+246     }
+247     write_lock(&amp;vmlist_lock);
+248     for (p = &amp;vmlist ; (tmp = *p) ; p = &amp;tmp-&gt;next) {
+249         if (tmp-&gt;addr == addr) {
+250             *p = tmp-&gt;next;
+251             vmfree_area_pages(VMALLOC_VMADDR(tmp-&gt;addr), 
+                          tmp-&gt;size);
+252             write_unlock(&amp;vmlist_lock);
+253             kfree(tmp);
+254             return;
+255         }
+256     }
+257     write_unlock(&amp;vmlist_lock);
+258     printk(KERN_ERR 
+           "Trying to vfree() nonexistent vm area (%p)\n", addr);
+259 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>237</B>The parameter is the address returned by <TT>get_vm_area()</TT>
+(See Section <A HREF="#func: get_vm_area">G.1.3</A>) to either <TT>vmalloc()</TT> or <TT>ioremap()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>241-243</B>Ignore NULL addresses</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>243-246</B>This checks the address is page aligned and is a reasonable
+quick guess to see if the area is valid or not</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>247</B>Acquire a write lock to the <TT>vmlist</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>248</B>Cycle through the <TT>vmlist</TT> looking for the correct
+<TT>vm_struct</TT> for <TT>addr</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>249</B>If this it the correct address then ... </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>250</B>Remove this area from the <TT>vmlist</TT> linked list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>251</B>Free all pages associated with the address range</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>252</B>Release the <TT>vmlist</TT> lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>253</B>Free the memory used for the <TT>vm_struct</TT> and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>257-258</B>The <TT>vm_struct</TT> was not found. Release the lock
+and print a message about the failed free</DD></DL><H3 CLASS="subsection"><A NAME="htoc305">G.2.2</A>  Function: vmfree_area_pages</H3><P> <EM>Source: mm/vmalloc.c</EM> <A NAME="func: vmfree_area_pages"></A> <A NAME="@codeindex216"></A></P><P>This is the first stage of the page table walk to free all pages and PTEs
+associated with an address range. It is responsible for stepping through the
+relevant PGDs and for flushing the TLB.</P><PRE CLASS="verbatim"> 80 void vmfree_area_pages(unsigned long address, unsigned long size)
+ 81 {
+ 82     pgd_t * dir;
+ 83     unsigned long end = address + size;
+ 84 
+ 85     dir = pgd_offset_k(address);
+ 86     flush_cache_all();
+ 87     do {
+ 88         free_area_pmd(dir, address, end - address);
+ 89         address = (address + PGDIR_SIZE) &amp; PGDIR_MASK;
+ 90         dir++;
+ 91     } while (address &amp;&amp; (address &lt; end));
+ 92     flush_tlb_all();
+ 93 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>80</B>The parameters are the starting <TT>address</TT> and the
+<TT>size</TT> of the region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>82</B>The address space end is the starting address plus its size</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>85</B>Get the first PGD for the address range</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>86</B>Flush the cache CPU so cache hits will not occur on pages that are to
+be deleted. This is a null operation on many architectures including the x86</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>87</B>Call <TT>free_area_pmd()</TT>(See Section <A HREF="#func: free_area_pmd">G.2.3</A>) to
+perform the second stage of the page table walk</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B><TT>address</TT> becomes the starting address of the next PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>90</B>Move to the next PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>92</B>Flush the TLB as the page tables have now changed</DD></DL><H3 CLASS="subsection"><A NAME="htoc306">G.2.3</A>  Function: free_area_pmd</H3><P> <EM>Source: mm/vmalloc.c</EM> <A NAME="func: free_area_pmd"></A> <A NAME="@codeindex217"></A></P><P>This is the second stage of the page table walk. For every PMD in this
+directory, call <TT>free_area_pte()</TT> to free up the pages and PTEs.</P><PRE CLASS="verbatim"> 56 static inline void free_area_pmd(pgd_t * dir, 
+                     unsigned long address,
+                     unsigned long size)
+ 57 {
+ 58     pmd_t * pmd;
+ 59     unsigned long end;
+ 60 
+ 61     if (pgd_none(*dir))
+ 62         return;
+ 63     if (pgd_bad(*dir)) {
+ 64         pgd_ERROR(*dir);
+ 65         pgd_clear(dir);
+ 66         return;
+ 67     }
+ 68     pmd = pmd_offset(dir, address);
+ 69     address &amp;= ~PGDIR_MASK;
+ 70     end = address + size;
+ 71     if (end &gt; PGDIR_SIZE)
+ 72         end = PGDIR_SIZE;
+ 73     do {
+ 74         free_area_pte(pmd, address, end - address);
+ 75         address = (address + PMD_SIZE) &amp; PMD_MASK;
+ 76         pmd++;
+ 77     } while (address &lt; end);
+ 78 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>56</B>The parameters are the PGD been stepped through, the starting address
+and the length of the region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>61-62</B>If there is no PGD, return. This can occur after <TT>vfree()</TT>
+(See Section <A HREF="#func: vfree">G.2.1</A>) is called during a failed allocation</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>63-67</B>A PGD can be bad if the entry is not present, it is marked
+read-only or it is marked accessed or dirty</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>68</B>Get the first PMD for the address range</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>69</B>Make the address PGD aligned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>70-72</B><TT>end</TT> is either the end of the space to free or the
+end of this PGD, whichever is first</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>73-77</B>For every PMD, call <TT>free_area_pte()</TT> 
+(See Section <A HREF="#func: free_area_pte">G.2.4</A>) to free the PTE entries</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>75</B>address is the base address of the next PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>76</B>Move to the next PMD</DD></DL><H3 CLASS="subsection"><A NAME="htoc307">G.2.4</A>  Function: free_area_pte</H3><P> <EM>Source: mm/vmalloc.c</EM> <A NAME="func: free_area_pte"></A> <A NAME="@codeindex218"></A></P><P>This is the final stage of the page table walk. For every PTE in the given PMD
+within the address range, it will free the PTE and the associated page</P><PRE CLASS="verbatim">22 static inline void free_area_pte(pmd_t * pmd, unsigned long address,
+                    unsigned long size)
+ 23 {
+ 24     pte_t * pte;
+ 25     unsigned long end;
+ 26 
+ 27     if (pmd_none(*pmd))
+ 28         return;
+ 29     if (pmd_bad(*pmd)) {
+ 30         pmd_ERROR(*pmd);
+ 31         pmd_clear(pmd);
+ 32         return;
+ 33     }
+ 34     pte = pte_offset(pmd, address);
+ 35     address &amp;= ~PMD_MASK;
+ 36     end = address + size;
+ 37     if (end &gt; PMD_SIZE)
+ 38         end = PMD_SIZE;
+ 39     do {
+ 40         pte_t page;
+ 41         page = ptep_get_and_clear(pte);
+ 42         address += PAGE_SIZE;
+ 43         pte++;
+ 44         if (pte_none(page))
+ 45             continue;
+ 46         if (pte_present(page)) {
+ 47             struct page *ptpage = pte_page(page);
+ 48             if (VALID_PAGE(ptpage) &amp;&amp; 
+                   (!PageReserved(ptpage)))
+ 49                 __free_page(ptpage);
+ 50             continue;
+ 51         }
+ 52         printk(KERN_CRIT 
+               "Whee.. Swapped out page in kernel page table\n");
+ 53     } while (address &lt; end);
+ 54 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>22</B>The parameters are the PMD that PTEs are been freed from, the
+starting address and the size of the region to free</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>27-28</B>The PMD could be absent if this region is from a failed
+<TT>vmalloc()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>29-33</B>A PMD can be bad if it's not in main memory, it's read only or
+it's marked dirty or accessed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>34</B><TT>pte</TT> is the first PTE in the address range</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>35</B>Align the address to the PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>36-38</B>The end is either the end of the requested region or the end of
+the PMD, whichever occurs first</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>38-53</B>Step through all PTEs, perform checks and free the PTE with its
+associated page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>41</B><TT>ptep_get_and_clear()</TT><A NAME="@codeindex219"></A> will remove a PTE from a page
+table and return it to the caller</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>42</B><TT>address</TT> will be the base address of the next PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>43</B>Move to the next PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>44</B>If there was no PTE, simply continue</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>46-51</B>If the page is present, perform basic checks and then free it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>47</B><TT>pte_page()</TT> uses the global <TT>mem_map</TT> to find
+the <TT>struct page</TT> for the PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>48-49</B>Make sure the page is a valid page and it is not reserved before
+calling <TT>__free_page()</TT> to free the physical page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>50</B>Continue to the next PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>52</B>If this line is reached, a PTE within the kernel address space was
+somehow swapped out. Kernel memory is not swappable and so is a critical error</DD></DL><P>	</P><HR>
+[ <A HREF="understand023.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand025.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

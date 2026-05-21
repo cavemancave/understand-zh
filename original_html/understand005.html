@@ -1,0 +1,643 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Describing Physical Memory</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand004.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand006.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc7">Chapter 2</A>  Describing Physical Memory</H1><P>
+<A NAME="chap: Describing Physical Memory"></A></P><P>Linux is available for a wide range of architectures so there needs to be an
+architecture-independent way of describing memory. This chapter describes
+the structures used to keep account of memory banks, pages and the flags
+that affect VM behaviour.</P><P>The first principal concept prevalent in the VM is <EM>Non-Uniform
+Memory Access (NUMA)</EM><A NAME="@mainindex44"></A><A NAME="@mainindex45"></A>. With large scale machines, memory may be
+arranged into banks that incur a different cost to access depending on the
+&#X201C;distance&#X201D; from the processor. For example, there might be a bank of
+memory assigned to each CPU or a bank of memory very suitable for DMA near
+device cards.</P><P>Each bank is called a <EM>node</EM><A NAME="@mainindex46"></A> and the concept is represented
+under Linux by a <TT>struct</TT> <TT>pglist_data</TT><A NAME="@mainindex47"></A> even if
+the architecture is UMA. This struct is always referenced to by it's typedef
+<TT>pg_data_t</TT><A NAME="@mainindex48"></A>. Every node in the system is kept on a NULL
+terminated list called <TT>pgdat_list</TT><A NAME="@mainindex49"></A> and each node is linked to
+the next with the field <TT>pg_data_t</TT>&#X2192;<TT>node_next</TT>. For UMA
+architectures like PC desktops, only one static <TT>pg_data_t</TT>
+structure called <TT>contig_page_data</TT><A NAME="@mainindex50"></A> is used. Nodes will be
+discussed further in Section <A HREF="#sec: Nodes">2.1</A>.</P><P>Each node is divided up into a number of blocks called
+<EM>zones</EM><A NAME="@mainindex51"></A> which represent ranges within memory. Zones should
+not be confused with zone based allocators as they are unrelated. A zone is
+described by a <TT>struct</TT> <TT>zone_struct</TT><A NAME="@mainindex52"></A>, typedeffed
+to <TT>zone_t</TT><A NAME="@mainindex53"></A> and each one is of type <TT>ZONE_DMA</TT><A NAME="@mainindex54"></A>,
+<TT>ZONE_NORMAL</TT><A NAME="@mainindex55"></A> or <TT>ZONE_HIGHMEM</TT><A NAME="@mainindex56"></A>. Each zone type
+suitable a different type of usage. <TT>ZONE_DMA</TT> is memory in the lower
+physical memory ranges which certain ISA devices require. Memory within
+<TT>ZONE_NORMAL</TT> is directly mapped by the kernel into the upper region
+of the linear address space which is discussed further in Section <A HREF="understand007.html#sec: Linear Address Space">4.1</A>. <TT>ZONE_HIGHMEM</TT>
+is the remaining available memory
+in the system and is not directly mapped by the kernel.</P><P>With the x86 the zones are:<A NAME="@mainindex57"></A></P><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD ALIGN=left NOWRAP> 
+<TT>ZONE_DMA</TT>		</TD><TD ALIGN=left NOWRAP>First 16MiB of memory</TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>ZONE_NORMAL</TT>	</TD><TD ALIGN=left NOWRAP>16MiB - 896MiB</TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>ZONE_HIGHMEM</TT>	</TD><TD ALIGN=left NOWRAP>896 MiB - End</TD></TR>
+</TABLE><P>It is important to note that many kernel operations can only take place using
+<TT>ZONE_NORMAL</TT> so it is the most performance critical zone. Zones are
+discussed further in Section <A HREF="#sec: Zones">2.2</A>. Each physical page frame is
+represented by a <TT>struct page</TT> and all the structs are kept in a
+global <TT>mem_map</TT><A NAME="@mainindex58"></A> array which is usually stored at the beginning
+of <TT>ZONE_NORMAL</TT> or just after the area reserved for the loaded kernel
+image in low memory machines. <TT>struct page</TT>s are discussed in
+detail in Section <A HREF="#sec: Pages">2.4</A> and the global <TT>mem_map</TT>
+array is discussed in detail in Section 
+<A HREF="understand006.html#sec: Mapping addresses to struct pages">3.7</A>. The basic relationship between
+all these structs is illustrated in Figure 
+<A HREF="#fig: Relationship Between Nodes, Zones and Pages">2.1</A>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html001.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 2.1: Relationship Between Nodes, Zones and
+Pages</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Relationship Between Nodes, Zones and Pages"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>As the amount of memory directly accessible by the kernel (<TT>ZONE_NORMAL</TT>)
+is limited in size, Linux supports the concept of <EM>High Memory</EM>
+which is discussed further in Section <A HREF="#sec: High Memory">2.5</A>. This chapter
+will discuss how nodes, zones and pages are represented before introducing
+high memory management.</P><H2 CLASS="section"><A NAME="toc12"></A><A NAME="htoc8">2.1</A>  Nodes</H2><P>
+<A NAME="sec: Nodes"></A>
+<A NAME="@mainindex59"></A></P><P>As we have mentioned, each node in memory is described by a
+<TT>pg_data_t</TT><A NAME="@mainindex60"></A> which is a typedef for a <TT>struct</TT>
+<TT>pglist_data</TT><A NAME="@mainindex61"></A>. When allocating a page, Linux uses a
+<EM>node-local allocation policy</EM><A NAME="@mainindex62"></A> to allocate
+memory from the node closest to the running CPU. As processes tend to run
+on the same CPU, it is likely the memory from the current node will be used.
+The struct is declared as follows in &lt;<TT>linux/mmzone.h</TT>&gt;:</P><PRE CLASS="verbatim">129 typedef struct pglist_data {
+130     zone_t node_zones[MAX_NR_ZONES];
+131     zonelist_t node_zonelists[GFP_ZONEMASK+1];
+132     int nr_zones;
+133     struct page *node_mem_map;
+134     unsigned long *valid_addr_bitmap;
+135     struct bootmem_data *bdata;
+136     unsigned long node_start_paddr;
+137     unsigned long node_start_mapnr;
+138     unsigned long node_size;
+139     int node_id;
+140     struct pglist_data *node_next;
+141 } pg_data_t; </PRE><P>We now briefly describe each of these fields:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_zones</B> The zones for this node, <TT>ZONE_HIGHMEM</TT>,
+<TT>ZONE_NORMAL</TT>, <TT>ZONE_DMA</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_zonelists</B> This is the order of zones that allocations are
+		 preferred from. <TT>build_zonelists()</TT> in
+		 <TT>mm/page_alloc.c</TT> sets up the order when called
+		 by <TT>free_area_init_core()</TT>. A failed allocation
+		 in <TT>ZONE_HIGHMEM</TT> may fall back to <TT>ZONE_NORMAL</TT>
+		 or back to <TT>ZONE_DMA</TT>;<A NAME="@mainindex63"></A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>nr_zones</B> Number of zones in this node, between 1 and 3. Not all
+		 nodes will have three. A CPU bank may not have <TT>ZONE_DMA</TT>
+		 for example;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_mem_map</B> This is the first page of the <TT>struct page</TT>
+		 array representing each physical frame in the node. It will
+		 be placed somewhere within the global <TT>mem_map</TT>
+		 array;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>valid_addr_bitmap</B> A bitmap which describes &#X201C;holes&#X201D; in the memory
+		 node that no memory exists for. In reality, this is only
+		 used by the Sparc and Sparc64 architectures and ignored
+		 by all others;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>bdata</B>	This is only of interest to the boot memory allocator
+		 discussed in Chapter <A HREF="understand008.html#chap: Boot Memory Allocator">5</A>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_start_paddr</B> The starting physical address of the node. An
+		 unsigned long does not work optimally as it breaks for
+		 ia32 with <EM>Physical Address Extension (PAE)</EM> for
+		 example. PAE is discussed further in Section 
+		 <A HREF="#sec: High Memory">2.5</A>. A more suitable solution
+		 would be to record this as a <EM>Page Frame
+		 Number (PFN)</EM><A NAME="@mainindex64"></A><A NAME="@mainindex65"></A>. A PFN is simply in index
+		 within physical memory that is counted in page-sized
+		 units. PFN for a physical address could be trivially
+		 defined as (<TT>page_phys_addr</TT> &gt;&gt;
+		 <TT>PAGE_SHIFT</TT>);</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_start_mapnr</B> This gives the page offset within the global
+		 <TT>mem_map</TT>. It is calculated in
+		 <TT>free_area_init_core()</TT> by calculating the
+		 number of pages between <TT>mem_map</TT> and the local
+		 <TT>mem_map</TT> for this node called <TT>lmem_map</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_size</B>	The total number of pages in this zone;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_id</B>	 The <EM>Node ID (NID)</EM><A NAME="@mainindex66"></A> of the node, starts at 0;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_next</B>	Pointer to next node in a NULL terminated list.</DD></DL><P>All nodes in the system are maintained on a list called
+<TT>pgdat_list</TT><A NAME="@mainindex67"></A>. The nodes are placed on this list as they are
+initialised by the <TT>init_bootmem_core()</TT><A NAME="@mainindex68"></A> function, described
+later in Section <A HREF="understand008.html#sec: Initialising bootmem_data">5.2.1</A>. Up until late 2.4 kernels (&gt; <TT>2.4.18</TT>),
+blocks of code that traversed the list
+looked something like:</P><PRE CLASS="verbatim">    pg_data_t * pgdat;
+    pgdat = pgdat_list;
+    do {
+          /* do something with pgdata_t */
+          ...
+    } while ((pgdat = pgdat-&gt;node_next));
+</PRE><P>In more recent kernels, a macro <TT>for_each_pgdat()</TT><A NAME="@mainindex69"></A>, which is
+trivially defined as a for loop, is provided to improve code readability.</P><H2 CLASS="section"><A NAME="toc13"></A><A NAME="htoc9">2.2</A>  Zones</H2><P>
+<A NAME="sec: Zones"></A>
+<A NAME="@mainindex70"></A></P><P>Zones are described by a <TT>struct</TT> <TT>zone_struct</TT><A NAME="@mainindex71"></A> and
+is usually referred to by it's typedef <TT>zone_t</TT><A NAME="@mainindex72"></A>. It
+keeps track of information like page usage statistics, free area information
+and locks. It is declared as follows in &lt;<TT>linux/mmzone.h</TT>&gt;:</P><PRE CLASS="verbatim">37 typedef struct zone_struct {
+41     spinlock_t        lock;
+42     unsigned long     free_pages;
+43     unsigned long     pages_min, pages_low, pages_high;
+44     int               need_balance;
+45 
+49     free_area_t       free_area[MAX_ORDER];
+50 
+76     wait_queue_head_t * wait_table;
+77     unsigned long     wait_table_size;
+78     unsigned long     wait_table_shift;
+79 
+83     struct pglist_data *zone_pgdat;
+84     struct page        *zone_mem_map;
+85     unsigned long      zone_start_paddr;
+86     unsigned long      zone_start_mapnr;
+87 
+91     char               *name;
+92     unsigned long      size;
+93 } zone_t;
+</PRE><P>This is a brief explanation of each field in the struct.</P><DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>lock</B>		Spinlock to protect the zone from concurrent accesses;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>free_pages</B>	Total number of free pages in the zone;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pages_min, pages_low, pages_high</B>	
+			These are zone watermarks which are described in the 
+			next section;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>need_balance</B>	This flag that tells the pageout <B>kswapd</B> to 
+balance the zone. A zone is said to need balance when
+			the number of available pages reaches one of the 
+			<EM>zone watermarks</EM>. Watermarks is discussed in 
+			the next section;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>free_area</B>	Free area bitmaps used by the buddy allocator;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>wait_table</B>	A hash table of wait queues of processes waiting on a
+			page to be freed. This is of importance
+			to <TT>wait_on_page()</TT> and
+			<TT>unlock_page()</TT>. While processes could all
+			wait on one queue, this would cause all waiting
+			processes to race for pages still locked when woken
+			up. A large group of processes contending for a shared
+			resource like this is sometimes called a thundering
+			herd. Wait tables are discussed further in Section
+			<A HREF="#sec: Zone Wait Queue Table">2.2.3</A>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>wait_table_size</B> Number of queues in the hash table which is a power of 2;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>wait_table_shift</B> Defined as the number of bits in a long minus
+			the binary logarithm of the table size above;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zone_pgdat</B> 	Points to the parent <TT>pg_data_t</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zone_mem_map</B>	The first page in the global <TT>mem_map</TT>
+			this zone refers to;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zone_start_paddr</B> Same principle as <TT>node_start_paddr</TT>;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zone_start_mapnr</B> Same principle as <TT>node_start_mapnr</TT>;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>name</B>		The string name of the zone, &#X201C;DMA&#X201D;,
+&#X201C;Normal&#X201D; or &#X201C;HighMem&#X201D; 
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>size</B>		The size of the zone in pages.
+</DD></DL><H3 CLASS="subsection">2.2.1  Zone Watermarks</H3><P>
+<A NAME="sec: Zone Watermarks"></A>
+<A NAME="@mainindex73"></A>
+<A NAME="@mainindex74"></A>
+<A NAME="@mainindex75"></A></P><P>When available memory in the system is low, the pageout daemon
+<B>kswapd</B><A NAME="@mainindex76"></A> is woken up to start freeing pages (see Chapter 
+<A HREF="understand013.html#chap: Page Frame Reclamation">10</A>). If the pressure is high, the
+process will free up memory synchronously, sometimes referred to as the
+<EM>direct-reclaim</EM><A NAME="@mainindex77"></A> path. The parameters affecting pageout behaviour
+are similar to those by FreeBSD [<A HREF="understand031.html#mckusick96"><CITE>McK96</CITE></A>] and Solaris [<A HREF="understand031.html#mauro01"><CITE>MM01</CITE></A>].</P><P>Each zone has three watermarks called <TT>pages_low</TT>,
+<TT>pages_min</TT> and <TT>pages_high</TT> which help track
+how much pressure a zone is under. The relationship between them
+is illustrated in Figure <A HREF="#fig: Zone Watermarks">2.2</A>. The number
+of pages for <TT>pages_min</TT> is calculated in the function
+<TT>free_area_init_core()</TT> during memory init and is based on a
+ratio to the size of the zone in pages. It is calculated initially as
+<I>ZoneSizeInPages</I> / 128. The lowest value it will be is 20 pages
+(80K on a x86) and the highest possible value is 255 pages (1MiB on a x86).</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html002.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 2.2: Zone Watermarks</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Zone Watermarks"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pages_low</B><A NAME="@mainindex78"></A>  When <TT>pages_low</TT> number of free pages is reached,
+		 <B>kswapd</B> is woken up by the buddy allocator to start
+		 freeing pages. This is equivalent to when <TT>lotsfree</TT>
+		 is reached in Solaris and <TT>freemin</TT> in FreeBSD. The
+		 value is twice the value of <TT>pages_min</TT> by default;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pages_min</B><A NAME="@mainindex79"></A>  When <TT>pages_min</TT> is reached, the allocator will
+		 do the <B>kswapd</B> work in a synchronous fashion,
+		 sometimes referred to as the <EM>direct-reclaim</EM><A NAME="@mainindex80"></A>
+		 path. There is no real equivalent in Solaris but the
+		 closest is the <TT>desfree</TT> or <TT>minfree</TT>
+		 which determine how often the pageout scanner is woken up;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pages_high</B><A NAME="@mainindex81"></A>  Once <B>kswapd</B> has been woken to start freeing
+		 pages it will not consider the zone to be
+		 &#X201C;balanced&#X201D;<A NAME="@mainindex82"></A> when <TT>pages_high</TT>
+		 pages are free. Once the watermark has been reached,
+		 <B>kswapd</B> will go back to sleep. In Solaris,
+		 this is called <TT>lotsfree</TT> and in BSD, it is called
+		 <TT>free_target</TT>. The default for <TT>pages_high</TT>
+		 is three times the value of <TT>pages_min</TT>.</DD></DL><P>Whatever the pageout parameters are called in each operating system, the
+meaning is the same, it helps determine how hard the pageout daemon or
+processes work to free up pages.</P><H3 CLASS="subsection">2.2.2  Calculating The Size of Zones</H3><P>
+<A NAME="sec: Calculating The Size of Zones"></A>
+<A NAME="@mainindex83"></A></P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html003.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 2.3: Call Graph: <TT>setup_memory()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: setup_memory"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The PFN is an offset, counted in pages, within the physical memory map. The
+first PFN usable by the system, <TT>min_low_pfn</TT> is located at the
+beginning of the first page after <TT>_end</TT><A NAME="@mainindex84"></A> which is the end of
+the loaded kernel image. The value is stored as a file scope variable in
+<TT>mm/bootmem.c</TT> for use with the boot memory allocator.</P><P>How the last page frame in the system, <TT>max_pfn</TT>, is
+calculated is quite architecture specific. In the x86 case, the function
+<TT>find_max_pfn()</TT><A NAME="@mainindex85"></A> reads through the whole <EM>e820</EM> map for
+the highest page frame. The value is also stored as a file scope variable in
+<TT>mm/bootmem.c</TT>. The e820 is a table provided by the BIOS describing
+what physical memory is available, reserved or non-existent.</P><P>The value of <TT>max_low_pfn</TT> is calculated on the x86
+with <TT>find_max_low_pfn()</TT><A NAME="@mainindex86"></A> and it marks the end of
+<TT>ZONE_NORMAL</TT>. This is the physical memory directly accessible by the
+kernel and is related to the kernel/userspace split in the linear address
+space marked by <TT>PAGE_OFFSET</TT>. The value, with the others,
+is stored in <TT>mm/bootmem.c</TT>. Note that in low memory machines,
+the <TT>max_pfn</TT> will be the same as the <TT>max_low_pfn</TT>.</P><P>With the three variables <TT>min_low_pfn</TT>, <TT>max_low_pfn</TT>
+and <TT>max_pfn</TT>, it is straightforward to calculate the
+start and end of high memory and place them as file scope variables
+in <TT>arch/i386/mm/init.c</TT> as <TT>highstart_pfn</TT> and
+<TT>highend_pfn</TT>. The values are used later to initialise the high
+memory pages for the physical page allocator as we will much later in Section
+<A HREF="understand008.html#sec: Retiring the Boot Memory Allocator">5.5</A>.</P><H3 CLASS="subsection">2.2.3  Zone Wait Queue Table</H3><P>
+<A NAME="sec: Zone Wait Queue Table"></A>
+<A NAME="@mainindex87"></A><A NAME="@mainindex88"></A></P><P>When IO is being performed on a page, such are during page-in or page-out, it
+is locked to prevent accessing it with inconsistent data. Processes wishing
+to use it have to join a wait queue before it can be accessed by calling
+<TT>wait_on_page()</TT><A NAME="@mainindex89"></A>. When the IO is completed, the page will be
+unlocked with <TT>UnlockPage()</TT><A NAME="@mainindex90"></A> and any process waiting on the queue
+will be woken up. Each page could have a wait queue but it would be very
+expensive in terms of memory to have so many separate queues so instead,
+the wait queue is stored in the <TT>zone_t</TT>.</P><P>It is possible to have just one wait queue in the zone but that would
+mean that all processes waiting on any page in a zone would be woken up
+when one was unlocked. This would cause a serious 
+<EM>thundering herd</EM><A NAME="@mainindex91"></A> problem. Instead, a hash table of wait queues
+is stored in <TT>zone_t</TT>&#X2192;<TT>wait_table</TT>. In the event of a hash
+collision, processes may still be woken unnecessarily but collisions are
+not expected to occur frequently.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html004.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 2.4: Sleeping On a Locked Page</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Sleeping On a Locked Page"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The table is allocated during <TT>free_area_init_core()</TT>. The size of
+the table is calculated by <TT>wait_table_size()</TT><A NAME="@mainindex92"></A> and stored in the
+<TT>zone_t</TT>&#X2192;<TT>wait_table_size</TT>. The maximum size it will be is
+4096 wait queues. For smaller tables, the size of the table is the minimum
+power of 2 required to store <TT>NoPages / PAGES_PER_WAITQUEUE</TT>
+number of queues, where <TT>NoPages</TT> is the number of pages in the
+zone and <TT>PAGE_PER_WAITQUEUE</TT><A NAME="@mainindex93"></A> is defined to be 256. In other
+words, the size of the table is calculated as the integer component of the
+following equation:</P><PRE>
+wait_table_size = log2((NoPages * 2) / PAGES_PER_WAITQUEUE - 1)
+</PRE><P>The field <TT>zone_t</TT>&#X2192;<TT>wait_table_shift</TT> is calculated as
+the number of bits a page address must be shifted right to return an index
+within the table. The function <TT>page_waitqueue()</TT><A NAME="@mainindex94"></A> is responsible
+for returning which wait queue to use for a page in a zone. It uses a
+simple multiplicative hashing algorithm based on the virtual address of the
+<TT>struct page</TT> being hashed.</P><P>It works by simply multiplying the address by
+<TT>GOLDEN_RATIO_PRIME</TT><A NAME="@mainindex95"></A> and shifting the result
+<TT>zone_t</TT>&#X2192;<TT>wait_table_shift</TT> bits right to index the result
+within the hash table. <TT>GOLDEN_RATIO_PRIME</TT>[<A HREF="understand031.html#lever00"><CITE>Lev00</CITE></A>] is the
+largest prime that is closest to the <EM>golden ratio</EM><A NAME="@mainindex96"></A>[<A HREF="understand031.html#knuth68"><CITE>Knu68</CITE></A>]
+of the largest integer that may be represented by the architecture.</P><H2 CLASS="section"><A NAME="toc14"></A><A NAME="htoc10">2.3</A>  Zone Initialisation</H2><P>
+<A NAME="sec: Zone Initialisation"></A>
+<A NAME="@mainindex97"></A></P><P>The zones are initialised after the kernel page tables have been fully setup
+by <TT>paging_init()</TT>. Page table initialisation is covered
+in Section <A HREF="understand006.html#sec: Kernel Page Tables">3.6</A>. Predictably, each architecture
+performs this task differently but the objective is always the same, to
+determine what parameters to send to either <TT>free_area_init()</TT>
+for UMA architectures or <TT>free_area_init_node()</TT><A NAME="@mainindex98"></A> for NUMA. The
+only parameter required for UMA is <TT>zones_size</TT>. The full list
+of parameters:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>nid</B> is the Node ID which is the logical identifier of the node whose
+zones are being initialised;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pgdat</B> is the node's <TT>pg_data_t</TT> that is being initialised.
+In UMA, this will simply be <TT>contig_page_data</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pmap</B><A NAME="@mainindex99"></A>  is set later by <TT>free_area_init_core()</TT> to point to the
+beginning of the local <TT>lmem_map</TT> array allocated for the node. In
+NUMA, this is ignored as NUMA treats <TT>mem_map</TT> as a virtual array
+starting at <TT>PAGE_OFFSET</TT>. In UMA, this pointer is the global
+<TT>mem_map</TT> variable which is now <TT>mem_map</TT> gets initialised
+in UMA.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zones_sizes</B><A NAME="@mainindex100"></A>  is an array containing the size of each zone in pages;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zone_start_paddr</B><A NAME="@mainindex101"></A>  is the starting physical address for the first zone;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zone_holes</B><A NAME="@mainindex102"></A>  is an array containing the total size of memory holes in the
+zones;</DD></DL><P>It is the core function <TT>free_area_init_core()</TT> which is responsible
+for filling in each <TT>zone_t</TT> with the relevant information and the
+allocation of the <TT>mem_map</TT> array for the node. Note that information
+on what pages are free for the zones is not determined at this point. That
+information is not known until the boot memory allocator is being retired which
+will be discussed much later in Chapter <A HREF="understand008.html#chap: Boot Memory Allocator">5</A>. </P><H3 CLASS="subsection">2.3.1  Initialising <TT>mem_map</TT></H3><P><A NAME="sec: Initialising mem_map"></A>
+<A NAME="@mainindex103"></A></P><P>The <TT>mem_map</TT> area is created during system startup in one
+of two fashions. On NUMA systems, the global <TT>mem_map</TT> is
+treated as a virtual array starting at <TT>PAGE_OFFSET</TT>.
+<TT>free_area_init_node()</TT><A NAME="@mainindex104"></A> is called for each active node
+in the system which allocates the portion of this array for the node
+being initialised. On UMA systems, <TT>free_area_init()</TT><A NAME="@mainindex105"></A> is uses
+<TT>contig_page_data</TT> as the node and the global <TT>mem_map</TT>
+as the &#X201C;local&#X201D; <TT>mem_map</TT> for this node. The callgraph for both
+functions is shown in Figure <A HREF="#fig: free_area_init">2.5</A>. </P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html005.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 2.5: Call Graph: <TT>free_area_init()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: free_area_init"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The core function <TT>free_area_init_core()</TT> allocates a local
+<TT>lmem_map</TT> for the node being initialised. The memory for the array is
+allocated from the boot memory allocator with <TT>alloc_bootmem_node()</TT>
+(see Chapter <A HREF="understand008.html#chap: Boot Memory Allocator">5</A>). With UMA architectures,
+this newly allocated memory becomes the global <TT>mem_map</TT> but it is
+slightly different for NUMA.</P><P>NUMA architectures allocate the memory for <TT>lmem_map</TT> within
+their own memory node. The global <TT>mem_map</TT> never gets explicitly
+allocated but instead is set to <TT>PAGE_OFFSET</TT> where it is
+treated as a virtual array. The address of the local map is stored in
+<TT>pg_data_t</TT>&#X2192;<TT>node_mem_map</TT> which exists somewhere within
+the virtual <TT>mem_map</TT>. For each zone that exists in the node, the
+address within the virtual <TT>mem_map</TT> for the zone is stored in
+<TT>zone_t</TT>&#X2192;<TT>zone_mem_map</TT>. All the rest of the code then
+treats <TT>mem_map</TT> as a real array as only valid regions within it
+will be used by nodes.</P><H2 CLASS="section"><A NAME="toc15"></A><A NAME="htoc11">2.4</A>  Pages</H2><P>
+<A NAME="sec: Pages"></A>
+<A NAME="@mainindex106"></A></P><P>Every physical page frame in the system has an associated <TT>struct
+page</TT><A NAME="@mainindex107"></A> which is used to keep track of its status. In the 2.2
+kernel [<A HREF="understand031.html#bovet00"><CITE>BC00</CITE></A>], this structure resembled it's equivalent in System
+V [<A HREF="understand031.html#goodheart94"><CITE>GC94</CITE></A>] but like the other UNIX variants, the structure changed
+considerably. It is declared as follows in &lt;<TT>linux/mm.h</TT>&gt;:</P><PRE CLASS="verbatim">152 typedef struct page {
+153     struct list_head list;
+154     struct address_space *mapping;
+155     unsigned long index;
+156     struct page *next_hash;
+158     atomic_t count;
+159     unsigned long flags;
+161     struct list_head lru;
+163     struct page **pprev_hash;
+164     struct buffer_head * buffers;
+175
+176 #if defined(CONFIG_HIGHMEM) || defined(WANT_PAGE_VIRTUAL)
+177     void *virtual;
+179 #endif /* CONFIG_HIGMEM || WANT_PAGE_VIRTUAL */
+180 } mem_map_t;
+</PRE><P>Here is a brief description of each of the fields:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>list</B> <A NAME="@mainindex108"></A> Pages may belong to many lists and this field
+	 is used as the list head. For example, pages in a mapping
+	 will be in one of three circular linked links kept by the
+	 <TT>address_space</TT>. These are <TT>clean_pages</TT>,
+	 <TT>dirty_pages</TT> and <TT>locked_pages</TT>. In the slab
+	 allocator, this field is used to store pointers to the slab and
+	 cache the page belongs to. It is also used to link blocks of
+	 free pages together;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>mapping</B> When files or devices are memory mapped,
+	 their inode has an associated <TT>address_space</TT><A NAME="@mainindex109"></A>. This
+	 field will point to this address space if the page belongs to
+	 the file. If the page is anonymous and <TT>mapping</TT> is
+	 set, the <TT>address_space</TT> is <TT>swapper_space</TT>
+	 which manages the swap address space;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>index</B> <A NAME="@mainindex110"></A>This field has two uses and it depends on the
+	 state of the page what it means. If the page is part of a
+	 file mapping, it is the offset within the file. If the page
+	 is part of the swap cache this will be the offset within
+	 the <TT>address_space</TT> for the swap address space
+	 (<TT>swapper_space</TT>). Secondly, if a block of pages
+	 is being freed for a particular process, the order (power
+	 of two number of pages being freed) of the block being freed
+	 is stored in <TT>index</TT>. This is set in the function
+	 <TT>__free_pages_ok()</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>next_hash</B> Pages that are part of a file mapping are hashed on the inode
+	 and offset. This field links pages together that share the same
+	 hash bucket;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>count</B> The reference count to the page. If it drops to 0, it may be
+	 freed. Any greater and it is in use by one or more processes or
+	 is in use by the kernel like when waiting for IO;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B><A NAME="@mainindex111"></A> These are flags which describe the status of
+	 the page. All of them are declared in &lt;<TT>linux/mm.h</TT>&gt;
+	 and are listed in Table <A HREF="#tab: Page Status Flags">2.1</A>. There
+	 are a number of macros defined for testing, clearing and
+	 setting the bits which are all listed in Table 
+	 <A HREF="#tab: Page Status Macros">2.2</A>. The only really interesting one
+	 is <TT>SetPageUptodate()</TT><A NAME="@mainindex112"></A> which calls an architecture
+	 specific function <TT>arch_set_page_uptodate()</TT><A NAME="@mainindex113"></A> if it
+	 is defined before setting the bit;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>lru</B> For the page replacement policy, pages that may be swapped out
+	 will exist on either the <TT>active_list</TT><A NAME="@mainindex114"></A>
+	 or the <TT>inactive_list</TT><A NAME="@mainindex115"></A> declared in
+	 <TT>page_alloc.c</TT>. This is the list head for these LRU
+	 lists. These two lists are discussed in detail in Chapter 
+	 <A HREF="understand013.html#chap: Page Frame Reclamation">10</A>; </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pprev_hash</B> This complement to <TT>next_hash</TT> so that the
+	 hash can work as a doubly linked list;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>buffers</B> If a page has buffers for a block device associated with it,
+	 this field is used to keep track of the <TT>buffer_head</TT>. An
+	 anonymous page mapped by a process may also have an associated
+	 <TT>buffer_head</TT> if it is backed by a swap file. This
+	 is necessary as the page has to be synced with backing storage in
+	 block sized chunks defined by the underlying filesystem;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>virtual</B> Normally only pages from <TT>ZONE_NORMAL</TT> are directly
+	 mapped by the kernel. To address pages in <TT>ZONE_HIGHMEM</TT>,
+	 <TT>kmap()</TT> is used to map the page for the kernel
+	 which is described further in Chapter <A HREF="understand012.html#chap: High Memory Management">9</A>.
+There are only a fixed number of pages that may be
+	 mapped. When it is mapped, this is its virtual address;</DD></DL><P>The type <TT>mem_map_t</TT><A NAME="@mainindex116"></A> is a typedef for <TT>struct page</TT>
+so it can be easily referred to within the <TT>mem_map</TT> array.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>Bit name</B> 	</TD><TD VALIGN=top ALIGN=left><B>Description</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_active</TT><A NAME="@mainindex117"></A></TD><TD VALIGN=top ALIGN=left>This bit <A NAME="@mainindex118"></A>is set if a page is on the
+		<TT>active_list</TT> LRU and cleared when it is removed. It
+		marks a page as being hot</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_arch_1</TT><A NAME="@mainindex119"></A></TD><TD VALIGN=top ALIGN=left>Quoting directly from the code:
+		<TT>PG_arch_1</TT> is an architecture specific page
+		state bit. The generic code guarantees that this bit is
+		cleared for a page when it first is entered into the page
+		cache. This allows an architecture to defer the flushing
+		of the D-Cache (See Section <A HREF="understand006.html#sec: Level 1 CPU Cache Management">3.9</A>)
+until the page is mapped by a process</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_checked</TT><A NAME="@mainindex120"></A></TD><TD VALIGN=top ALIGN=left>Only used by the Ext2 filesystem</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_dirty</TT><A NAME="@mainindex121"></A>	</TD><TD VALIGN=top ALIGN=left>This indicates if a page needs to be
+		flushed to disk. When a page is written to that is backed
+		by disk, it is not flushed immediately, this bit is needed
+		to ensure a dirty page is not freed before it is written out</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_error</TT><A NAME="@mainindex122"></A>	</TD><TD VALIGN=top ALIGN=left>If an error occurs during disk I/O, this
+		bit is set</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_fs_1</TT><A NAME="@mainindex123"></A>	</TD><TD VALIGN=top ALIGN=left>Bit reserved for a filesystem to use for
+		it's own purposes. Currently, only NFS uses it to indicate
+		if a page is in sync with the remote server or not</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_highmem</TT><A NAME="@mainindex124"></A></TD><TD VALIGN=top ALIGN=left>Pages in high memory cannot be mapped permanently
+		by the kernel. Pages that are in high memory are flagged
+		with this bit during <TT>mem_init()</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_launder</TT><A NAME="@mainindex125"></A></TD><TD VALIGN=top ALIGN=left>This bit is important only to the page
+		replacement policy. When the VM wants to swap out a page,
+		it will set this bit and call the <TT>writepage()</TT>
+		function. When scanning, if it encounters a page with this
+		bit and <TT>PG_locked</TT> set, it will wait for the I/O
+		to complete</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_locked</TT><A NAME="@mainindex126"></A></TD><TD VALIGN=top ALIGN=left>This bit is set when the page must be locked
+		in memory for disk I/O. When I/O starts, this bit is set
+		and released when it completes</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_lru</TT><A NAME="@mainindex127"></A></TD><TD VALIGN=top ALIGN=left>If a page is on either the <TT>active_list</TT>
+		or the <TT>inactive_list</TT>, this bit will be set</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_referenced</TT><A NAME="@mainindex128"></A></TD><TD VALIGN=top ALIGN=left>If a page is mapped and it is referenced
+		through the mapping, index hash table, this bit is set. It
+		is used during page replacement for moving the page around
+		the LRU lists</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_reserved</TT><A NAME="@mainindex129"></A></TD><TD VALIGN=top ALIGN=left>This is set for pages that can never be
+		swapped out. It is set by the boot memory allocator (See
+		Chapter <A HREF="understand008.html#chap: Boot Memory Allocator">5</A>) for pages allocated
+		during system startup. Later it is used to flag empty pages
+		or ones that do not even exist</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_slab</TT><A NAME="@mainindex130"></A>	</TD><TD VALIGN=top ALIGN=left>This will flag a page as being used by
+		the slab allocator</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_skip</TT><A NAME="@mainindex131"></A></TD><TD VALIGN=top ALIGN=left>Used by some architectures to skip over
+		parts of the address space with no backing physical memory</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_unused</TT><A NAME="@mainindex132"></A></TD><TD VALIGN=top ALIGN=left>This bit is literally unused</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PG_uptodate</TT><A NAME="@mainindex133"></A></TD><TD VALIGN=top ALIGN=left>When a page is read from disk without error,
+		this bit will be set.</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 2.1: Flags Describing Page Status</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Page Status Flags"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD ALIGN=left NOWRAP>
+<B>Bit name</B> 	</TD><TD ALIGN=left NOWRAP><B>Set</B> 	</TD><TD ALIGN=left NOWRAP><B>Test</B> 	</TD><TD ALIGN=left NOWRAP><B>Clear</B></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_active</TT></TD><TD ALIGN=left NOWRAP><TT>SetPageActive()</TT><A NAME="@mainindex134"></A></TD><TD ALIGN=left NOWRAP><TT>PageActive()</TT><A NAME="@mainindex135"></A></TD><TD ALIGN=left NOWRAP><TT>ClearPageActive()</TT><A NAME="@mainindex136"></A></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_arch_1</TT></TD><TD ALIGN=left NOWRAP>n/a 	</TD><TD ALIGN=left NOWRAP>n/a</TD><TD ALIGN=left NOWRAP>n/a</TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_checked</TT></TD><TD ALIGN=left NOWRAP><TT>SetPageChecked()</TT><A NAME="@mainindex137"></A></TD><TD ALIGN=left NOWRAP><TT>PageChecked()</TT><A NAME="@mainindex138"></A></TD><TD ALIGN=left NOWRAP>n/a</TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_dirty</TT></TD><TD ALIGN=left NOWRAP><TT>SetPageDirty()</TT><A NAME="@mainindex139"></A></TD><TD ALIGN=left NOWRAP><TT>PageDirty()</TT><A NAME="@mainindex140"></A></TD><TD ALIGN=left NOWRAP><TT>ClearPageDirty()</TT><A NAME="@mainindex141"></A></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_error</TT></TD><TD ALIGN=left NOWRAP><TT>SetPageError()</TT><A NAME="@mainindex142"></A></TD><TD ALIGN=left NOWRAP><TT>PageError()</TT><A NAME="@mainindex143"></A></TD><TD ALIGN=left NOWRAP><TT>ClearPageError()</TT><A NAME="@mainindex144"></A></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_highmem</TT></TD><TD ALIGN=left NOWRAP>n/a 	</TD><TD ALIGN=left NOWRAP><TT>PageHighMem()</TT><A NAME="@mainindex145"></A></TD><TD ALIGN=left NOWRAP>n/a</TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_launder</TT></TD><TD ALIGN=left NOWRAP><TT>SetPageLaunder()</TT><A NAME="@mainindex146"></A></TD><TD ALIGN=left NOWRAP><TT>PageLaunder()</TT><A NAME="@mainindex147"></A></TD><TD ALIGN=left NOWRAP><TT>ClearPageLaunder()</TT><A NAME="@mainindex148"></A></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_locked</TT></TD><TD ALIGN=left NOWRAP><TT>LockPage()</TT><A NAME="@mainindex149"></A></TD><TD ALIGN=left NOWRAP><TT>PageLocked()</TT><A NAME="@mainindex150"></A></TD><TD ALIGN=left NOWRAP><TT>UnlockPage()</TT><A NAME="@mainindex151"></A></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_lru</TT></TD><TD ALIGN=left NOWRAP><TT>TestSetPageLRU()</TT><A NAME="@mainindex152"></A></TD><TD ALIGN=left NOWRAP><TT>PageLRU()</TT><A NAME="@mainindex153"></A></TD><TD ALIGN=left NOWRAP><TT>TestClearPageLRU()</TT><A NAME="@mainindex154"></A></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_referenced</TT></TD><TD ALIGN=left NOWRAP><TT>SetPageReferenced()</TT><A NAME="@mainindex155"></A></TD><TD ALIGN=left NOWRAP><TT>PageReferenced()</TT><A NAME="@mainindex156"></A></TD><TD ALIGN=left NOWRAP><TT>ClearPageReferenced()</TT><A NAME="@mainindex157"></A></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_reserved</TT></TD><TD ALIGN=left NOWRAP><TT>SetPageReserved()</TT><A NAME="@mainindex158"></A></TD><TD ALIGN=left NOWRAP><TT>PageReserved()</TT><A NAME="@mainindex159"></A></TD><TD ALIGN=left NOWRAP><TT>ClearPageReserved()</TT><A NAME="@mainindex160"></A></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_skip</TT></TD><TD ALIGN=left NOWRAP>n/a 	</TD><TD ALIGN=left NOWRAP>n/a 	</TD><TD ALIGN=left NOWRAP>n/a</TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_slab</TT></TD><TD ALIGN=left NOWRAP><TT>PageSetSlab()</TT><A NAME="@mainindex161"></A></TD><TD ALIGN=left NOWRAP><TT>PageSlab()</TT><A NAME="@mainindex162"></A></TD><TD ALIGN=left NOWRAP><TT>PageClearSlab()</TT><A NAME="@mainindex163"></A></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_unused</TT></TD><TD ALIGN=left NOWRAP>n/a 	</TD><TD ALIGN=left NOWRAP>n/a 	</TD><TD ALIGN=left NOWRAP>n/a</TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>PG_uptodate</TT></TD><TD ALIGN=left NOWRAP><TT>SetPageUptodate()</TT><A NAME="@mainindex164"></A></TD><TD ALIGN=left NOWRAP><TT>PageUptodate()</TT><A NAME="@mainindex165"></A></TD><TD ALIGN=left NOWRAP><TT>ClearPageUptodate()</TT><A NAME="@mainindex166"></A></TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 2.2: Macros For Testing, Setting and Clearing <TT>page</TT>&#X2192;<TT>flags</TT> Status Bits</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Page Status Macros"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H3 CLASS="subsection">2.4.1  Mapping Pages to Zones</H3><P>
+<A NAME="sec: Mapping Pages to Zones"></A>
+<A NAME="@mainindex167"></A></P><P>Up until as recently as kernel <TT>2.4.18</TT>, a <TT>struct
+page</TT> stored a reference to its zone with <TT>page</TT>&#X2192;<TT>zone</TT>
+which was later considered wasteful, as even such a small pointer consumes
+a lot of memory when thousands of <TT>struct page</TT>s exist. In
+more recent kernels, the <TT>zone</TT> field has been removed and
+instead the top <TT>ZONE_SHIFT</TT> (8 in the x86) bits of the
+<TT>page</TT>&#X2192;<TT>flags</TT> are used to determine the zone a page belongs
+to. First a <TT>zone_table</TT><A NAME="@mainindex168"></A> of zones is set up. It is declared in
+<TT>mm/page_alloc.c</TT> as:</P><PRE CLASS="verbatim">33 zone_t *zone_table[MAX_NR_ZONES*MAX_NR_NODES];
+34 EXPORT_SYMBOL(zone_table);
+</PRE><P><TT>MAX_NR_ZONES</TT><A NAME="@mainindex169"></A> is the maximum number of zones that can
+be in a node, i.e. 3. <TT>MAX_NR_NODES</TT> is the maximum number
+of nodes that may exist. The function <TT>EXPORT_SYMBOL()</TT><A NAME="@mainindex170"></A> makes
+<TT>zone_table</TT> accessible to loadable modules. This table is treated
+like a multi-dimensional array. During <TT>free_area_init_core()</TT>,
+all the pages in a node are initialised. First it sets the value for the table</P><PRE CLASS="verbatim">733           zone_table[nid * MAX_NR_ZONES + j] = zone;
+</PRE><P>Where nid is the node ID, j is the zone index and <TT>zone</TT>
+is the <TT>zone_t</TT> struct. For each page, the function
+<TT>set_page_zone()</TT><A NAME="@mainindex171"></A> is called as</P><PRE CLASS="verbatim">788           set_page_zone(page, nid * MAX_NR_ZONES + j);
+</PRE><P>The parameter, <TT>page</TT>, is the page whose zone is being set. So,
+clearly the index in the <TT>zone_table</TT> is stored in the page.</P><H2 CLASS="section"><A NAME="toc16"></A><A NAME="htoc12">2.5</A>  High Memory</H2><P>
+<A NAME="sec: High Memory"></A>
+<A NAME="@mainindex172"></A></P><P>As the addresses space usable by the kernel (<TT>ZONE_NORMAL</TT>) is limited in
+size, the kernel has support for the concept of High Memory. Two thresholds of
+high memory exist on 32-bit x86 systems, one at 4GiB and a second at 64GiB. The
+4GiB limit is related to the amount of memory that may be addressed by a
+32-bit physical address. To access memory between the range of 1GiB and 4GiB,
+the kernel temporarily maps pages from high memory into <TT>ZONE_NORMAL</TT>
+with <TT>kmap()</TT>. This is discussed further in Chapter <A HREF="understand012.html#chap: High Memory Management">9</A>.</P><P>The second limit at 64GiB is related to <EM>Physical Address Extension
+(PAE)</EM><A NAME="@mainindex173"></A> which is an Intel invention to allow more RAM to be used with 32
+bit systems. It makes 4 extra bits available for the addressing of memory,
+allowing up to 2<SUP>36</SUP> bytes (64GiB) of memory to be addressed.</P><P>PAE allows a processor to address up to 64GiB in theory but, in practice,
+processes in Linux still cannot access that much RAM as the virtual address
+space is still only 4GiB. This has led to some disappointment from users
+who have tried to <TT>malloc()</TT> all their RAM with one process.</P><P>Secondly, PAE does not allow the kernel itself to have this much RAM
+available. The <TT>struct page</TT> used to describe each page frame
+still requires 44 bytes and this uses kernel virtual address space in
+<TT>ZONE_NORMAL</TT>. That means that to describe 1GiB of memory, approximately
+11MiB of kernel memory is required. Thus, with 16GiB, 176MiB of memory
+is consumed, putting significant pressure on <TT>ZONE_NORMAL</TT>. This does
+not sound too bad until other structures are taken into account which use
+<TT>ZONE_NORMAL</TT>. Even very small structures such as <EM>Page Table
+Entries (PTEs)</EM> require about 16MiB in the worst case. This makes 16GiB about
+the practical limit for available physical memory Linux on an x86. If more
+memory needs to be accessed, the advice given is simple and straightforward,
+buy a 64 bit machine.</P><H2 CLASS="section"><A NAME="toc17"></A><A NAME="htoc13">2.6</A>  What's New In 2.6</H2><P>
+<A NAME="new: Describing Physical Memory"></A></P><H5 CLASS="paragraph">Nodes</H5><P> At first glance, there has not been many changes made to how
+memory is described but the seemingly minor changes are wide reaching. The node
+descriptor <TT>pg_data_t</TT> has a few new fields which are as follows:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_start_pfn</B> replaces the <TT>node_start_paddr</TT> field.
+The only difference is that the new field is a PFN instead of a physical
+address. This was changed as PAE architectures can address more memory than
+32 bits can address so nodes starting over 4GiB would be unreachable with
+the old field;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>kswapd_wait</B> is a new wait queue for <B>kswapd</B>. In 2.4, there
+was a global wait queue for the page swapper daemon. In 2.6, there is one
+<B>kswapdN</B> for each node where <TT>N</TT> is the node identifier
+and each <B>kswapd</B> has its own wait queue with this field.</DD></DL><P>The <TT>node_size</TT> field has been removed and replaced instead with
+two fields. The change was introduced to recognise the fact that nodes may
+have &#X201C;holes&#X201D; in them where there is no physical memory backing the address.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_present_pages</B> is the total number of physical pages that are
+present in the node.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>node_spanned_pages</B> is the total area that is addressed by the node,
+including any holes that may exist.</DD></DL><H5 CLASS="paragraph">Zones</H5><P> Even at first glance, zones look very different. They
+are no longer called <TT>zone_t</TT> but instead referred to as simply
+<TT>struct zone</TT>. The second major difference is the LRU lists.
+As we'll see in Chapter <A HREF="understand013.html#chap: Page Frame Reclamation">10</A>, kernel 2.4 has
+a global list of pages that determine the order pages are freed or paged
+out. These lists are now stored in the <TT>struct zone</TT>. The relevant
+fields are:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>lru_lock</B> is the spinlock for the LRU lists in this zone. In 2.4, this
+is a global lock called <TT>pagemap_lru_lock</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>active_list</B> is the active list for this zone. This list is the same as
+described in Chapter <A HREF="understand013.html#chap: Page Frame Reclamation">10</A> except it is now
+per-zone instead of global;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>inactive_list</B> is the inactive list for this zone. In 2.4, it is global;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>refill_counter</B> is the number of pages to remove from the
+<TT>active_list</TT> in one pass. Only of interest during page replacement;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>nr_active</B> is the number of pages on the <TT>active_list</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>nr_inactive</B> is the number of pages on the <TT>inactive_list</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>all_unreclaimable</B> is set to 1 if the pageout daemon scans through
+all the pages in the zone twice and still fails to free enough pages;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pages_scanned</B> is the number of pages scanned since the last bulk amount
+of pages has been reclaimed. In 2.6, lists of pages are freed at once rather
+than freeing pages individually which is what 2.4 does;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pressure</B> measures the scanning intensity for this zone. It is a decaying
+average which affects how hard a page scanner will work to reclaim pages.</DD></DL><P>Three other fields are new but they are related to the dimensions of the zone.
+They are:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zone_start_pfn</B> is the starting PFN of the zone. It replaces the
+<TT>zone_start_paddr</TT> and <TT>zone_start_mapnr</TT> fields in
+2.4;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>spanned_pages</B> is the number of pages this zone spans, including holes
+in memory which exist with some architectures;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>present_pages</B> is the number of real pages that exist in the zone. For
+many architectures, this will be the same value as <TT>spanned_pages</TT>.</DD></DL><P>The next addition is <TT>struct</TT> <TT>per_cpu_pageset</TT><A NAME="@mainindex174"></A>
+which is used to maintain lists of pages for each CPU to reduce spinlock
+contention. The <TT>zone</TT>&#X2192;<TT>pageset</TT> field is a <TT>NR_CPU</TT>
+sized array of <TT>struct per_cpu_pageset</TT> where <TT>NR_CPU</TT>
+is the compiled upper limit of number of CPUs in the system. The per-cpu
+struct is discussed further at the end of the section.</P><P>The last addition to <TT>struct zone</TT> is the inclusion of padding
+of zeros in the struct. Development of the 2.6 VM recognised that some
+spinlocks are very heavily contended and are frequently acquired. As it is
+known that some locks are almost always acquired in pairs, an effort should
+be made to ensure they use different cache lines which is a common cache
+programming trick [<A HREF="understand031.html#sears00"><CITE>Sea00</CITE></A>]. These padding in the <TT>struct
+zone</TT> are marked with the <TT>ZONE_PADDING()</TT><A NAME="@mainindex175"></A> macro and are used to
+ensure the <TT>zone</TT>&#X2192;<TT>lock</TT>, <TT>zone</TT>&#X2192;<TT>lru_lock</TT>
+and <TT>zone</TT>&#X2192;<TT>pageset</TT> fields use different cache lines.</P><H5 CLASS="paragraph">Pages</H5><P> The first noticeable change is that the ordering of
+fields has been changed so that related items are likely to be in the same
+cache line. The fields are essentially the same except for two additions. The
+first is a new union used to create a PTE chain<A NAME="@mainindex176"></A>. PTE chains
+are are related to page table management so will be discussed at the end
+of Chapter <A HREF="understand006.html#chap: Page Table Management">3</A>. The second addition is of
+<TT>page</TT>&#X2192;<TT>private</TT> field which contains private information
+specific to the mapping. For example, the field is used to store a pointer
+to a <TT>buffer_head</TT> if the page is a buffer page. This means
+that the <TT>page</TT>&#X2192;<TT>buffers</TT> field has also been removed. The
+last important change is that <TT>page</TT>&#X2192;<TT>virtual</TT> is no longer
+necessary for high memory support and will only exist if the architecture
+specifically requests it. How high memory pages are supported is discussed
+further in Chapter <A HREF="understand012.html#chap: High Memory Management">9</A>.</P><H5 CLASS="paragraph">Per-CPU Page Lists</H5><P> In 2.4, only one subsystem actively tries
+to maintain per-cpu lists for any object and that is the Slab Allocator,
+discussed in Chapter <A HREF="understand011.html#chap: Slab Allocator">8</A>. In 2.6, the concept is much
+more wide-spread and there is a formalised concept of hot and cold pages.</P><P>The <TT>struct per_cpu_pageset</TT>, declared in
+&lt;<TT>linux/mmzone.h</TT>&gt; has one one field which is an array with two
+elements of type <TT>per_cpu_pages</TT>. The zeroth element of this
+array is for hot pages and the first element is for cold pages where hot and
+cold determines how &#X201C;active&#X201D; the page is currently in the cache. When it
+is known for a fact that the pages are not to be referenced soon, such as
+with IO readahead, they will be allocated as cold pages.</P><P>The <TT>struct</TT> <TT>per_cpu_pages</TT><A NAME="@mainindex177"></A> maintains a count
+of the number of pages currently in the list, a high and low watermark which
+determine when the set should be refilled or pages freed in bulk, a variable
+which determines how many pages should be allocated in one block and finally,
+the actual list head of pages.</P><P>To build upon the per-cpu page lists, there is also a per-cpu page accounting
+mechanism. There is a <TT>struct</TT> <TT>page_state</TT><A NAME="@mainindex178"></A> that
+holds a number of accounting variables such as the <TT>pgalloc</TT> field
+which tracks the number of pages allocated to this CPU and <TT>pswpin</TT>
+which tracks the number of swap readins. The struct is heavily commented in
+&lt;<TT>linux/page-flags.h</TT>&gt;. A single function <TT>mod_page_state()</TT>
+is provided for updating fields in the <TT>page_state</TT> for the running
+CPU and three helper macros are provided called <TT>inc_page_state()</TT>,
+<TT>dec_page_state()</TT> and <TT>sub_page_state()</TT>.
+
+	</P><HR>
+[ <A HREF="understand004.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand006.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

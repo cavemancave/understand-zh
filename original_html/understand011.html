@@ -1,0 +1,951 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Slab Allocator</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand010.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand012.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc53">Chapter 8</A>  Slab Allocator</H1><P>
+<A NAME="chap: Slab Allocator"></A>
+<A NAME="@mainindex662"></A>
+<A NAME="@mainindex663"></A></P><P>In this chapter, the general-purpose allocator is described. It is a slab
+allocator which is very similar in many respects to the general kernel
+allocator used in Solaris [<A HREF="understand031.html#mauro01"><CITE>MM01</CITE></A>]. Linux's implementation is heavily
+based on the first slab allocator paper by Bonwick [<A HREF="understand031.html#bonwick94"><CITE>Bon94</CITE></A>] with
+many improvements that bear a close resemblance to those described in his
+later paper [<A HREF="understand031.html#bonwick01"><CITE>BA01</CITE></A>]. We will begin with a quick overview of the
+allocator followed by a description of the different structures used before
+giving an in-depth tour of each task the allocator is responsible for.</P><P>The basic idea behind the slab allocator is to have caches of commonly used
+objects kept in an initialised state available for use by the kernel. Without
+an object based allocator, the kernel will spend much of its time allocating,
+initialising and freeing the same object. The slab allocator aims to to
+cache the freed object so that the basic structure is preserved between
+uses [<A HREF="understand031.html#bonwick94"><CITE>Bon94</CITE></A>].</P><P>The slab allocator consists of a variable number of caches that are
+linked together on a doubly linked circular list called a <EM>cache
+chain</EM><A NAME="@mainindex664"></A><A NAME="@mainindex665"></A>. A cache<A NAME="@mainindex666"></A>, in
+the context of the slab allocator, is a manager for a number of objects of a
+particular type like the <TT>mm_struct</TT> or <TT>fs_cache</TT>
+cache and is managed by a <TT>struct kmem_cache_s</TT> discussed in
+detail later. The caches are linked via the <TT>next</TT> field in the
+cache struct.</P><P>Each cache maintains blocks of contiguous pages in memory called
+<EM>slabs</EM><A NAME="@mainindex667"></A> which are carved up into small chunks for the
+data structures and objects the cache manages. The relationship between
+these different structures is illustrated in Figure <A HREF="#fig: Layout of the Slab Allocator">8.1</A>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html037.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.1: Layout of the Slab
+Allocator</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Layout of the Slab Allocator"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The slab allocator has three principle aims:</P><UL CLASS="itemize"><LI CLASS="li-itemize">The allocation of small blocks of memory to help eliminate internal
+fragmentation that would be otherwise caused by the buddy system;</LI><LI CLASS="li-itemize">The caching of commonly used objects so that the system does not waste
+time allocating, initialising and destroying objects. Benchmarks on Solaris
+showed excellent speed improvements for allocations with the slab allocator in
+use [<A HREF="understand031.html#bonwick94"><CITE>Bon94</CITE></A>];</LI><LI CLASS="li-itemize">The better utilisation of hardware cache by aligning objects to the L1 or
+L2 caches.</LI></UL><P>To help eliminate internal fragmentation<A NAME="@mainindex668"></A> <A NAME="@mainindex669"></A> normally caused by a binary buddy
+allocator, two sets of caches of small memory buffers ranging from 2<SUP>5</SUP> (32)
+bytes to 2<SUP>17</SUP> (131072) bytes are maintained. One cache set is suitable
+for use with DMA devices. These caches are called size-N and size-N(DMA) where
+<I>N</I> is the size of the allocation, and a function <TT>kmalloc()</TT>
+(see Section <A HREF="#Sec: kmalloc">8.4.1</A>) is provided for allocating them. With this,
+the single greatest problem with the low level page allocator is addressed.
+The sizes caches are discussed in further detail in Section <A >??</A>.</P><P>The second task of the slab allocator is to maintain caches of commonly
+used objects. For many structures used in the kernel, the time needed to
+initialise an object is comparable to, or exceeds, the cost of allocating space
+for it. When a new slab is created, a number of objects are packed into it
+and initialised using a constructor if available. When an object is freed,
+it is left in its initialised state so that object allocation will be quick.</P><P>The final task of the slab allocator is hardware cache utilization. If there
+is space left over after objects are packed into a slab, the remaining space
+is used to <EM>color</EM><A NAME="@mainindex670"></A><A NAME="@mainindex671"></A> the slab. Slab
+coloring is a scheme which attempts to have objects in different slabs use
+different lines in the cache. By placing objects at a different starting offset
+within the slab, it is likely that objects will use different lines in the CPU
+cache helping ensure that objects from the same slab cache will be unlikely
+to flush each other. With this scheme, space that would otherwise be wasted
+fulfills a new function. Figure <A >??</A> shows how a page allocated from the buddy allocator is used
+to store objects that using coloring to align the objects to the L1 CPU cache.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html038.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.2: Slab page containing Objects Aligned to L1 CPU Cache</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Slab page containing Objects Aligned to L1 CPU Cache"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Linux does not attempt to color page allocations based on their physical
+address [<A HREF="understand031.html#kessler91"><CITE>Kes91</CITE></A>]<A NAME="@mainindex672"></A>, or order where objects
+are placed such as those described for data [<A HREF="understand031.html#gonzalez95"><CITE>GAV95</CITE></A>] or code
+segments [<A HREF="understand031.html#hashemi97"><CITE>HK97</CITE></A>] but the scheme used does help improve cache line
+usage. Cache colouring<A NAME="@mainindex673"></A><A NAME="@mainindex674"></A> is further discussed in Section
+<A HREF="#Sec: Cache Colouring">8.1.5</A>. On an SMP system, a further step is taken to help
+cache utilization where each cache has a small array of objects reserved for
+each CPU. This is discussed further in Section <A HREF="#Sec: Per-CPU Object Cache">8.5</A>.</P><P>The slab allocator provides the additional option of slab
+debugging<A NAME="@mainindex675"></A> if the option is set at compile time with
+<TT>CONFIG_SLAB_DEBUG</TT><A NAME="@mainindex676"></A>. Two debugging features are providing
+called <EM>red zoning</EM> and <EM>object poisoning</EM>. With red zoning,
+a marker is placed at either end of the object. If this mark is disturbed,
+the allocator knows the object where a buffer overflow occured and reports
+it. Poisoning an object will fill it with a predefined bit pattern(defined
+<TT>0x5A</TT> in <TT>mm/slab.c</TT>) at slab creation and after a
+free. At allocation, this pattern is examined and if it is changed, the
+allocator knows that the object was used before it was allocated and flags it.</P><P>The small, but powerful, API which the allocator exports is listed in
+Table <A HREF="#tab: Slab Allocator API for caches">8.1</A>. </P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex677"></A><TT>kmem_cache_t * kmem_cache_create(const char *name, size_t size, 
+    size_t offset, unsigned long flags,</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left>    <TT>void (*ctor)(void*, kmem_cache_t *, unsigned long), </TT><P><TT>   void (*dtor)(void*, kmem_cache_t *, unsigned long))</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Creates a new cache and adds it to the cache chain</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex678"></A><TT>int kmem_cache_reap(int gfp_mask)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Scans at most <TT>REAP_SCANLEN</TT> caches and selects one for
+reaping all per-cpu objects and free slabs from. Called when memory is tight</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex679"></A><TT>int kmem_cache_shrink(kmem_cache_t *cachep)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This function will delete all per-cpu objects associated with
+a cache and delete all slabs in the <TT>slabs_free</TT> list. It returns
+the number of pages freed.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex680"></A><TT>void * kmem_cache_alloc(kmem_cache_t *cachep, int flags)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate a single object from the cache and return it to the
+caller</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex681"></A><TT>void kmem_cache_free(kmem_cache_t *cachep, void *objp)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Free an object and return it to the cache</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex682"></A><TT>void * kmalloc(size_t size, int flags)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate a block of memory from one of the sizes cache</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex683"></A><TT>void kfree(const void *objp)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Free a block of memory allocated with kmalloc</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex684"></A><TT>int kmem_cache_destroy(kmem_cache_t * cachep)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Destroys all objects in all slabs and frees up all associated
+memory before removing the cache from the chain</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 8.1: Slab Allocator API for caches</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Slab Allocator API for caches"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc52"></A><A NAME="htoc54">8.1</A>  Caches</H2><P><A NAME="Sec: Caches"></A>
+<A NAME="@mainindex685"></A></P><P>One cache exists for each type of object that is to be cached. For a
+full list of caches available on a running system, run <TT>cat
+/proc/slabinfo</TT><A NAME="@mainindex686"></A> . This file gives some basic information on
+the caches. An excerpt from the output of this file looks like;</P><PRE CLASS="verbatim">slabinfo - version: 1.1 (SMP)
+kmem_cache            80     80    248    5    5    1 :  252  126
+urb_priv               0      0     64    0    0    1 :  252  126
+tcp_bind_bucket       15    226     32    2    2    1 :  252  126
+inode_cache         5714   5992    512  856  856    1 :  124   62
+dentry_cache        5160   5160    128  172  172    1 :  252  126
+mm_struct            240    240    160   10   10    1 :  252  126
+vm_area_struct      3911   4480     96  112  112    1 :  252  126
+size-64(DMA)           0      0     64    0    0    1 :  252  126
+size-64              432   1357     64   23   23    1 :  252  126
+size-32(DMA)          17    113     32    1    1    1 :  252  126
+size-32              850   2712     32   24   24    1 :  252  126
+</PRE><P>Each of the column fields correspond to a field in the <TT>struct
+kmem_cache_s</TT> structure. The columns listed in the excerpt above are:</P><DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cache-name</B> A human readable name such as &#X201C;tcp_bind_bucket&#X201D;;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>num-active-objs</B> Number of objects that are in use;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>total-objs</B> How many objects are available in total including unused;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>obj-size</B> The size of each object, typically quite small;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>num-active-slabs</B> Number of slabs containing objects that are active;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>total-slabs</B> How many slabs in total exist;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>num-pages-per-slab</B> The pages required to create one slab, typically 1.
+</DD></DL><P>If SMP is enabled like in the example excerpt, two more columns 
+will be displayed after a colon. They refer to the per CPU cache described
+in Section <A HREF="#Sec: Per-CPU Object Cache">8.5</A>. The columns are: </P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>limit</B> This is the number of free objects the pool can have before
+half of it is given to the global free pool;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>batchcount</B> The number of objects allocated for the processor in a block
+	 when no objects are free.</DD></DL><P>To speed allocation and freeing of objects and slabs they are arranged into
+three lists; <TT>slabs_full</TT><A NAME="@mainindex687"></A>, <TT>slabs_partial</TT><A NAME="@mainindex688"></A> and
+<TT>slabs_free</TT><A NAME="@mainindex689"></A>. <TT>slabs_full</TT> has all its objects in use.
+<TT>slabs_partial</TT> has free objects in it and so is a prime candidate
+for allocation of objects. <TT>slabs_free</TT> has no allocated objects
+and so is a prime candidate for slab destruction.</P><H3 CLASS="subsection">8.1.1  Cache Descriptor</H3><P>All information describing a cache is stored in a <TT>struct
+kmem_cache_s</TT><A NAME="@mainindex690"></A> declared in <TT>mm/slab.c</TT>. This is an extremely large
+struct and so will be described in parts.</P><PRE CLASS="verbatim">190 struct kmem_cache_s {
+193     struct list_head        slabs_full;
+194     struct list_head        slabs_partial;
+195     struct list_head        slabs_free;
+196     unsigned int            objsize;
+197     unsigned int            flags;
+198     unsigned int            num;
+199     spinlock_t              spinlock;
+200 #ifdef CONFIG_SMP
+201     unsigned int            batchcount;
+202 #endif
+203 
+</PRE><P>Most of these fields are of interest when allocating or freeing objects.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>slabs_*</B> These are the three lists where the slabs are stored as
+described in the previous section;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>objsize</B> This is the size of each object packed into the slab;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B> These flags determine how parts of the allocator will behave
+when dealing with the cache. See Section <A HREF="#Sec: Cache Static Flags">8.1.2</A>; </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>num</B> This is the number of objects contained in each slab;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>spinlock</B> A spinlock protecting the structure from concurrent accessses;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>batchcount</B> This is the number of objects that will be allocated in
+batch for the per-cpu caches as described in the previous section.</DD></DL><PRE CLASS="verbatim">206     unsigned int            gfporder;
+209     unsigned int            gfpflags;
+210 
+211     size_t                  colour;
+212     unsigned int            colour_off;
+213     unsigned int            colour_next;
+214     kmem_cache_t            *slabp_cache;
+215     unsigned int            growing;
+216     unsigned int            dflags;
+217 
+219     void (*ctor)(void *, kmem_cache_t *, unsigned long);
+222     void (*dtor)(void *, kmem_cache_t *, unsigned long);
+223 
+224     unsigned long           failures;
+225 
+</PRE><P>This block deals with fields of interest when allocating or freeing slabs from
+the cache.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>gfporder</B> This indicates the size of the slab in pages. Each slab
+consumes 2<SUP><I>gfporder</I></SUP> pages as these are the allocation sizes
+the buddy allocator provides;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>gfpflags</B> The GFP flags used when calling the buddy allocator to allocate
+pages are stored here. See Section <A HREF="understand009.html#Sec: GFP Flags">6.4</A> for a full list; </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>colour</B>
+Each slab stores objects in different cache lines if possible.
+Cache colouring will be further discussed in Section <A HREF="#Sec: Cache Colouring">8.1.5</A>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>colour_off</B> This is the byte alignment to keep slabs at. For example,
+		slabs for the size-X caches are aligned on the L1 cache;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>colour_next</B> This is the next colour line to use. This value wraps back
+			to 0 when it reaches <TT>colour</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>growing</B> This flag is set to indicate if the cache is growing or
+		not. If it is, it is much less likely this cache will be
+		selected to reap free slabs under memory pressure;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>dflags</B> These are the dynamic flags which change during the cache
+lifetime. See Section <A HREF="#Sec: Cache Dynamic Flags">8.1.3</A>; </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>ctor</B>
+A complex object has the option of providing a constructor function
+		to be called to initialise each new object. This is a pointer
+		to that function and may be NULL;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>dtor</B> This is the complementing object destructor and may be NULL;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>failures</B> This field is not used anywhere in the code other than being
+initialised to 0.</DD></DL><PRE CLASS="verbatim">227     char                    name[CACHE_NAMELEN];
+228     struct list_head        next;
+</PRE><P>These are set during cache creation</P><DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>name</B> This is the human readable name of the cache;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>next</B> This is the next cache on the cache chain.
+</DD></DL><PRE CLASS="verbatim">229 #ifdef CONFIG_SMP
+231     cpucache_t              *cpudata[NR_CPUS];
+232 #endif
+</PRE><DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cpudata</B> This is the per-cpu data and is discussed further in Section
+<A HREF="#Sec: Per-CPU Object Cache">8.5</A>. </DD></DL><PRE CLASS="verbatim">233 #if STATS
+234     unsigned long           num_active;
+235     unsigned long           num_allocations;
+236     unsigned long           high_mark;
+237     unsigned long           grown;
+238     unsigned long           reaped;
+239     unsigned long           errors;
+240 #ifdef CONFIG_SMP
+241     atomic_t                allochit;
+242     atomic_t                allocmiss;
+243     atomic_t                freehit;
+244     atomic_t                freemiss;
+245 #endif
+246 #endif
+247 };
+</PRE><P>These figures are only available if the <TT>CONFIG_SLAB_DEBUG</TT><A NAME="@mainindex691"></A>
+option is set during compile time. They are all beancounters and not of
+general interest. The statistics for <TT>/proc/slabinfo</TT> are calculated
+when the proc entry is read by another process by examining every slab used
+by each cache rather than relying on these fields to be available.</P><DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>num_active</B> The current number of active objects in the cache is stored
+	here;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>num_allocations</B> A running total of the number of objects that have been
+	allocated on this cache is stored in this field;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>high_mark</B> This is the highest value <TT>num_active</TT> has had
+	to date;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>grown</B> This is the number of times <TT>kmem_cache_grow()</TT> has
+	been called;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>reaped</B> The number of times this cache has been reaped is kept here;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>errors</B> This field is never used;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>allochit</B> This is the total number of times an allocation has used
+	the per-cpu cache;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>allocmiss</B> To complement <TT>allochit</TT>, this is the number of
+	times an allocation has missed the per-cpu cache;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>freehit</B> This is the number of times a free was placed on a per-cpu
+	cache;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>freemiss</B> This is the number of times an object was freed and placed on
+		 the global pool.</DD></DL><H3 CLASS="subsection">8.1.2  Cache Static Flags</H3><P>
+<A NAME="Sec: Cache Static Flags"></A>
+<A NAME="@mainindex692"></A></P><P>A number of flags are set at cache creation time that remain the same for
+the lifetime of the cache. They affect how the slab is structured and how
+objects are stored within it. All the flags are stored in a bitmask in the
+<TT>flags</TT> field of the cache descriptor. The full list of possible
+flags that may be used are declared in &lt;<TT>linux/slab.h</TT>&gt;.</P><P>There are three principle sets. The first set is internal flags which
+are set only by the slab allocator and are listed in Table 
+<A HREF="#tab: Internal cache static flags">8.2</A>. The only relevant flag in the set is
+the <TT>CFGS_OFF_SLAB</TT> flag which determines where the slab descriptor
+is stored.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>Flag</B></TD><TD VALIGN=top ALIGN=left><B>Description</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>CFGS_OFF_SLAB</TT><A NAME="@mainindex693"></A></TD><TD VALIGN=top ALIGN=left>Indicates that the slab managers for
+	this cache are kept off-slab. This is discussed further in Section
+	<A HREF="#Sec: Storing the Slab Descriptor">8.2.1</A></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>CFLGS_OPTIMIZE</TT><A NAME="@mainindex694"></A></TD><TD VALIGN=top ALIGN=left>This flag is only ever set and never used</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 8.2: Internal cache static flags</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Internal cache static flags"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The second set are set by the cache creator and they determine how the
+allocator treats the slab and how objects are stored. They are listed in
+Table <A HREF="#tab: Cache static flags set by caller">8.3</A>.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>Flag</B></TD><TD VALIGN=top ALIGN=left><B>Description</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>SLAB_HWCACHE_ALIGN</TT><A NAME="@mainindex695"></A></TD><TD VALIGN=top ALIGN=left>Align the objects to the L1 CPU cache</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>SLAB_MUST_HWCACHE_ALIGN</TT><A NAME="@mainindex696"></A></TD><TD VALIGN=top ALIGN=left>Force alignment to the L1 CPU
+cache even if it is very wasteful or slab debugging is enabled</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>SLAB_NO_REAP</TT><A NAME="@mainindex697"></A></TD><TD VALIGN=top ALIGN=left>Never reap slabs in this cache</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>SLAB_CACHE_DMA</TT><A NAME="@mainindex698"></A></TD><TD VALIGN=top ALIGN=left>Allocate slabs with memory from <TT>ZONE_DMA</TT></TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 8.3: Cache static flags set by caller</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Cache static flags set by caller"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The last flags are only available if the compile option
+<TT>CONFIG_SLAB_DEBUG</TT> is set. They determine what additional checks
+will be made to slabs and objects and are primarily of interest only when
+new caches are being developed.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>Flag</B></TD><TD VALIGN=top ALIGN=left><B>Description</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>SLAB_DEBUG_FREE</TT><A NAME="@mainindex699"></A></TD><TD VALIGN=top ALIGN=left>Perform expensive checks on free</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>SLAB_DEBUG_INITIAL</TT><A NAME="@mainindex700"></A></TD><TD VALIGN=top ALIGN=left>On free, call the constructor as a
+			verifier to ensure the object is still initialised
+			correctly</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>SLAB_RED_ZONE</TT><A NAME="@mainindex701"></A></TD><TD VALIGN=top ALIGN=left>This places a marker at either end
+			of objects to trap overflows</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>SLAB_POISON </TT><A NAME="@mainindex702"></A>	</TD><TD VALIGN=top ALIGN=left>Poison objects with a known pattern for
+				trapping changes made to objects not allocated
+				or initialised</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 8.4: Cache static debug flags</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Cache static debug flags"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>To prevent callers using the wrong flags a <TT>CREATE_MASK</TT><A NAME="@mainindex703"></A> is
+defined in <TT>mm/slab.c</TT> consisting of all the allowable flags. When
+a cache is being created, the requested flags are compared against the
+<TT>CREATE_MASK</TT> and reported as a bug if invalid flags are used.</P><H3 CLASS="subsection">8.1.3  Cache Dynamic Flags</H3><P>
+<A NAME="Sec: Cache Dynamic Flags"></A>
+<A NAME="@mainindex704"></A></P><P>The <TT>dflags</TT> field has only one flag, <TT>DFLGS_GROWN</TT><A NAME="@mainindex705"></A>,
+but it is important. The flag is set during <TT>kmem_cache_grow()</TT>
+so that <TT>kmem_cache_reap()</TT> will be unlikely to choose the cache
+for reaping. When the function does find a cache with this flag set, it
+skips the cache and removes the flag.</P><H3 CLASS="subsection">8.1.4  Cache Allocation Flags</H3><P>
+<A NAME="Sec: Cache Allocation Flags"></A>
+<A NAME="@mainindex706"></A></P><P>These flags correspond to the GFP page flag options for allocating pages for
+slabs. Callers sometimes call with either <TT>SLAB_*</TT> or <TT>GFP_*</TT>
+flags, but they really should use only <TT>SLAB_*</TT> flags. They correspond
+directly to the flags described in Section <A HREF="understand009.html#Sec: GFP Flags">6.4</A> so will not
+be discussed in detail here. It is presumed the existence of these flags are
+for clarity and in case the slab allocator needed to behave differently in
+response to a particular flag but in reality, there is no difference.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD ALIGN=left NOWRAP><B>Flag</B> 		</TD><TD ALIGN=left NOWRAP><B>Description</B></TD></TR>
+<TR><TD ALIGN=left NOWRAP>
+<TT>SLAB_ATOMIC</TT><A NAME="@mainindex707"></A> 	</TD><TD ALIGN=left NOWRAP>Equivalent to <TT>GFP_ATOMIC</TT></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>SLAB_DMA</TT><A NAME="@mainindex708"></A> 	</TD><TD ALIGN=left NOWRAP>Equivalent to <TT>GFP_DMA</TT></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>SLAB_KERNEL</TT><A NAME="@mainindex709"></A> 	</TD><TD ALIGN=left NOWRAP>Equivalent to <TT>GFP_KERNEL</TT></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>SLAB_NFS</TT><A NAME="@mainindex710"></A> 	</TD><TD ALIGN=left NOWRAP>Equivalent to <TT>GFP_NFS</TT></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>SLAB_NOFS</TT><A NAME="@mainindex711"></A> 	</TD><TD ALIGN=left NOWRAP>Equivalent to <TT>GFP_NOFS</TT></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>SLAB_NOHIGHIO</TT><A NAME="@mainindex712"></A> 	</TD><TD ALIGN=left NOWRAP>Equivalent to <TT>GFP_NOHIGHIO</TT></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>SLAB_NOIO</TT><A NAME="@mainindex713"></A> 	</TD><TD ALIGN=left NOWRAP>Equivalent to <TT>GFP_NOIO</TT></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>SLAB_USER</TT><A NAME="@mainindex714"></A> 	</TD><TD ALIGN=left NOWRAP>Equivalent to <TT>GFP_USER</TT></TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 8.5: Cache Allocation Flags</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Cache Allocation Flags"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>A very small number of flags may be passed to constructor and destructor
+functions which are listed in Table <A HREF="#tab: Cache Constructor Flags">8.6</A>. 
+</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>Flag</B>		</TD><TD VALIGN=top ALIGN=left><B>Description</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>SLAB_CTOR_CONSTRUCTOR</TT><A NAME="@mainindex715"></A></TD><TD VALIGN=top ALIGN=left>Set if the function is being called
+as a constructor for caches which use the same function as a constructor and a
+destructor</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>SLAB_CTOR_ATOMIC</TT><A NAME="@mainindex716"></A></TD><TD VALIGN=top ALIGN=left>Indicates that the constructor may not
+sleep</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>SLAB_CTOR_VERIFY</TT><A NAME="@mainindex717"></A></TD><TD VALIGN=top ALIGN=left>Indicates that the constructor should just
+verify the object is initialised correctly</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 8.6: Cache Constructor Flags</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Cache Constructor Flags"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H3 CLASS="subsection">8.1.5  Cache Colouring</H3><P>
+<A NAME="Sec: Cache Colouring"></A>
+<A NAME="@mainindex718"></A></P><P>To utilise hardware cache better, the slab allocator will offset objects
+in different slabs by different amounts depending on the amount of space
+left over in the slab. The offset is in units of <TT>BYTES_PER_WORD</TT>
+unless <TT>SLAB_HWCACHE_ALIGN</TT> is set in which case it is aligned to
+blocks of <TT>L1_CACHE_BYTES</TT> for alignment to the L1 hardware cache.</P><P>During cache creation, it is calculated how many objects can fit on a slab
+(see Section <A HREF="#Sec: Calculating the Number of Objects on a Slab">8.2.7</A>) and
+how many bytes would be wasted. Based on wastage, two figures are calculated
+for the cache descriptor</P><DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>colour</B> This is the number of different offsets that can be used;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>colour_off</B> This is the multiple to offset each objects by in the slab.
+</DD></DL><P>With the objects offset, they will use different lines on the associative
+hardware cache. Therefore, objects from slabs are less likely to overwrite
+each other in memory.</P><P>The result of this is best explained by an example. Let us say that
+<TT>s_mem</TT> (the address of the first object) on the slab is 0 for
+convenience, that 100 bytes are wasted on the slab and alignment is to be
+at 32 bytes to the L1 Hardware Cache on a Pentium II.</P><P>In this scenario, the first slab created will have its objects start at 0.
+The second will start at 32, the third at 64, the fourth at 96 and the fifth
+will start back at 0. With this, objects from each of the slabs will not
+hit the same hardware cache line on the CPU. The value of <TT>colour</TT>
+is 3 and <TT>colour_off</TT> is 32.</P><H3 CLASS="subsection">8.1.6  Cache Creation</H3><P>
+<A NAME="Sec: Cache Creation"></A>
+<A NAME="@mainindex719"></A><A NAME="@mainindex720"></A></P><P>The function <TT>kmem_cache_create()</TT> is responsible for creating new
+caches and adding them to the cache chain. The tasks that are taken to create
+a cache are</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+Perform basic sanity checks for bad usage;
+</LI><LI CLASS="li-itemize">Perform debugging checks if <TT>CONFIG_SLAB_DEBUG</TT> is set;
+</LI><LI CLASS="li-itemize">Allocate a <TT>kmem_cache_t</TT> from the <TT>cache_cache</TT> 
+slab cache ;
+</LI><LI CLASS="li-itemize">Align the object size to the word size;
+</LI><LI CLASS="li-itemize">Calculate how many objects will fit on a slab;
+</LI><LI CLASS="li-itemize">Align the object size to the hardware cache;
+</LI><LI CLASS="li-itemize">Calculate colour offsets ;
+</LI><LI CLASS="li-itemize">Initialise remaining fields in cache descriptor;
+</LI><LI CLASS="li-itemize">Add the new cache to the cache chain. 
+</LI></UL><P>Figure <A HREF="#fig: kmem_cache_create">8.3</A> shows the call graph relevant to
+the creation of a cache; each function is fully described in the Code
+Commentary.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html039.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.3: Call Graph: <TT>kmem_cache_create()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: kmem_cache_create"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H3 CLASS="subsection">8.1.7  Cache Reaping</H3><P>
+<A NAME="Sec: Cache Reaping"></A>
+<A NAME="@mainindex721"></A></P><P>When a slab is freed, it is placed on the <TT>slabs_free</TT>
+list for future use. Caches do not automatically shrink themselves
+so when <B>kswapd</B> notices that memory is tight, it calls
+<TT>kmem_cache_reap()</TT> to free some memory. This function is responsible
+for selecting a cache that will be required to shrink its memory usage. It
+is worth noting that cache reaping does not take into account what memory
+node or zone is under pressure. This means that with a NUMA or high memory
+machine, it is possible the kernel will spend a lot of time freeing memory
+from regions that are under no memory pressure but this is not a problem
+for architectures like the x86 which has only one bank of memory.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html040.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.4: Call Graph: <TT>kmem_cache_reap()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: kmem_cache_reap"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The call graph in Figure <A HREF="#fig: kmem_cache_reap">8.4</A> is deceptively
+simple as the task of selecting the proper cache to reap is quite
+long. In the event that there are numerous caches in the system, only
+<TT>REAP_SCANLEN</TT><A NAME="@mainindex722"></A>(currently defined as 10) caches are
+examined in each call. The last cache to be scanned is stored in the
+variable <TT>clock_searchp</TT><A NAME="@mainindex723"></A> so as not to examine the same caches
+repeatedly. For each scanned cache, the reaper does the following</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+Check flags for <TT>SLAB_NO_REAP</TT> and skip if set;
+</LI><LI CLASS="li-itemize">If the cache is growing, skip it;
+</LI><LI CLASS="li-itemize">if the cache has grown recently or is current growing,
+<TT>DFLGS_GROWN</TT> will be set. If this flag is set, the slab
+is skipped but the flag is cleared so it will be a reap canditate the
+next time;
+</LI><LI CLASS="li-itemize">Count the number of free slabs in <TT>slabs_free</TT> and calculate 
+	how many pages that would free in the variable <TT>pages</TT>;
+</LI><LI CLASS="li-itemize">If the cache has constructors or large slabs, adjust <TT>pages</TT> to
+	make it less likely for the cache to be selected;
+</LI><LI CLASS="li-itemize">If the number of pages that would be freed exceeds
+	<TT>REAP_PERFECT</TT>, free half of the slabs in 
+	<TT>slabs_free</TT>;
+</LI><LI CLASS="li-itemize">Otherwise scan the rest of the caches and select the one that would
+	free the most pages for freeing half of its slabs in
+	<TT>slabs_free</TT>.</LI></UL><H3 CLASS="subsection">8.1.8  Cache Shrinking</H3><P>
+<A NAME="Sec: Cache Shrinking"></A>
+<A NAME="@mainindex724"></A></P><P>When a cache is selected to shrink itself, the steps it takes are simple
+and brutal</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+Delete all objects in the per CPU caches;
+</LI><LI CLASS="li-itemize">Delete all slabs from <TT>slabs_free</TT> unless the growing flag 
+	gets set.
+</LI></UL><P>Linux is nothing, if not subtle. </P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html041.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.5: Call Graph: <TT>kmem_cache_shrink()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: kmem_cache_shrink"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Two varieties of shrink functions are provided with confusingly
+similar names. <TT>kmem_cache_shrink()</TT> removes all slabs from
+<TT>slabs_free</TT> and returns the number of pages freed as a result. This
+is the principal function exported for use by the slab allocator users.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html042.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.6: Call Graph: <TT>__kmem_cache_shrink()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: __kmem_cache_shrink"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The second function <TT>__kmem_cache_shrink()</TT> frees all slabs from
+<TT>slabs_free</TT> and then verifies that <TT>slabs_partial</TT>
+and <TT>slabs_full</TT> are empty. This is for internal use only and is
+important during cache destruction when it doesn't matter how many pages
+are freed, just that the cache is empty.</P><H3 CLASS="subsection">8.1.9  Cache Destroying</H3><P>
+<A NAME="Cache Destroying"></A>
+<A NAME="@mainindex725"></A></P><P>When a module is unloaded, it is responsible for destroying any cache with
+the function <TT>kmem_cache_destroy()</TT>. It is important that the cache
+is properly destroyed as two caches of the same human-readable name are not
+allowed to exist. Core kernel code often does not bother to destroy its
+caches as their existence persists for the life of the system. The steps
+taken to destroy a cache are</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+Delete the cache from the cache chain;
+</LI><LI CLASS="li-itemize">Shrink the cache to delete all slabs;
+</LI><LI CLASS="li-itemize">Free any per CPU caches (<TT>kfree()</TT>);
+</LI><LI CLASS="li-itemize">Delete the cache descriptor from the <TT>cache_cache</TT>.
+</LI></UL><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html043.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.7: Call Graph: <TT>kmem_cache_destroy()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: kmem_cache_destroy"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc53"></A><A NAME="htoc55">8.2</A>  Slabs</H2><P>
+<A NAME="Sec: Slabs"></A>
+<A NAME="@mainindex726"></A></P><P>This section will describe how a slab is structured and managed. The struct
+which describes it is much simpler than the cache descriptor, but how the
+slab is arranged is considerably more complex. It is declared as follows:</P><PRE CLASS="verbatim">typedef struct slab_s {
+    struct list_head        list;
+    unsigned long           colouroff;
+    void                    *s_mem;
+    unsigned int            inuse;
+    kmem_bufctl_t           free;
+} slab_t;
+</PRE><P>The fields in this simple struct are as follows:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>list</B> This is the linked list the slab belongs to. This will be one of
+		<TT>slab_full</TT>, <TT>slab_partial</TT> or
+		<TT>slab_free</TT> from the cache manager;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>colouroff</B> This is the colour offset from the base address of
+		the first object within the slab. The address of the first
+		object is <TT>s_mem + colouroff</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>s_mem</B> This gives the starting address of the first object within
+		the slab;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>inuse</B> This gives the number of active objects in the slab;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>free</B> This is an array of <TT>bufctl</TT>s used for storing
+		locations of free objects. See Section <A HREF="#Sec: Tracking Free Objects">8.2.3</A>
+for further details.</DD></DL><P>The reader will note that given the slab manager or an object
+within the slab, there does not appear to be an obvious way to
+determine what slab or cache they belong to. This is addressed
+by using the <TT>list</TT> field in the <TT>struct
+page</TT> that makes up the cache. <TT>SET_PAGE_CACHE()</TT><A NAME="@mainindex727"></A> and
+<TT>SET_PAGE_SLAB()</TT><A NAME="@mainindex728"></A> use the <TT>next</TT> and <TT>prev</TT>
+fields on the <TT>page</TT>&#X2192;<TT>list</TT> to track what cache and slab
+an object belongs to. To get the descriptors from the page, the macros
+<TT>GET_PAGE_CACHE()</TT><A NAME="@mainindex729"></A> and <TT>GET_PAGE_SLAB()</TT><A NAME="@mainindex730"></A> are available.
+This set of relationships is illustrated in Figure 
+<A HREF="#fig: Page to Cache and Slab Relationship">8.8</A>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html044.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.8: Page to Cache and Slab Relationship</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Page to Cache and Slab Relationship"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The last issue is where the slab management struct is kept. Slab managers
+are kept either on (<TT>CFLGS_OFF_SLAB</TT> set in the static flags)
+or off-slab. Where they are placed are determined by the size of the object
+during cache creation. It is important to note that in
+<A HREF="#fig: Page to Cache and Slab Relationship">8.8</A>, the <TT>struct
+slab_t</TT> could be stored at the beginning of the page frame although the
+figure implies the <TT>struct slab_</TT> is seperate from the page frame.</P><H3 CLASS="subsection">8.2.1  Storing the Slab Descriptor</H3><P>
+<A NAME="Sec: Storing the Slab Descriptor"></A>
+<A NAME="@mainindex731"></A></P><P>If the objects are larger than a threshold (512 bytes on x86),
+<TT>CFGS_OFF_SLAB</TT><A NAME="@mainindex732"></A> is set in the cache flags and the <EM>slab
+descriptor</EM><A NAME="@mainindex733"></A> is kept off-slab in one of the sizes cache (see 
+Section <A HREF="#Sec: Sizes Cache">8.4</A>). The selected sizes cache is large enough to
+contain the <TT>struct slab_t</TT> and <TT>kmem_cache_slabmgmt()</TT><A NAME="@mainindex734"></A>
+allocates from it as necessary. This limits the number of objects that can be
+stored on the slab because there is limited space for the <TT>bufctl</TT>s
+but that is unimportant as the objects are large and so there should not be
+many stored in a single slab.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html045.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.9: Slab With Descriptor On-Slab</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Slab
+With Descriptor On-Slab"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Alternatively, the slab manager is reserved at the beginning of the slab. When
+stored on-slab, enough space is kept at the beginning of the slab to store both
+the <TT>slab_t</TT> and the <TT>kmem_bufctl_t</TT><A NAME="@mainindex735"></A> which is an
+array of unsigned integers<A NAME="@mainindex736"></A>. The array is responsible
+for tracking the index of the next free object that is available for use
+which is discussed further in Section <A HREF="#Sec: Tracking Free Objects">8.2.3</A>. The
+actual objects are stored after the <TT>kmem_bufctl_t</TT> array.</P><P>Figure <A >??</A> should help clarify what a
+slab with the descriptor on-slab looks like and Figure 
+<A >??</A> illustrates how a cache uses a
+sizes cache to store the slab descriptor when the descriptor is kept off-slab.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html046.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.10: Slab With Descriptor Off-Slab</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Slab
+With Descriptor Off-Slab"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H3 CLASS="subsection">8.2.2  Slab Creation</H3><P>
+<A NAME="Sec: Slab Creation"></A>
+<A NAME="@mainindex737"></A></P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html047.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.11: Call Graph: <TT>kmem_cache_grow()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: kmem_cache_grow"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>At this point, we have seen how the cache is created, but on creation,
+it is an empty cache with empty lists for its <TT>slab_full</TT>,
+<TT>slab_partial</TT> and <TT>slabs_free</TT>. New slabs are allocated
+to a cache by calling the function <TT>kmem_cache_grow()</TT>. This
+is frequently called &#X201C;cache growing&#X201D; and occurs when no objects are
+left in the <TT>slabs_partial</TT> list and there are no slabs in
+<TT>slabs_free</TT>. The tasks it fulfills are</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+Perform basic sanity checks to guard against bad usage;
+</LI><LI CLASS="li-itemize">Calculate colour offset for objects in this slab;
+</LI><LI CLASS="li-itemize">Allocate memory for slab and acquire a slab descriptor;
+</LI><LI CLASS="li-itemize">Link the pages used for the slab to the slab and cache descriptors
+described in Section <A HREF="#Sec: Slabs">8.2</A>;
+</LI><LI CLASS="li-itemize">Initialise objects in the slab;
+</LI><LI CLASS="li-itemize">Add the slab to the cache.
+</LI></UL><H3 CLASS="subsection">8.2.3  Tracking Free Objects</H3><P>
+<A NAME="Sec: Tracking Free Objects"></A>
+<A NAME="@mainindex738"></A></P><P>The slab allocator has got to have a quick and simple means of tracking
+where free objects are on the partially filled slabs. It achieves this by
+using an array of unsigned integers called <TT>kmem_bufctl_t</TT><A NAME="@mainindex739"></A>
+that is associated with each slab manager as obviously it is up to the slab
+manager to know where its free objects are.</P><P>Historically, and according to the paper describing the slab
+allocator [<A HREF="understand031.html#bonwick94"><CITE>Bon94</CITE></A>], <TT>kmem_bufctl_t</TT> was a linked list of
+objects. In Linux 2.2.x, this struct was a union of three items, a pointer
+to the next free object, a pointer to the slab manager and a pointer to the
+object. Which it was depended on the state of the object.</P><P>Today, the slab and cache an object belongs to is determined by the
+<TT>struct page</TT> and <TT>kmem_bufctl_t</TT> is simply an integer
+array of object indices. The number of elements in the array is the same as
+the number of objects on the slab.</P><PRE CLASS="verbatim">141 typedef unsigned int kmem_bufctl_t;
+</PRE><P>As the array is kept after the slab descriptor and there is no pointer to
+the first element directly, a helper macro <TT>slab_bufctl()</TT><A NAME="@mainindex740"></A>
+is provided.</P><PRE CLASS="verbatim">163 #define slab_bufctl(slabp) \
+164         ((kmem_bufctl_t *)(((slab_t*)slabp)+1))
+</PRE><P>This seemingly cryptic macro is quite simple when broken down. The
+parameter <TT>slabp</TT> is a pointer to the slab manager. The expression
+<TT>((slab_t*)slabp)+1</TT> casts <TT>slabp</TT> to a <TT>slab_t</TT>
+struct and adds 1 to it. This will give a pointer to a <TT>slab_t</TT>
+which is actually the beginning of the <TT>kmem_bufctl_t</TT>
+array. <TT>(kmem_bufctl_t *)</TT> casts the <TT>slab_t</TT>
+pointer to the required type. The results in blocks of code that contain
+<TT>slab_bufctl(slabp)[i]</TT>. Translated, that says &#X201C;take a pointer
+to a slab descriptor, offset it with <TT>slab_bufctl()</TT> to the beginning
+of the <TT>kmem_bufctl_t</TT> array and return the i<I>th</I> element of
+the array&#X201D;.</P><P>The index to the next free object in the slab is stored in
+<TT>slab_t</TT>&#X2192;<TT>free</TT> eliminating the need for a linked list
+to track free objects. When objects are allocated or freed, this pointer
+is updated based on information in the <TT>kmem_bufctl_t</TT> array.</P><H3 CLASS="subsection">8.2.4  Initialising the <TT>kmem_bufctl_t</TT> Array</H3><P>
+<A NAME="@mainindex741"></A></P><P>When a cache is grown, all the objects and the <TT>kmem_bufctl_t</TT>
+array on the slab are initialised. The array is filled with the index of each
+object beginning with 1 and ending with the marker <TT>BUFCTL_END</TT>. For a
+slab with 5 objects, the elements of the array would look like Figure <A HREF="#fig: initialised kmem_bufctl_t Array">8.12</A>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html048.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.12: Initialised <TT>kmem_bufctl_t</TT>
+Array</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: initialised kmem_bufctl_t Array"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The value 0 is stored in <TT>slab_t</TT>&#X2192;<TT>free</TT> as the 0<I>th</I>
+object is the first free object to be used. The idea is that for a given
+object <EM>n</EM>, the index of the next free object will be stored in
+<TT>kmem_bufctl_t[n]</TT>. Looking at the array above, the next object
+free after 0 is 1. After 1, there are two and so on. As the array is used,
+this arrangement will make the array act as a LIFO for free objects.</P><H3 CLASS="subsection">8.2.5  Finding the Next Free Object</H3><P>
+<A NAME="@mainindex742"></A></P><P>When allocating an object, <TT>kmem_cache_alloc()</TT><A NAME="@mainindex743"></A> performs
+the &#X201C;real&#X201D; work of updating the <TT>kmem_bufctl_t()</TT>
+array by calling <TT>kmem_cache_alloc_one_tail()</TT>. The
+field <TT>slab_t</TT>&#X2192;<TT>free</TT> has the index of the
+first free object. The index of the next free object is at
+<TT>kmem_bufctl_t[</TT><TT>slab_t</TT>&#X2192;<TT>free</TT><TT>]</TT>.
+In code terms, this looks like</P><PRE CLASS="verbatim">1253     objp = slabp-&gt;s_mem + slabp-&gt;free*cachep-&gt;objsize;
+1254     slabp-&gt;free=slab_bufctl(slabp)[slabp-&gt;free];
+</PRE><P>The field <TT>slabp</TT>&#X2192;<TT>s_mem</TT> is a pointer to the first object
+on the slab. <TT>slabp</TT>&#X2192;<TT>free</TT> is the index of the object to
+allocate and it has to be multiplied by the size of an object.</P><P>The index of the next free object is stored at
+<TT>kmem_bufctl_t[</TT><TT>slabp</TT><TT>&#X2192;</TT><TT>free</TT><TT>]</TT>. There is no
+pointer directly to the array hence the helper macro <TT>slab_bufctl()</TT>
+is used. Note that the <TT>kmem_bufctl_t</TT> array is not changed
+during allocations but that the elements that are unallocated are
+unreachable. For example, after two allocations, index 0 and 1 of the
+<TT>kmem_bufctl_t</TT> array are not pointed to by any other element.</P><H3 CLASS="subsection">8.2.6  Updating <TT>kmem_bufctl_t</TT></H3><P>The <TT>kmem_bufctl_t</TT> list is only updated when an object is freed
+in the function <TT>kmem_cache_free_one()</TT>. The array is updated with
+this block of code:</P><PRE CLASS="verbatim">1451     unsigned int objnr = (objp-slabp-&gt;s_mem)/cachep-&gt;objsize;
+1452 
+1453     slab_bufctl(slabp)[objnr] = slabp-&gt;free;
+1454     slabp-&gt;free = objnr;
+</PRE><P>The pointer <TT>objp</TT> is the object about to be freed and <TT>objnr</TT>
+is its index. <TT>kmem_bufctl_t[objnr]</TT> is updated to point
+to the current value of <TT>slabp</TT>&#X2192;<TT>free</TT>, effectively
+placing the object pointed to by <TT>free</TT> on the pseudo linked
+list. <TT>slabp</TT>&#X2192;<TT>free</TT> is updated to the object being freed so
+that it will be the next one allocated.</P><H3 CLASS="subsection">8.2.7  Calculating the Number of Objects on a Slab</H3><P>
+<A NAME="Sec: Calculating the Number of Objects on a Slab"></A>
+<A NAME="@mainindex744"></A></P><P>During cache creation, the function <TT>kmem_cache_estimate()</TT> is
+called to calculate how many objects may be stored on a single slab taking
+into account whether the slab descriptor must be stored on-slab or off-slab
+and the size of each <TT>kmem_bufctl_t</TT> needed to track if an
+object is free or not. It returns the number of objects that may be stored
+and how many bytes are wasted. The number of wasted bytes is important if
+cache colouring is to be used.</P><P>The calculation is quite basic and takes the following steps</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+Initialise <TT>wastage</TT> to be the total size of the slab i.e.
+<I>PAGE</I>_<I>SIZE</I><SUP><I>gfp</I>_<I>order</I></SUP>;</LI><LI CLASS="li-itemize">Subtract the amount of space required to store the slab descriptor;</LI><LI CLASS="li-itemize">Count up the number of objects that may be stored. Include the
+size of the <TT>kmem_bufctl_t</TT> if the slab descriptor is stored
+on the slab. Keep increasing the size of <EM>i</EM> until the slab is filled;</LI><LI CLASS="li-itemize">Return the number of objects and bytes wasted.</LI></UL><H3 CLASS="subsection">8.2.8  Slab Destroying</H3><P>
+<A NAME="Sec: Slab Destroying"></A>
+<A NAME="@mainindex745"></A></P><P>When a cache is being shrunk or destroyed, the slabs will be deleted. As the
+objects may have destructors, these must be called, so the tasks of this
+function are:</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+If available, call the destructor for every object in the slab;
+</LI><LI CLASS="li-itemize">If debugging is enabled, check the red marking and poison pattern;
+</LI><LI CLASS="li-itemize">Free the pages the slab uses.
+</LI></UL><P>The call graph at Figure <A HREF="#fig: kmem_slab_destroy">8.13</A> is very simple. 
+</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html049.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.13: Call Graph: <TT>kmem_slab_destroy()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: kmem_slab_destroy"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc54"></A><A NAME="htoc56">8.3</A>  Objects</H2><P>
+<A NAME="Sec: Objects"></A>
+<A NAME="@mainindex746"></A><A NAME="@mainindex747"></A></P><P>This section will cover how objects are managed. At this point, most of the
+really hard work has been completed by either the cache or slab managers.</P><H3 CLASS="subsection">8.3.1  Initialising Objects in a Slab</H3><P>
+<A NAME="Sec: Initialising Objects in a Slab"></A>
+<A NAME="@mainindex748"></A>
+<A NAME="@mainindex749"></A></P><P>When a slab is created, all the objects in it are put in an initialised
+state. If a constructor is available, it is called for each object and it is
+expected that objects are left in an initialised state upon free. Conceptually
+the initialisation is very simple, cycle through all objects and call the
+constructor and initialise the <TT>kmem_bufctl</TT> for it. The function
+<TT>kmem_cache_init_objs()</TT> is responsible for initialising the objects.</P><H3 CLASS="subsection">8.3.2  Object Allocation</H3><P>
+<A NAME="Sec: Object Allocation"></A>
+<A NAME="@mainindex750"></A>
+<A NAME="@mainindex751"></A></P><P>The function <TT>kmem_cache_alloc()</TT> is responsible for allocating
+one object to the caller which behaves slightly different in the UP and SMP
+cases. Figure <A HREF="#fig: kmem_cache_alloc">8.14</A> shows the basic call graph that
+is used to allocate an object in the SMP case.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html050.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.14: Call Graph: <TT>kmem_cache_alloc()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: kmem_cache_alloc"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>There are four basic steps. The first step
+(<TT>kmem_cache_alloc_head()</TT>) covers basic checking to make sure
+the allocation is allowable. The second step is to select which slabs
+list to allocate from. This will be one of <TT>slabs_partial</TT> or
+<TT>slabs_free</TT>. If there are no slabs in <TT>slabs_free</TT>,
+the cache is grown (see Section <A HREF="#Sec: Slab Creation">8.2.2</A>) to create a new
+slab in <TT>slabs_free</TT>. The final step is to allocate the object
+from the selected slab.</P><P>The SMP case takes one further step. Before allocating one object, it will
+check to see if there is one available from the per-CPU cache and will use
+it if there is. If there is not, it will allocate <TT>batchcount</TT> number
+of objects in bulk and place them in its per-cpu cache. See Section 
+<A HREF="#Sec: Per-CPU Object Cache">8.5</A> for more information on the per-cpu caches.</P><H3 CLASS="subsection">8.3.3  Object Freeing</H3><P>
+<A NAME="Sec: Object Freeing"></A>
+<A NAME="@mainindex752"></A>
+<A NAME="@mainindex753"></A></P><P><TT>kmem_cache_free()</TT> is used to free objects and it has a relatively
+simple task. Just like <TT>kmem_cache_alloc()</TT>, it behaves differently
+in the UP and SMP cases. The principal difference between the two cases is
+that in the UP case, the object is returned directly to the slab but with the
+SMP case, the object is returned to the per-cpu cache. In both cases, the
+destructor for the object will be called if one is available. The destructor
+is responsible for returning the object to the initialised state.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html051.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.15: Call Graph: <TT>kmem_cache_free()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: kmem_cache_free"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc55"></A><A NAME="htoc57">8.4</A>  Sizes Cache</H2><P>
+<A NAME="Sec: Sizes Cache"></A>
+<A NAME="@mainindex754"></A></P><P>Linux keeps two sets of caches for small memory allocations for which the
+physical page allocator is unsuitable. One set is for use with DMA and
+the other is suitable for normal use. The human readable names for these caches
+are <EM>size-N cache</EM><A NAME="@mainindex755"></A> and <EM>size-N(DMA) cache</EM><A NAME="@mainindex756"></A> which are
+viewable from <TT>/proc/slabinfo</TT>. Information for each sized cache is
+stored in a <TT>struct</TT> <TT>cache_sizes</TT><A NAME="@mainindex757"></A>, typedeffed to
+<TT>cache_sizes_t</TT><A NAME="@mainindex758"></A>, which is defined in <TT>mm/slab.c</TT> as:</P><PRE CLASS="verbatim">331 typedef struct cache_sizes {
+332     size_t           cs_size;
+333     kmem_cache_t    *cs_cachep;
+334     kmem_cache_t    *cs_dmacachep;
+335 } cache_sizes_t;
+</PRE><P>The fields in this struct are described as follows:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>cs_size</B>The size of the memory block;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>cs_cachep</B>The cache of blocks for normal memory use;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>cs_dmacachep</B>The cache of blocks for use with DMA.
+</DD></DL><P>As there are a limited number of these caches that exist, a static array called
+<TT>cache_sizes</TT><A NAME="@mainindex759"></A> is initialised at compile time beginning with
+32 bytes on a 4KiB machine and 64 for greater page sizes.</P><PRE CLASS="verbatim">337 static cache_sizes_t cache_sizes[] = {
+338 #if PAGE_SIZE == 4096
+339     {    32,        NULL, NULL},
+340 #endif
+341     {    64,        NULL, NULL},
+342     {   128,        NULL, NULL},
+343     {   256,        NULL, NULL},
+344     {   512,        NULL, NULL},
+345     {  1024,        NULL, NULL},
+346     {  2048,        NULL, NULL},
+347     {  4096,        NULL, NULL},
+348     {  8192,        NULL, NULL},
+349     { 16384,        NULL, NULL},
+350     { 32768,        NULL, NULL},
+351     { 65536,        NULL, NULL},
+352     {131072,        NULL, NULL},
+353     {     0,        NULL, NULL}
+</PRE><P>As is obvious, this is a static array that is zero terminated consisting of
+buffers of succeeding powers of 2 from 2<SUP>5</SUP> to 2<SUP>17</SUP> . An array now exists
+that describes each sized cache which must be initialised with caches at system
+startup.</P><H3 CLASS="subsection">8.4.1  <TT>kmalloc()</TT></H3><P>
+<A NAME="Sec: kmalloc"></A></P><P>With the existence of the sizes cache, the slab allocator is able to offer
+a new allocator function, <TT>kmalloc()</TT><A NAME="@mainindex760"></A> for use when small memory
+buffers are required. When a request is received, the appropriate sizes cache
+is selected and an object assigned from it. The call graph on Figure <A HREF="#fig: kmalloc">8.16</A>
+is therefore very simple as all the hard work is in cache allocation.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html052.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.16: Call Graph: <TT>kmalloc()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: kmalloc"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H3 CLASS="subsection">8.4.2  <TT>kfree()</TT></H3><P>Just as there is a <TT>kmalloc()</TT> function to allocate small memory
+objects for use, there is a <TT>kfree()</TT><A NAME="@mainindex761"></A> for freeing it. As with
+<TT>kmalloc()</TT>, the real work takes place during object freeing (See
+Section <A HREF="#Sec: Object Freeing">8.3.3</A>) so the call graph in Figure <A HREF="#fig: kfree">8.17</A>
+is very simple.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html053.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 8.17: Call Graph: <TT>kfree()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: kfree"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc56"></A><A NAME="htoc58">8.5</A>  Per-CPU Object Cache</H2><P>
+<A NAME="Sec: Per-CPU Object Cache"></A>
+<A NAME="@mainindex762"></A><A NAME="@mainindex763"></A></P><P>One of the tasks the slab allocator is dedicated to is improved hardware cache
+utilization. An aim of high performance computing [<A HREF="understand031.html#severance98"><CITE>CS98</CITE></A>] in general
+is to use data on the same CPU for as long as possible. Linux achieves this
+by trying to keep objects in the same CPU cache with a Per-CPU object cache,
+simply called a <EM>cpucache</EM><A NAME="@mainindex764"></A> for each CPU in the system.</P><P>When allocating or freeing objects, they are placed in the cpucache. When
+there are no objects free, a <TT>batch</TT> of objects is placed into the
+pool. When the pool gets too large, half of them are removed and placed in
+the global cache. This way the hardware cache will be used for as long as
+possible on the same CPU.</P><P>The second major benefit of this method is that spinlocks do not have to
+be held when accessing the CPU pool as we are guaranteed another CPU won't
+access the local data. This is important because without the caches, the
+spinlock would have to be acquired for every allocation and free which is
+unnecessarily expensive.</P><H3 CLASS="subsection">8.5.1  Describing the Per-CPU Object Cache</H3><P>
+<A NAME="Sec: Describing the Per-CPU Object Cache"></A></P><P>Each cache descriptor has a pointer to an array of cpucaches, described in
+the cache descriptor as</P><PRE CLASS="verbatim">231    cpucache_t              *cpudata[NR_CPUS];
+</PRE><P>This structure is very simple</P><PRE CLASS="verbatim">173 typedef struct cpucache_s {
+174     unsigned int avail;
+175     unsigned int limit;
+176 } cpucache_t;
+</PRE><P>The fields are as follows:</P><DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>avail</B> This is the number of free objects available on this cpucache;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>limit</B> This is the total number of free objects that can exist.
+</DD></DL><P>A helper macro <TT>cc_data()</TT><A NAME="@mainindex765"></A> is provided to give the cpucache
+for a given cache and processor. It is defined as</P><PRE CLASS="verbatim">180 #define cc_data(cachep) \
+181         ((cachep)-&gt;cpudata[smp_processor_id()])
+</PRE><P>This will take a given cache descriptor (<TT>cachep</TT>) and return a
+pointer from the cpucache array (<TT>cpudata</TT>). The index needed is
+the ID of the current processor, <TT>smp_processor_id()</TT>.</P><P>Pointers to objects on the cpucache are placed immediately after the
+<TT>cpucache_t</TT> struct. This is very similar to how objects are stored
+after a slab descriptor.</P><H3 CLASS="subsection">8.5.2  Adding/Removing Objects from the Per-CPU Cache</H3><P>
+<A NAME="Sec: Adding/Removing Objects from the Per-CPU Cache"></A></P><P>To prevent fragmentation, objects are always added or removed from the end of
+the array. To add an object (<TT>obj</TT>) to the CPU cache (<TT>cc</TT>),
+the following block of code is used</P><PRE CLASS="verbatim">        cc_entry(cc)[cc-&gt;avail++] = obj;
+</PRE><P>To remove an object</P><PRE CLASS="verbatim">        obj = cc_entry(cc)[--cc-&gt;avail];
+</PRE><P>There is a helper macro called <TT>cc_entry()</TT><A NAME="@mainindex766"></A> which gives a pointer
+to the first object in the cpucache. It is defined as</P><PRE CLASS="verbatim">178 #define cc_entry(cpucache) \
+179         ((void **)(((cpucache_t*)(cpucache))+1))
+</PRE><P>This takes a pointer to a cpucache, increments the value by the size of the
+<TT>cpucache_t</TT> descriptor giving the first object in the cache.</P><H3 CLASS="subsection">8.5.3  Enabling Per-CPU Caches</H3><P>When a cache is created, its CPU cache has to be enabled and memory allocated
+for it using <TT>kmalloc()</TT>. The function <TT>enable_cpucache()</TT><A NAME="@mainindex767"></A>
+is responsible for deciding what size to make the cache and calling
+<TT>kmem_tune_cpucache()</TT><A NAME="@mainindex768"></A> to allocate memory for it.</P><P>Obviously a CPU cache cannot exist until after the various sizes caches
+have been enabled so a global variable <TT>g_cpucache_up</TT><A NAME="@mainindex769"></A>
+is used to prevent CPU caches being enabled prematurely. The function
+<TT>enable_all_cpucaches()</TT><A NAME="@mainindex770"></A> cycles through all caches in the cache
+chain and enables their cpucache.</P><P>Once the CPU cache has been setup, it can be accessed without locking as a
+CPU will never access the wrong cpucache so it is guaranteed safe access to it.</P><H3 CLASS="subsection">8.5.4  Updating Per-CPU Information</H3><P>When the per-cpu caches have been created or changed, each CPU is signalled via
+an IPI. It is not sufficient to change all the values in the cache descriptor
+as that would lead to cache coherency issues and spinlocks would have to
+used to protect the CPU caches. Instead a <TT>ccupdate_t</TT><A NAME="@mainindex771"></A> struct
+is populated with all the information each CPU needs and each CPU swaps the
+new data with the old information in the cache descriptor. The struct for
+storing the new cpucache information is defined as follows</P><PRE CLASS="verbatim">868 typedef struct ccupdate_struct_s
+869 {
+870     kmem_cache_t *cachep;
+871     cpucache_t *new[NR_CPUS];
+872 } ccupdate_struct_t;
+</PRE><P><TT>cachep</TT> is the cache being updated and <TT>new</TT> is the
+array of the cpucache descriptors for each CPU on the system. The function
+<TT>smp_function_all_cpus()</TT> is used to get each CPU to call the
+<TT>do_ccupdate_local()</TT><A NAME="@mainindex772"></A> function which swaps the information from
+<TT>ccupdate_struct_t</TT> with the information in the cache descriptor.</P><P>Once the information has been swapped, the old data can be deleted.</P><H3 CLASS="subsection">8.5.5  Draining a Per-CPU Cache</H3><P>When a cache is being shrunk, its first step is to drain the cpucaches of
+any objects they might have by calling <TT>drain_cpu_caches()</TT>. This
+is so that the slab allocator will have a clearer view of what slabs can
+be freed or not. This is important because if just one object in a slab is
+placed in a per-cpu cache, that whole slab cannot be freed. If the system is
+tight on memory, saving a few milliseconds on allocations has a low priority.</P><H2 CLASS="section"><A NAME="toc57"></A><A NAME="htoc59">8.6</A>  Slab Allocator Initialisation</H2><P>
+<A NAME="Sec: Slab Allocator Initialisation"></A>
+<A NAME="@mainindex773"></A>
+<A NAME="@mainindex774"></A></P><P>Here we will describe how the slab allocator initialises itself. When the slab
+allocator creates a new cache, it allocates the <TT>kmem_cache_t</TT>
+from the <TT>cache_cache</TT><A NAME="@mainindex775"></A> or <TT>kmem_cache</TT><A NAME="@mainindex776"></A>
+cache. This is an obvious chicken and egg problem so the
+<TT>cache_cache</TT> has to be statically initialised as</P><PRE CLASS="verbatim">357 static kmem_cache_t cache_cache = {
+358     slabs_full:     LIST_HEAD_INIT(cache_cache.slabs_full),
+359     slabs_partial:  LIST_HEAD_INIT(cache_cache.slabs_partial),
+360     slabs_free:     LIST_HEAD_INIT(cache_cache.slabs_free),
+361     objsize:        sizeof(kmem_cache_t),
+362     flags:          SLAB_NO_REAP,
+363     spinlock:       SPIN_LOCK_UNLOCKED,
+364     colour_off:     L1_CACHE_BYTES,
+365     name:           "kmem_cache",
+366 };
+</PRE><P>This code statically initialised the <TT>kmem_cache_t</TT> struct
+as follows:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>358-360</B>Initialise the three lists as empty lists;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>361</B>The size of each object is the size of a cache descriptor;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>362</B>The creation and deleting of caches is extremely rare so do not
+consider it for reaping ever;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>363</B>Initialise the spinlock unlocked;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>364</B>Align the objects to the L1 cache;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>365</B>Record the human readable name.</DD></DL><P>That statically defines all the fields that can be calculated at compile time.
+To initialise the rest of the struct, <TT>kmem_cache_init()</TT><A NAME="@mainindex777"></A> is
+called from <TT>start_kernel()</TT>.</P><H2 CLASS="section"><A NAME="toc58"></A><A NAME="htoc60">8.7</A>  Interfacing with the Buddy Allocator</H2><P>
+<A NAME="Sec: Interfacing with the Buddy Allocator"></A>
+<A NAME="@mainindex778"></A></P><P>The slab allocator does not come with pages attached, it must ask the physical
+page allocator for its pages. Two APIs are provided for this task called
+<TT>kmem_getpages()</TT><A NAME="@mainindex779"></A> and <TT>kmem_freepages()</TT><A NAME="@mainindex780"></A>. They are
+basically wrappers around the buddy allocators API so that slab flags will
+be taken into account for allocations. For allocations, the default flags
+are taken from <TT>cachep</TT>&#X2192;<TT>gfpflags</TT> and the order is taken
+from <TT>cachep</TT>&#X2192;<TT>gfporder</TT> where <TT>cachep</TT> is the cache
+requesting the pages. When freeing the pages, <TT>PageClearSlab()</TT> will
+be called for every page being freed before calling <TT>free_pages()</TT>.</P><H2 CLASS="section"><A NAME="toc59"></A><A NAME="htoc61">8.8</A>  Whats New in 2.6</H2><P>
+<A NAME="new: Slab Allocator"></A></P><P>The first obvious change is that the version of the <TT>/proc/slabinfo</TT>
+format has changed from 1.1 to 2.0 and is a lot friendlier to read. The
+most helpful change is that the fields now have a header negating the need
+to memorise what each column means.</P><P>The principal algorithms and ideas remain the same and there is no major
+algorithm shakeups but the implementation is quite different. Particularly,
+there is a greater emphasis on the use of per-cpu objects and the avoidance
+of locking. Secondly, there is a lot more debugging code mixed in so
+keep an eye out for <TT>#ifdef DEBUG</TT> blocks of code as they can
+be ignored when reading the code first. Lastly, some changes are purely
+cosmetic with function name changes but very similar behavior. For example,
+<TT>kmem_cache_estimate()</TT> is now called <TT>cache_estimate()</TT>
+even though they are identical in every other respect.</P><H5 CLASS="paragraph">Cache descriptor</H5><P> The changes to the <TT>kmem_cache_s</TT>
+are minimal. First, the elements are reordered to have commonly used elements,
+such as the per-cpu related data, at the beginning of the struct (see Section
+<A HREF="understand006.html#sec: Level 1 CPU Cache Management">3.9</A> to for the reasoning). Secondly, the slab lists (e.g. <TT>slabs_full</TT>)
+and statistics related to them
+have been moved to a separate <TT>struct kmem_list3</TT>. Comments
+and the unusual use of macros indicate that there is a plan to make the
+structure per-node.</P><H5 CLASS="paragraph">Cache Static Flags</H5><P> The flags in 2.4 still exist and their usage
+is the same. <TT>CFLGS_OPTIMIZE</TT> no longer exists but its usage in
+2.4 was non-existent. Two new flags have been introduced which are:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>SLAB_STORE_USER</B> This is a debugging only flag for recording the
+function that freed an object. If the object is used after it was freed, the
+poison bytes will not match and a kernel error message will be displayed. As
+the last function to use the object is known, it can simplify debugging.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>SLAB_RECLAIM_ACCOUNT</B> This flag is set for caches with objects that
+are easily reclaimable such as inode caches. A counter is maintained in
+a variable called <TT>slab_reclaim_pages</TT> to record how many pages
+are used in slabs allocated to these caches. This counter is later used in
+<TT>vm_enough_memory()</TT> to help determine if the system is truly out of
+memory.</DD></DL><H5 CLASS="paragraph">Cache Reaping</H5><P> This is one of the most interesting changes made
+to the slab allocator. <TT>kmem_cache_reap()</TT> no longer exists as it is
+very indiscriminate in how it shrinks caches when the cache user could have
+made a far superior selection. Users of caches can now register a &#X201C;shrink
+cache&#X201D; callback with <TT>set_shrinker()</TT><A NAME="@mainindex781"></A> for the intelligent aging
+and shrinking of slabs. This simple function populates a <TT>struct
+shrinker</TT> with a pointer to the callback and a &#X201C;seeks&#X201D; weight which indicates
+how difficult it is to recreate an object before placing it in a linked list
+called <TT>shrinker_list</TT>.</P><P>During page reclaim, the function <TT>shrink_slab()</TT> is called which
+steps through the full <TT>shrinker_list</TT> and calls each shrinker
+callback twice. The first call passes 0 as a parameter which indicates that
+the callback should return how many pages it expects it could free if it was
+called properly. A basic heuristic is applied to determine if it is worth
+the cost of using the callback. If it is, it is called a second time with
+a parameter indicating how many objects to free.</P><P>How this mechanism accounts for the number of pages is a little tricky. Each
+task struct has a field called <TT>reclaim_state</TT>. When the slab
+allocator frees pages, this field is updated with the number of pages that
+is freed. Before calling <TT>shrink_slab()</TT>, this field is set to 0
+and then read again after <TT>shrink_cache</TT> returns to determine
+how many pages were freed.</P><H5 CLASS="paragraph">Other changes</H5><P> The rest of the changes are essentially
+cosmetic. For example, the slab descriptor is now called <TT>struct
+slab</TT> instead of <TT>slab_t</TT> which is consistent with the general
+trend of moving away from typedefs. Per-cpu caches remain essentially the
+same except the structs and APIs have new names. The same type of points
+applies to most of the rest of the 2.6 slab allocator implementation.
+
+	</P><HR>
+[ <A HREF="understand010.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand012.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

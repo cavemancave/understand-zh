@@ -1,0 +1,849 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Page Table Management</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand005.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand007.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc14">Chapter 3</A>  Page Table Management</H1><P>
+<A NAME="chap: Page Table Management"></A>
+<A NAME="@mainindex179"></A></P><P>Linux layers the machine independent/dependent layer in an unusual manner
+in comparison to other operating systems [<A HREF="understand031.html#cranor99"><CITE>CP99</CITE></A>]. Other operating
+systems have objects which manage the underlying physical pages such as the
+<TT>pmap</TT> object in BSD. Linux instead maintains the concept of a
+three-level page table in the architecture independent code even if the
+underlying architecture does not support it. While this is conceptually
+easy to understand, it also means that the distinction between different
+types of pages is very blurry and page types are identified by their flags
+or what lists they exist on rather than the objects they belong to.</P><P>Architectures that manage their <EM>Memory Management Unit
+(MMU)</EM><A NAME="@mainindex180"></A><A NAME="@mainindex181"></A> differently are expected to emulate the three-level
+page tables. For example, on the x86 without PAE enabled, only two
+page table levels are available. The <EM>Page Middle Directory
+(PMD)</EM><A NAME="@mainindex182"></A><A NAME="@mainindex183"></A> is defined to be of size 1 and &#X201C;folds back&#X201D; directly onto
+the <EM>Page Global Directory (PGD)</EM><A NAME="@mainindex184"></A><A NAME="@mainindex185"></A> which is optimised
+out at compile time. Unfortunately, for architectures that do not manage
+their cache or <EM>Translation Lookaside Buffer (TLB)</EM><A NAME="@mainindex186"></A><A NAME="@mainindex187"></A>
+automatically, hooks for machine dependent have to be explicitly left in
+the code for when the TLB and CPU caches need to be altered and flushed even
+if they are null operations on some architectures like the x86. These hooks
+are discussed further in Section <A HREF="#sec: Translation Lookaside Buffer">3.8</A>.</P><P>This chapter will begin by describing how the page table is arranged and
+what types are used to describe the three separate levels of the page table
+followed by how a virtual address is broken up into its component parts
+for navigating the table. Once covered, it will be discussed how the lowest
+level entry, the <EM>Page Table Entry (PTE)</EM><A NAME="@mainindex188"></A><A NAME="@mainindex189"></A> and what bits
+are used by the hardware. After that, the macros used for navigating a page
+table, setting and checking attributes will be discussed before talking about
+how the page table is populated and how pages are allocated and freed for
+the use with page tables. The initialisation stage is then discussed which
+shows how the page tables are initialised during boot strapping. Finally,
+we will cover how the TLB and CPU caches are utilised.</P><H2 CLASS="section"><A NAME="toc18"></A><A NAME="htoc15">3.1</A>  Describing the Page Directory</H2><P>
+<A NAME="@mainindex190"></A></P><P>Each process a pointer (<TT>mm_struct</TT>&#X2192;<TT>pgd</TT>) to its own
+<EM>Page Global Directory (PGD)</EM><A NAME="@mainindex191"></A> which is a physical page frame. This
+frame contains an array of type <TT>pgd_t</TT><A NAME="@mainindex192"></A> which is an architecture
+specific type defined in &lt;<TT>asm/page.h</TT>&gt;. The page tables are loaded
+differently depending on the architecture. On the x86, the process page table
+is loaded by copying <TT>mm_struct</TT>&#X2192;<TT>pgd</TT> into the <TT>cr3</TT>
+register which has the side effect of flushing the TLB. In fact this is how
+the function <TT>__flush_tlb()</TT> is implemented in the architecture
+dependent code.</P><P>Each active entry in the PGD table points to a page frame containing an array
+of <EM>Page Middle Directory (PMD)</EM> entries of type <TT>pmd_t</TT><A NAME="@mainindex193"></A>
+which in turn points to page frames containing <EM>Page Table Entries
+(PTE)</EM> of type <TT>pte_t</TT><A NAME="@mainindex194"></A>, which finally points to page frames
+containing the actual user data. In the event the page has been swapped
+out to backing storage, the swap entry is stored in the PTE and used by
+<TT>do_swap_page()</TT><A NAME="@mainindex195"></A> during page fault to find the swap entry
+containing the page data. The page table layout is illustrated in Figure
+<A HREF="#fig: Page Table Layout">3.1</A><A NAME="@mainindex196"></A>. </P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV><DIV CLASS="center"><IMG SRC="figures/understand-html006.png"></DIV><DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 3.1: Page Table Layout</TD></TR>
+</TABLE></DIV><P>
+<A NAME="fig: Page Table Layout"></A>
+</P><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Any given linear address may be broken up into parts to yield offsets within
+these three page table levels and an offset within the actual page. To help
+break up the linear address into its component parts, a number of macros are
+provided in triplets for each page table level, namely a <TT>SHIFT</TT>,
+a <TT>SIZE</TT> and a <TT>MASK</TT> macro. The <TT>SHIFT</TT>
+macros specifies the length in bits that are mapped by each level of the
+page tables as illustrated in Figure <A HREF="#fig: Linear Address Bit Size Macros">3.2</A><A NAME="@mainindex197"></A>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html007.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 3.2: Linear Address Bit Size
+Macros</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Linear Address Bit Size Macros"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The <TT>MASK</TT> values can be ANDd with a linear address to mask out
+all the upper bits and is frequently used to determine if a linear address
+is aligned to a given level within the page table. The <TT>SIZE</TT>
+macros reveal how many bytes are addressed by each entry at each level.
+The relationship between the <TT>SIZE</TT> and <TT>MASK</TT> macros
+is illustrated in Figure <A HREF="#fig: Linear Address Size and Mask Macros">3.3</A>. 
+</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html008.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 3.3: Linear
+Address Size
+and Mask Macros</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Linear Address Size and Mask Macros"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>For the calculation of each of the triplets, only <TT>SHIFT</TT> is
+important as the other two are calculated based on it. For example, the
+three macros for page level on the x86 are:</P><PRE CLASS="verbatim">  5 #define PAGE_SHIFT      12
+  6 #define PAGE_SIZE       (1UL &lt;&lt; PAGE_SHIFT)
+  7 #define PAGE_MASK       (~(PAGE_SIZE-1))
+</PRE><P><TT>PAGE_SHIFT</TT><A NAME="@mainindex198"></A> is the length in bits of the offset part of
+the linear address space which is 12 bits on the x86. The size of a page is
+easily calculated as 2<SUP><I>PAGE</I>_<I>SHIFT</I></SUP> which is the equivalent of
+the code above. Finally the mask is calculated as the negation of the bits
+which make up the <TT>PAGE_SIZE - 1</TT>. If a page needs to be aligned
+on a page boundary, <TT>PAGE_ALIGN()</TT><A NAME="@mainindex199"></A> is used. This macro adds
+<TT>PAGE_SIZE - 1</TT> to the address before simply ANDing it
+with the <TT>PAGE_MASK</TT> to zero out the page offset bits.</P><P><TT>PMD_SHIFT</TT><A NAME="@mainindex200"></A> is the number of bits in the linear address which
+are mapped by the second level part of the table. The <TT>PMD_SIZE</TT>
+and <TT>PMD_MASK</TT> are calculated in a similar way to the page
+level macros.</P><P><TT>PGDIR_SHIFT</TT><A NAME="@mainindex201"></A> is the number of bits which are mapped by
+the top, or first level, of the page table. The <TT>PGDIR_SIZE</TT>
+and <TT>PGDIR_MASK</TT> are calculated in the same manner as above.</P><P>The last three macros of importance are the <TT>PTRS_PER_x</TT>
+which determine the number of entries in each level of the page
+table. <TT>PTRS_PER_PGD</TT><A NAME="@mainindex202"></A> is the number of pointers in the PGD,
+1024 on an x86 without PAE. <TT>PTRS_PER_PMD</TT><A NAME="@mainindex203"></A> is for the PMD,
+1 on the x86 without PAE and <TT>PTRS_PER_PTE</TT><A NAME="@mainindex204"></A> is for the lowest
+level, 1024 on the x86.</P><H2 CLASS="section"><A NAME="toc19"></A><A NAME="htoc16">3.2</A>  Describing a Page Table Entry</H2><P>
+<A NAME="sec: Describing a Page Table Entry"></A>
+<A NAME="@mainindex205"></A>
+<A NAME="@mainindex206"></A></P><P>As mentioned, each entry is described by the structs <TT>pte_t</TT>,
+<TT>pmd_t</TT> and <TT>pgd_t</TT> for PTEs, PMDs and PGDs
+respectively. Even though these are often just unsigned integers, they
+are defined as structs for two reasons. The first is for type protection
+so that they will not be used inappropriately. The second is for features
+like PAE on the x86 where an additional 4 bits is used for addressing more
+than 4GiB of memory. To store the protection bits, <TT>pgprot_t</TT><A NAME="@mainindex207"></A>
+is defined which holds the relevant flags and is usually stored in the lower
+bits of a page table entry.</P><P>For type casting, 4 macros are provided in <TT>asm/page.h</TT>, which
+takes the above types and returns the relevant part of the structs. They
+are <TT>pte_val()</TT><A NAME="@mainindex208"></A>, <TT>pmd_val()</TT><A NAME="@mainindex209"></A>, <TT>pgd_val()</TT><A NAME="@mainindex210"></A>
+and <TT>pgprot_val()</TT><A NAME="@mainindex211"></A>. To reverse the type casting, 4 more macros are
+provided <TT>__pte()</TT><A NAME="@mainindex212"></A>, <TT>__pmd()</TT><A NAME="@mainindex213"></A>, <TT>__pgd()</TT><A NAME="@mainindex214"></A>
+and <TT>__pgprot()</TT><A NAME="@mainindex215"></A>.</P><P>Where exactly the protection bits are stored is architecture dependent.
+For illustration purposes, we will examine the case of an x86 architecture
+without PAE enabled but the same principles apply across architectures. On an
+x86 with no PAE, the <TT>pte_t</TT> is simply a 32 bit integer within a
+struct. Each <TT>pte_t</TT> points to an address of a page frame and all
+the addresses pointed to are guaranteed to be page aligned. Therefore, there
+are <TT>PAGE_SHIFT</TT> (12) bits in that 32 bit value that are free for
+status bits of the page table entry. A number of the protection and status
+bits are listed in Table <A >??</A>
+but what bits exist and what they mean varies between architectures.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>Bit</B>	</TD><TD VALIGN=top ALIGN=left><B>Function</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>_PAGE_PRESENT</TT><A NAME="@mainindex216"></A></TD><TD VALIGN=top ALIGN=left>Page is resident in memory and not swapped out</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>_PAGE_PROTNONE</TT><A NAME="@mainindex217"></A></TD><TD VALIGN=top ALIGN=left>Page is resident but not accessable</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>_PAGE_RW</TT><A NAME="@mainindex218"></A>	</TD><TD VALIGN=top ALIGN=left>Set if the page may be written to</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>_PAGE_USER</TT><A NAME="@mainindex219"></A></TD><TD VALIGN=top ALIGN=left>Set if the page is accessible from user space</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>_PAGE_DIRTY</TT><A NAME="@mainindex220"></A></TD><TD VALIGN=top ALIGN=left>Set if the page is written to</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>_PAGE_ACCESSED</TT><A NAME="@mainindex221"></A></TD><TD VALIGN=top ALIGN=left>Set if the page is accessed</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 3.1: Page Table Entry Protection and Status Bits</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Page Table Entry Protection and
+Status Bits"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>These bits are self-explanatory except for the <TT>_PAGE_PROTNONE</TT>
+which we will discuss further. On the x86 with Pentium III and higher,
+this bit is called the <EM>Page Attribute Table (PAT)</EM> while earlier
+architectures such as the Pentium II had this bit reserved. The PAT bit
+is used to indicate the size of the page the PTE is referencing. In a PGD
+entry, this same bit is instead called the <EM>Page Size Exception
+(PSE)</EM> bit so obviously these bits are meant to be used in conjunction.</P><P>As Linux does not use the PSE bit for user pages, the PAT bit is free in the
+PTE for other purposes. There is a requirement for having a page resident
+in memory but inaccessible to the userspace process such as when a region
+is protected with <TT>mprotect()</TT> with the <TT>PROT_NONE</TT>
+flag. When the region is to be protected, the <TT>_PAGE_PRESENT</TT>
+bit is cleared and the <TT>_PAGE_PROTNONE</TT> bit is set. The
+macro <TT>pte_present()</TT> checks if either of these bits are set
+and so the kernel itself knows the PTE is present, just inaccessible to
+<EM>userspace</EM> which is a subtle, but important point. As the hardware
+bit <TT>_PAGE_PRESENT</TT> is clear, a page fault will occur if the
+page is accessed so Linux can enforce the protection while still knowing
+the page is resident if it needs to swap it out or the process exits.</P><H2 CLASS="section"><A NAME="toc20"></A><A NAME="htoc17">3.3</A>  Using Page Table Entries</H2><P>
+<A NAME="@mainindex222"></A></P><P>Macros are defined in &lt;<TT>asm/pgtable.h</TT>&gt; which are important for
+the navigation and examination of page table entries. To navigate the page
+directories, three macros are provided which break up a linear address space
+into its component parts. <TT>pgd_offset()</TT><A NAME="@mainindex223"></A> takes an address and the
+<TT>mm_struct</TT> for the process and returns the PGD entry that covers
+the requested address. <TT>pmd_offset()</TT><A NAME="@mainindex224"></A> takes a PGD entry and an
+address and returns the relevant PMD. <TT>pte_offset()</TT><A NAME="@mainindex225"></A> takes a PMD
+and returns the relevant PTE. The remainder of the linear address provided
+is the offset within the page. The relationship between these fields is
+illustrated in Figure <A HREF="#fig: Page Table Layout">3.1</A>.</P><P>The second round of macros determine if the page table entries are present or
+may be used.</P><UL CLASS="itemize"><LI CLASS="li-itemize">	<TT>pte_none()</TT>, <TT>pmd_none()</TT> and <TT>pgd_none()</TT>
+	return 1 if the corresponding entry does not exist;</LI><LI CLASS="li-itemize">	<TT>pte_present()</TT>, <TT>pmd_present()</TT> and
+	<TT>pgd_present()</TT> return 1 if the corresponding page table
+	entries have the <TT>PRESENT</TT> bit set;</LI><LI CLASS="li-itemize">	<TT>pte_clear()</TT>, <TT>pmd_clear()</TT> and <TT>pgd_clear()</TT>
+	will clear the corresponding page table entry;</LI><LI CLASS="li-itemize">	<TT>pmd_bad()</TT> and <TT>pgd_bad()</TT> are used to check entries
+	when passed as input parameters to functions that may change the
+	value of the entries. Whether it returns 1 varies between the few
+	architectures that define these macros but for those that actually
+	define it, making sure the page entry is marked as present and
+	accessed are the two most important checks.</LI></UL><P>There are many parts of the VM which are littered with page table walk code and
+it is important to recognise it. A very simple example of a page table walk is
+the function <TT>follow_page()</TT> in <TT>mm/memory.c</TT>. The following
+is an excerpt from that function, the parts unrelated to the page table walk
+are omitted:</P><PRE CLASS="verbatim">407         pgd_t *pgd;
+408         pmd_t *pmd;
+409         pte_t *ptep, pte;
+410 
+411         pgd = pgd_offset(mm, address);
+412         if (pgd_none(*pgd) || pgd_bad(*pgd))
+413                 goto out;
+414 
+415         pmd = pmd_offset(pgd, address);
+416         if (pmd_none(*pmd) || pmd_bad(*pmd))
+417                 goto out;
+418 
+419         ptep = pte_offset(pmd, address);
+420         if (!ptep)
+421                 goto out;
+422 
+423         pte = *ptep;
+
+</PRE><P>It simply uses the three offset macros to navigate the page tables and the
+<TT>_none()</TT> and <TT>_bad()</TT> macros to make sure it is looking at
+a valid page table.</P><P>The third set of macros examine and set the permissions of an entry.
+The permissions determine what a userspace process can and cannot do with
+a particular page. For example, the kernel page table entries are never
+readable by a userspace process.</P><UL CLASS="itemize"><LI CLASS="li-itemize">	The read permissions for an entry are tested with
+	<TT>pte_read()</TT><A NAME="@mainindex226"></A>, set with <TT>pte_mkread()</TT><A NAME="@mainindex227"></A> and
+	cleared with <TT>pte_rdprotect()</TT><A NAME="@mainindex228"></A>;</LI><LI CLASS="li-itemize">	The write permissions are tested with <TT>pte_write()</TT><A NAME="@mainindex229"></A>,
+	set with <TT>pte_mkwrite()</TT><A NAME="@mainindex230"></A> and cleared with
+	<TT>pte_wrprotect()</TT><A NAME="@mainindex231"></A>;</LI><LI CLASS="li-itemize">	The execute permissions are tested with <TT>pte_exec()</TT><A NAME="@mainindex232"></A>,
+	set with <TT>pte_mkexec()</TT><A NAME="@mainindex233"></A> and cleared with
+	<TT>pte_exprotect()</TT><A NAME="@mainindex234"></A>. It is worth nothing that with the x86
+	architecture, there is no means of setting execute permissions on
+	pages so these three macros act the same way as the read macros;</LI><LI CLASS="li-itemize">	The permissions can be modified to a new value with
+	<TT>pte_modify()</TT><A NAME="@mainindex235"></A> but its use is almost non-existent. It
+	is only used in the function <TT>change_pte_range()</TT> in
+	<TT>mm/mprotect.c</TT>.</LI></UL><P>The fourth set of macros examine and set the state of an entry. There
+are only two bits that are important in Linux, the dirty bit and the
+accessed bit. To check these bits, the macros <TT>pte_dirty()</TT><A NAME="@mainindex236"></A>
+and <TT>pte_young()</TT><A NAME="@mainindex237"></A> macros are used. To set the bits, the macros
+<TT>pte_mkdirty()</TT><A NAME="@mainindex238"></A> and <TT>pte_mkyoung()</TT><A NAME="@mainindex239"></A> are used. To
+clear them, the macros <TT>pte_mkclean()</TT><A NAME="@mainindex240"></A> and <TT>pte_old()</TT><A NAME="@mainindex241"></A>
+are available.</P><H2 CLASS="section"><A NAME="toc21"></A><A NAME="htoc18">3.4</A>  Translating and Setting Page Table Entries</H2><P>
+<A NAME="@mainindex242"></A></P><P>This set of functions and macros deal with the mapping of addresses and pages
+to PTEs and the setting of the individual entries.</P><P>The macro <TT>mk_pte()</TT><A NAME="@mainindex243"></A> takes a <TT>struct page</TT> and protection
+bits and combines them together to form the <TT>pte_t</TT> that needs to
+be inserted into the page table. A similar macro <TT>mk_pte_phys()</TT><A NAME="@mainindex244"></A>
+exists which takes a physical page address as a parameter.</P><P>The macro <TT>pte_page()</TT><A NAME="@mainindex245"></A> returns the <TT>struct page</TT>
+which corresponds to the PTE entry. <TT>pmd_page()</TT><A NAME="@mainindex246"></A> returns the
+<TT>struct page</TT> containing the set of PTEs.</P><P>The macro <TT>set_pte()</TT><A NAME="@mainindex247"></A> takes a <TT>pte_t</TT> such as that
+returned by <TT>mk_pte()</TT> and places it within the processes page
+tables. <TT>pte_clear()</TT><A NAME="@mainindex248"></A> is the reverse operation. An additional
+function is provided called <TT>ptep_get_and_clear()</TT><A NAME="@mainindex249"></A> which clears an
+entry from the process page table and returns the <TT>pte_t</TT>. This
+is important when some modification needs to be made to either the PTE
+protection or the <TT>struct page</TT> itself.</P><H2 CLASS="section"><A NAME="toc22"></A><A NAME="htoc19">3.5</A>  Allocating and Freeing Page Tables</H2><P>
+<A NAME="@mainindex250"></A></P><P>The last set of functions deal with the allocation and freeing of page tables.
+Page tables, as stated, are physical pages containing an array of entries
+and the allocation and freeing of physical pages is a relatively expensive
+operation, both in terms of time and the fact that interrupts are disabled
+during page allocation. The allocation and deletion of page tables, at any
+of the three levels, is a very frequent operation so it is important the
+operation is as quick as possible.</P><P>Hence the pages used for the page tables are cached in a number of different
+lists called <EM>quicklists</EM><A NAME="@mainindex251"></A>. Each architecture implements these
+caches differently but the principles used are the same. For example, not
+all architectures cache PGDs because the allocation and freeing of them
+only happens during process creation and exit. As both of these are very
+expensive operations, the allocation of another page is negligible.</P><P><A NAME="@mainindex252"></A>PGDs, PMDs and PTEs have two sets of functions each for
+the allocation and freeing of page tables. The allocation functions are
+<TT>pgd_alloc()</TT><A NAME="@mainindex253"></A>, <TT>pmd_alloc()</TT><A NAME="@mainindex254"></A> and <TT>pte_alloc()</TT><A NAME="@mainindex255"></A>
+respectively and the free functions are, predictably enough, called
+<TT>pgd_free()</TT><A NAME="@mainindex256"></A>, <TT>pmd_free()</TT><A NAME="@mainindex257"></A> and <TT>pte_free()</TT><A NAME="@mainindex258"></A>.</P><P>Broadly speaking, the three implement caching with the use of three
+caches called <TT>pgd_quicklist</TT><A NAME="@mainindex259"></A>, <TT>pmd_quicklist</TT><A NAME="@mainindex260"></A>
+and <TT>pte_quicklist</TT><A NAME="@mainindex261"></A>. Architectures implement these three
+lists in different ways but one method is through the use of a LIFO type
+structure. Ordinarily, a page table entry contains points to other pages
+containing page tables or data. While cached, the first element of the list
+is used to point to the next free page table. During allocation, one page
+is popped off the list and during free, one is placed as the new head of
+the list. A count is kept of how many pages are used in the cache.</P><P>The quick allocation function from the <TT>pgd_quicklist</TT>
+is not externally defined outside of the architecture although
+<TT>get_pgd_fast()</TT><A NAME="@mainindex262"></A> is a common choice for the function name. The
+cached allocation function for PMDs and PTEs are publicly defined as
+<TT>pmd_alloc_one_fast()</TT><A NAME="@mainindex263"></A> and <TT>pte_alloc_one_fast()</TT><A NAME="@mainindex264"></A>.</P><P>If a page is not available from the cache, a page will be allocated using the
+physical page allocator (see Chapter <A HREF="understand009.html#chap: Physical Page Allocation">6</A>). The functions for the three levels of page tables are <TT>get_pgd_slow()</TT><A NAME="@mainindex265"></A>,
+<TT>pmd_alloc_one()</TT><A NAME="@mainindex266"></A> and <TT>pte_alloc_one()</TT><A NAME="@mainindex267"></A>.</P><P>Obviously a large number of pages may exist on these caches and so there
+is a mechanism in place for pruning them. Each time the caches grow or
+shrink, a counter is incremented or decremented and it has a high and low
+watermark. <TT>check_pgt_cache()</TT><A NAME="@mainindex268"></A> is called in two places to check
+these watermarks. When the high watermark is reached, entries from the cache
+will be freed until the cache size returns to the low watermark. The function
+is called after <TT>clear_page_tables()</TT> when a large number of page
+tables are potentially reached and is also called by the system idle task.</P><H2 CLASS="section"><A NAME="toc23"></A><A NAME="htoc20">3.6</A>  Kernel Page Tables</H2><P>
+<A NAME="sec: Kernel Page Tables"></A>
+<A NAME="@mainindex269"></A>
+<A NAME="@mainindex270"></A></P><P>When the system first starts, paging is not enabled as page tables do not
+magically initialise themselves. Each architecture implements this differently
+so only the x86 case will be discussed. The page table initialisation is
+divided into two phases. The bootstrap phase sets up page tables for just
+8MiB so the paging unit can be enabled. The second phase initialises the
+rest of the page tables. We discuss both of these phases below.</P><H3 CLASS="subsection">3.6.1  Bootstrapping</H3><P>
+<A NAME="sec: Bootstrapping"></A>
+<A NAME="@mainindex271"></A></P><P>The assembler function <TT>startup_32()</TT><A NAME="@mainindex272"></A> is responsible for
+enabling the paging unit in <TT>arch/i386/kernel/head.S</TT>. While
+all normal kernel code in <TT>vmlinuz</TT> is compiled with the base
+address at <TT>PAGE_OFFSET + 1MiB</TT>, the kernel is actually loaded
+beginning at the first megabyte (0x00100000) of memory. The first megabyte
+is used by some devices for communication with the BIOS and is skipped. The
+bootstrap code in this file treats 1MiB as its base address by subtracting
+<TT>__PAGE_OFFSET</TT> from any address until the paging unit is
+enabled so before the paging unit is enabled, a page table mapping has to
+be established which translates the 8MiB of physical memory to the virtual
+address <TT>PAGE_OFFSET</TT>.</P><P>Initialisation begins with statically defining at compile time an
+array called <TT>swapper_pg_dir</TT><A NAME="@mainindex273"></A> which is placed using linker
+directives at 0x00101000. It then establishes page table entries for 2
+pages, <TT>pg0</TT><A NAME="@mainindex274"></A> and <TT>pg1</TT><A NAME="@mainindex275"></A>. If the processor supports the
+<EM>Page Size Extension (PSE)</EM><A NAME="@mainindex276"></A> bit, it will be set so that pages
+will be translated are 4MiB pages, not 4KiB as is the normal case. The first
+pointers to <TT>pg0</TT> and <TT>pg1</TT> are placed to cover the region
+<TT>1-9MiB</TT> the second pointers to <TT>pg0</TT> and <TT>pg1</TT>
+are placed at <TT>PAGE_OFFSET+1MiB</TT>. This means that when paging is
+enabled, they will map to the correct pages using either physical or virtual
+addressing for just the kernel image. The rest of the kernel page tables
+will be initialised by <TT>paging_init()</TT>.</P><P>Once this mapping has been established, the paging unit is turned on by setting
+a bit in the <TT>cr0</TT> register and a jump takes places immediately to
+ensure the <EM>Instruction Pointer (EIP register)</EM> is correct.</P><H3 CLASS="subsection">3.6.2  Finalising</H3><P>The function responsible for finalising the page tables is called
+<TT>paging_init()</TT><A NAME="@mainindex277"></A>. The call graph for this function on the x86
+can be seen on Figure <A HREF="#fig: paging_init">3.4</A>. </P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html009.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 3.4: Call Graph: <TT>paging_init()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: paging_init"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The function first calls <TT>pagetable_init()</TT><A NAME="@mainindex278"></A> to initialise the
+page tables necessary to reference all physical memory in <TT>ZONE_DMA</TT>
+and <TT>ZONE_NORMAL</TT>. Remember that high memory in <TT>ZONE_HIGHMEM</TT>
+cannot be directly referenced and mappings are set up for it temporarily.
+For each <TT>pgd_t</TT> used by the kernel, the boot memory allocator
+(see Chapter <A HREF="understand008.html#chap: Boot Memory Allocator">5</A>) is called to allocate a page
+for the PMDs and the PSE bit will be set if available to use 4MiB TLB entries
+instead of 4KiB. If the PSE bit is not supported, a page for PTEs will be
+allocated for each <TT>pmd_t</TT>. If the CPU supports the PGE flag,
+it also will be set so that the page table entry will be global and visible
+to all processes.</P><P>Next, <TT>pagetable_init()</TT> calls <TT>fixrange_init()</TT><A NAME="@mainindex279"></A> to
+setup the fixed address space mappings at the end of the virtual address
+space starting at <TT>FIXADDR_START</TT>. These mappings are used
+for purposes such as the local APIC and the atomic kmappings between
+<TT>FIX_KMAP_BEGIN</TT><A NAME="@mainindex280"></A> and <TT>FIX_KMAP_END</TT><A NAME="@mainindex281"></A>
+required by <TT>kmap_atomic()</TT><A NAME="@mainindex282"></A>. Finally, the function calls
+<TT>fixrange_init()</TT> to initialise the page table entries required for
+normal high memory mappings with <TT>kmap()</TT>.</P><P>Once <TT>pagetable_init()</TT> returns, the page tables for kernel space
+are now full initialised so the static PGD (<TT>swapper_pg_dir</TT>)
+is loaded into the CR3 register so that the static table is now being used
+by the paging unit.</P><P>The next task of the <TT>paging_init()</TT> is responsible for
+calling <TT>kmap_init()</TT> to initialise each of the PTEs with the
+<TT>PAGE_KERNEL</TT> protection flags. The final task is to call
+<TT>zone_sizes_init()</TT><A NAME="@mainindex283"></A> which initialises all the zone structures used.</P><H2 CLASS="section"><A NAME="toc24"></A><A NAME="htoc21">3.7</A>  Mapping addresses to a <TT>struct page</TT></H2><P>
+<A NAME="sec: Mapping addresses to struct pages"></A>
+<A NAME="@mainindex284"></A></P><P>There is a requirement for Linux to have a fast method of mapping virtual
+addresses to physical addresses and for mapping <TT>struct page</TT>s to
+their physical address. Linux achieves this by knowing where, in both virtual
+and physical memory, the global <TT>mem_map</TT> array is as the global array
+has pointers to all <TT>struct page</TT>s representing physical memory
+in the system. All architectures achieve this with very similar mechanisms
+but for illustration purposes, we will only examine the x86 carefully. This
+section will first discuss how physical addresses are mapped to kernel
+virtual addresses and then what this means to the <TT>mem_map</TT> array.</P><H3 CLASS="subsection">3.7.1  Mapping Physical to Virtual Kernel Addresses</H3><P>
+<A NAME="sec: Mapping Physical to Virtual Kernel Addresses"></A>
+<A NAME="@mainindex285"></A></P><P>As we saw in Section <A HREF="#sec: Kernel Page Tables">3.6</A>, Linux sets up a
+direct mapping from the physical address 0 to the virtual address
+<TT>PAGE_OFFSET</TT> at 3GiB on the x86. This means that any
+virtual address can be translated to the physical address by simply
+subtracting <TT>PAGE_OFFSET</TT> which is essentially what the function
+<TT>virt_to_phys()</TT> with the macro <TT>__pa()</TT><A NAME="@mainindex286"></A> does:</P><PRE CLASS="verbatim">/* from &lt;asm-i386/page.h&gt; */
+132 #define __pa(x)                 ((unsigned long)(x)-PAGE_OFFSET)
+
+/* from &lt;asm-i386/io.h&gt; */
+ 76 static inline unsigned long virt_to_phys(volatile void * address)
+ 77 {
+ 78         return __pa(address);
+ 79 }
+</PRE><P>Obviously the reverse operation involves simply adding <TT>PAGE_OFFSET</TT>
+which is carried out by the function <TT>phys_to_virt()</TT><A NAME="@mainindex287"></A> with
+the macro <TT>__va()</TT><A NAME="@mainindex288"></A>. Next we see how this helps the mapping of
+<TT>struct page</TT>s to physical addresses.</P><H3 CLASS="subsection">3.7.2  Mapping <TT>struct page</TT>s to Physical Addresses</H3><P>As we saw in Section <A HREF="#sec: Bootstrapping">3.6.1</A>, the kernel image is located at
+the physical address 1MiB, which of course translates to the virtual address
+<TT>PAGE_OFFSET + 0x00100000</TT> and a virtual region totaling about 8MiB
+is reserved for the image which is the region that can be addressed by two
+PGDs. This would imply that the first available memory to use is located
+at <TT>0xC0800000</TT> but that is not the case. Linux tries to reserve
+the first 16MiB of memory for <TT>ZONE_DMA</TT> so first virtual area used for
+kernel allocations is actually <TT>0xC1000000</TT>. This is where the global
+<TT>mem_map</TT> is usually located. <TT>ZONE_DMA</TT> will be still get used,
+but only when absolutely necessary.</P><P>Physical addresses are translated to <TT>struct page</TT>s by treating
+them as an index into the <TT>mem_map</TT> array. Shifting a physical address
+<TT>PAGE_SHIFT</TT> bits to the right will treat it as a PFN from physical
+address 0 which is <EM>also</EM> an index within the <TT>mem_map</TT> array.
+This is exactly what the macro <TT>virt_to_page()</TT><A NAME="@mainindex289"></A> does which is
+declared as follows in &lt;<TT>asm-i386/page.h</TT>&gt;:</P><PRE CLASS="verbatim">#define virt_to_page(kaddr) (mem_map + (__pa(kaddr) &gt;&gt; PAGE_SHIFT))
+</PRE><P>The macro <TT>virt_to_page()</TT> takes the virtual address <TT>kaddr</TT>,
+converts it to the physical address with <TT>__pa()</TT>, converts it into
+an array index by bit shifting it right <TT>PAGE_SHIFT</TT> bits and
+indexing into the <TT>mem_map</TT> by simply adding them together. No macro
+is available for converting <TT>struct page</TT>s to physical addresses
+but at this stage, it should be obvious to see how it could be calculated.</P><H2 CLASS="section"><A NAME="toc25"></A><A NAME="htoc22">3.8</A>  Translation Lookaside Buffer (TLB)</H2><P>
+<A NAME="sec: Translation Lookaside Buffer"></A>
+<A NAME="@mainindex290"></A><A NAME="@mainindex291"></A></P><P>Initially, when the processor needs to map a virtual address to a physical
+address, it must traverse the full page directory searching for the PTE
+of interest. This would normally imply that each assembly instruction that
+references memory actually requires several separate memory references for the
+page table traversal [<A HREF="understand031.html#tanenbaum01"><CITE>Tan01</CITE></A>]. To avoid this considerable overhead,
+architectures take advantage of the fact that most processes exhibit a locality
+of reference or, in other words, large numbers of memory references tend to be
+for a small number of pages. They take advantage of this reference locality by
+providing a <EM>Translation Lookaside Buffer (TLB)</EM><A NAME="@mainindex292"></A> which is a small
+associative memory that caches virtual to physical page table resolutions.</P><P>Linux assumes that the most architectures support some type of TLB although
+the architecture independent code does not cares how it works. Instead,
+architecture dependant hooks are dispersed throughout the VM code at points
+where it is known that some hardware with a TLB would need to perform a
+TLB related operation. For example, when the page tables have been updated,
+such as after a page fault has completed, the processor may need to be update
+the TLB for that virtual address mapping.</P><P>Not all architectures require these type of operations but because some do,
+the hooks have to exist. If the architecture does not require the operation
+to be performed, the function for that TLB operation will a null operation
+that is optimised out at compile time.</P><P>A quite large list of TLB API hooks, most of which are declared in
+&lt;<TT>asm/pgtable.h</TT>&gt;, are listed in Tables <A HREF="#tab: Translation Lookaside Buffer Flush API">3.2</A>
+and <A >??</A>
+and the APIs are quite well documented in the kernel
+source by <TT>Documentation/cachetlb.txt</TT> [<A HREF="understand031.html#miller00"><CITE>Mil00</CITE></A>]. It is
+possible to have just one TLB flush function but as both TLB flushes and
+TLB refills are <EM>very</EM> expensive operations, unnecessary TLB flushes
+should be avoided if at all possible. For example, when context switching,
+Linux will avoid loading new page tables using <EM>Lazy TLB Flushing</EM>,
+discussed further in Section <A HREF="understand007.html#sec: Process Address Space Descriptor">4.3</A>.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex293"></A><TT>void flush_tlb_all(void)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> <A NAME="@mainindex294"></A>This
+flushes the entire TLB on all processors running in the system making it the
+most expensive TLB flush operation. After it completes, all modifications to
+the page tables will be visible globally. This is required after the kernel
+page tables, which are global in nature, have been modified such as after
+<TT>vfree()</TT> (See Chapter <A HREF="understand010.html#chap: Non-Contiguous Memory Allocation">7</A>)
+completes or after the PKMap is flushed (See Chapter <A HREF="understand012.html#chap: High Memory Management">9</A>).</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left><P><A NAME="@mainindex295"></A><TT>void flush_tlb_mm(struct mm_struct *mm)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This flushes all TLB entries related to the userspace portion
+(i.e. below <TT>PAGE_OFFSET</TT>) for the requested mm context. In
+some architectures, such as MIPS, this will need to be performed for all
+processors but usually it is confined to the local processor. This is
+only called when an operation has been performed that affects the entire
+address space, such as after all the address mapping have been duplicated
+with <TT>dup_mmap()</TT> for fork or after all memory mappings have been
+deleted with <TT>exit_mmap()</TT>.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex296"></A><TT>void flush_tlb_range(struct mm_struct *mm, unsigned long
+start, unsigned long end)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> As the name indicates, this flushes all entries within the
+requested userspace range for the mm context. This is used after a new region
+has been moved or changeh as during <TT>mremap()</TT> which moves regions
+or <TT>mprotect()</TT> which changes the permissions. The function is also
+indirectly used during unmapping a region with <TT>munmap()</TT> which calls
+<TT>tlb_finish_mmu()</TT> which tries to use <TT>flush_tlb_range()</TT>
+intelligently. This API is provided for architectures that can remove ranges
+of TLB entries quickly rather than iterating with <TT>flush_tlb_page()</TT>.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 3.2: Translation Lookaside Buffer Flush API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Translation Lookaside Buffer Flush API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex297"></A><TT>void flush_tlb_page(struct vm_area_struct *vma, unsigned long addr)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Predictably, this API is responsible for flushing a single page
+from the TLB. The two most common usage of it is for flushing the TLB after
+a page has been faulted in or has been paged out.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex298"></A><TT>void flush_tlb_pgtables(struct mm_struct *mm, unsigned long
+start, unsigned long end)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This API is called with the page tables are being torn down
+and freed. Some platforms cache the lowest level of the page table, i.e. the
+actual page frame storing entries, which needs to be flushed when the pages
+are being deleted. This is called when a region is being unmapped and the
+page directory entries are being reclaimed.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex299"></A><TT>void update_mmu_cache(struct vm_area_struct *vma, unsigned
+long addr, pte_t pte)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This API is only called after a page fault completes. It tells the
+architecture dependant code that a new translation now exists at <TT>pte</TT>
+for the virtual address <TT>addr</TT>. It is up to each architecture how
+this information should be used. For example, Sparc64 uses the information
+to decide if the local CPU needs to flush it's data cache or does it need
+to send an IPI to a remote processor.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 3.3: Translation Lookaside Buffer Flush API (cont)</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Translation Lookaside Buffer
+Flush API (cont)"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc26"></A><A NAME="htoc23">3.9</A>  Level 1 CPU Cache Management</H2><P>
+<A NAME="sec: Level 1 CPU Cache Management"></A>
+<A NAME="@mainindex300"></A>
+<A NAME="@mainindex301"></A></P><P>As Linux manages the CPU Cache in a very similar fashion to the TLB, this
+section covers how Linux utilises and manages the CPU cache. CPU caches,
+like TLB caches, take advantage of the fact that programs tend to exhibit a
+locality of reference [<A HREF="understand031.html#sears00"><CITE>Sea00</CITE></A>] [<A HREF="understand031.html#severance98"><CITE>CS98</CITE></A>]. To avoid having to
+fetch data from main memory for each reference, the CPU will instead cache
+very small amounts of data in the CPU cache. Frequently, there is two levels
+called the Level 1 and Level 2 CPU caches. The Level 2 CPU caches are larger
+but slower than the L1 cache but Linux only concerns itself with the Level
+1 or L1 cache.</P><P>CPU caches are organised into <EM>lines</EM><A NAME="@mainindex302"></A>. Each line
+is typically quite small, usually 32 bytes and each line is aligned to it's
+boundary size. In other words, a cache line of 32 bytes will be aligned on a 32
+byte address. With Linux, the size of the line is <TT>L1_CACHE_BYTES</TT>
+which is defined by each architecture.</P><P>How addresses are mapped to cache lines vary between architectures but
+the mappings come under three headings, <EM>direct mapping</EM><A NAME="@mainindex303"></A>,
+<EM>associative mapping</EM><A NAME="@mainindex304"></A> and <EM>set associative
+mapping</EM><A NAME="@mainindex305"></A>. Direct mapping is the simpliest approach where each block of
+memory maps to only one possible cache line. With associative mapping,
+any block of memory can map to any cache line. Set associative mapping is
+a hybrid approach where any block of memory can may to any line but only
+within a subset of the available lines. Regardless of the mapping scheme,
+they each have one thing in common, addresses that are close together and
+aligned to the cache size are likely to use different lines. Hence Linux
+employs simple tricks to try and maximise cache usage</P><UL CLASS="itemize"><LI CLASS="li-itemize">Frequently accessed structure fields are at the start of the structure to
+increase the chance that only one line is needed to address the common fields;</LI><LI CLASS="li-itemize">Unrelated items in a structure should try to be at least cache size
+bytes apart to avoid false sharing between CPUs;</LI><LI CLASS="li-itemize">Objects in the general caches, such as the <TT>mm_struct</TT>
+cache, are aligned to the L1 CPU cache to avoid false sharing.</LI></UL><P>If the CPU references an address that is not in the cache, a <EM>cache
+miss</EM><A NAME=""></A>ccurs and the data is fetched from main
+memory. The cost of cache misses is quite high as a reference to cache can
+typically be performed in less than 10ns where a reference to main memory
+typically will cost between 100ns and 200ns. The basic objective is then to
+have as many cache hits<A NAME="@mainindex306"></A> and as few cache misses<A NAME="@mainindex307"></A> as possible.</P><P>Just as some architectures do not automatically manage their TLBs, some do not
+automatically manage their CPU caches. The hooks are placed in locations where
+the virtual to physical mapping changes, such as during a page table update.
+The CPU cache flushes should always take place first as some CPUs require
+a virtual to physical mapping to exist when the virtual address is being
+flushed from the cache. The three operations that require proper ordering
+are important is listed in Table <A HREF="#tab: Cache and TLB Flush Ordering">3.4</A>. </P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD ALIGN=left NOWRAP><B>Flushing Full MM</B></TD><TD ALIGN=left NOWRAP><B>Flushing Range</B></TD><TD ALIGN=left NOWRAP><B>Flushing Page</B></TD></TR>
+<TR><TD ALIGN=left NOWRAP>
+<TT>flush_cache_mm()</TT></TD><TD ALIGN=left NOWRAP><TT>flush_cache_range()</TT></TD><TD ALIGN=left NOWRAP><TT>flush_cache_page()</TT></TD></TR>
+<TR><TD ALIGN=left NOWRAP>
+Change all page tables</TD><TD ALIGN=left NOWRAP>Change page table range</TD><TD ALIGN=left NOWRAP>Change single PTE</TD></TR>
+<TR><TD ALIGN=left NOWRAP>
+<TT>flush_tlb_mm()</TT></TD><TD ALIGN=left NOWRAP><TT>flush_tlb_range()</TT></TD><TD ALIGN=left NOWRAP><TT>flush_tlb_page()</TT></TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 3.4: Cache and TLB Flush Ordering</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Cache and TLB Flush Ordering"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The API used for flushing the caches are declared in &lt;<TT>asm/pgtable.h</TT>&gt;
+and are listed in Tables <A HREF="#tab: CPU Cache Flush API">3.5</A>. In many respects,
+it is very similar to the TLB flushing API.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex308"></A><TT>void flush_cache_all(void)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This flushes the entire CPU cache system making it the most
+severe flush operation to use. It is used when changes to the kernel page
+tables, which are global in nature, are to be performed.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex309"></A><TT>void flush_cache_mm(struct mm_struct mm)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This flushes all entires related to the address space. On
+completion, no cache lines will be associated with <TT>mm</TT>.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex310"></A><TT>void flush_cache_range(struct mm_struct *mm, unsigned long start,
+unsigned long end)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This flushes lines related to a range of addresses in the address
+space. Like it's TLB equivilant, it is provided in case the architecture has an
+efficent way of flushing ranges instead of flushing each individual page.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex311"></A><TT>void flush_cache_page(struct vm_area_struct *vma, unsigned long
+vmaddr)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This is for flushing a single page sized region. The
+VMA is supplied as the <TT>mm_struct</TT> is easily accessible
+via <TT>vma</TT>&#X2192;<TT>vm_mm</TT>. Additionally, by testing for the
+<TT>VM_EXEC</TT> flag, the architecture will know if the region is
+executable for caches that separate the instructions and data caches. VMAs
+are described further in Chapter <A HREF="understand007.html#chap: Process Address Space">4</A>.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 3.5: CPU Cache Flush API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: CPU Cache Flush API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>It does not end there though. A second set of interfaces is required to
+avoid virtual aliasing problems. The problem is that some CPUs select lines
+based on the virtual address meaning that one physical address can exist
+on multiple lines leading to cache coherency problems. Architectures with
+this problem may try and ensure that shared mappings will only use addresses
+as a stop-gap measure. However, a proper API to address is problem is also
+supplied which is listed in Table <A HREF="#tab: CPU D-Cache and I-Cache Flush API">3.6</A>.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex312"></A><TT>void flush_page_to_ram(unsigned long address)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This is a deprecated API which should no longer be used and in
+fact will be removed totally for 2.6. It is covered here for completeness
+and because it is still used. The function is called when a new physical
+page is about to be placed in the address space of a process. It is required
+to avoid writes from kernel space being invisible to userspace after the
+mapping occurs.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex313"></A><TT>void flush_dcache_page(struct page *page)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This function is called when the kernel writes to or copies
+from a page cache page as these are likely to be mapped by multiple processes.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex314"></A><TT>void flush_icache_range(unsigned long address, unsigned long endaddr)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This is called when the kernel stores information in addresses
+that is likely to be executed, such as when a kermel module has been loaded.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex315"></A><TT>void flush_icache_user_range(struct vm_area_struct *vma, struct page *page, unsigned long addr, int len)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This is similar to <TT>flush_icache_range()</TT> except it
+is called when a userspace range is affected. Currently, this is only used
+for <TT>ptrace()</TT> (used when debugging) when the address space is being
+accessed by <TT>access_process_vm()</TT>.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex316"></A><TT>void flush_icache_page(struct vm_area_struct *vma, struct page *page)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This is called when a page-cache page is about to be mapped. It
+is up to the architecture to use the VMA flags to determine whether the
+I-Cache or D-Cache should be flushed.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 3.6: CPU D-Cache and I-Cache Flush API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: CPU D-Cache and I-Cache Flush API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc27"></A><A NAME="htoc24">3.10</A>  What's New In 2.6</H2><P>
+<A NAME="new: Page Table Management"></A></P><P>Most of the mechanics for page table management are essentially the same
+for 2.6 but the changes that have been introduced are quite wide reaching
+and the implementations in-depth.</P><H5 CLASS="paragraph">MMU-less Architecture Support</H5><P> A new file has been introduced
+called <TT>mm/nommu.c</TT>. This source file contains replacement code for
+functions that assume the existence of a MMU like <TT>mmap()</TT> for example.
+This is to support architectures, usually microcontrollers, that have no
+MMU. Much of the work in this area was developed by the uCLinux Project
+(<EM>http://www.uclinux.org</EM>).</P><H5 CLASS="paragraph">Reverse Mapping</H5><P> <A NAME="@mainindex317"></A> The most significant
+and important change to page table management is the introduction of
+<EM>Reverse Mapping (rmap)</EM><A NAME="@mainindex318"></A>. Referring to it as &#X201C;rmap&#X201D; is deliberate
+as it is the common usage of the &#X201C;acronym&#X201D; and should not be confused with
+the -rmap tree developed by Rik van Riel which has many more alterations to
+the stock VM than just the reverse mapping.</P><P>In a single sentence, rmap grants the ability to locate all PTEs which
+map a particular page given just the <TT>struct page</TT>. In 2.4,
+the only way to find all PTEs which map a shared page, such as a memory
+mapped shared library, is to linearaly search all page tables belonging to
+all processes. This is far too expensive and Linux tries to avoid the problem
+by using the swap cache (see Section <A HREF="understand014.html#sec: Swap Cache">11.4</A>). This means that
+with many shared pages, Linux may have to swap out entire processes regardless
+of the page age and usage patterns. 2.6 instead has a <EM>PTE chain</EM><A NAME="@mainindex319"></A>
+associated with every <TT>struct page</TT> which may be traversed to
+remove a page from all page tables that reference it. This way, pages in
+the LRU can be swapped out in an intelligent manner without resorting to
+swapping entire processes.</P><P>As might be imagined by the reader, the implementation of this simple concept
+is a little involved. The first step in understanding the implementation is
+the <TT>union pte</TT> that is a field in <TT>struct page</TT>. This
+has union has two fields, a pointer to a <TT>struct pte_chain</TT> called
+<TT>chain</TT> and a <TT>pte_addr_t</TT> called <TT>direct</TT>. The
+union is an optisation whereby <TT>direct</TT> is used to save memory if
+there is only one PTE mapping the entry, otherwise a chain is used. The type
+<TT>pte_addr_t</TT> varies between architectures but whatever its type,
+it can be used to locate a PTE, so we will treat it as a <TT>pte_t</TT>
+for simplicity.</P><P>The <TT>struct pte_chain</TT> is a little more complex. The struct
+itself is very simple but it is <EM>compact</EM> with overloaded fields
+and a lot of development effort has been spent on making it small and
+efficient. Fortunately, this does not make it indecipherable.</P><P>First, it is the responsibility of the slab allocator to allocate and
+manage <TT>struct pte_chain</TT>s as it is this type of task the slab
+allocator is best at. Each <TT>struct pte_chain</TT> can hold up to
+<TT>NRPTE</TT><A NAME="@mainindex320"></A> pointers to PTE structures. Once that many PTEs have been
+filled, a <TT>struct pte_chain</TT> is allocated and added to the chain.</P><P>The <TT>struct pte_chain</TT> has two fields. The first is
+<TT>unsigned long next_and_idx</TT> which has two purposes. When
+<TT>next_and_idx</TT> is ANDed with <TT>NRPTE</TT>, it returns the
+number of PTEs currently in this <TT>struct pte_chain</TT> indicating
+where the next free slot is. When <TT>next_and_idx</TT> is ANDed with the
+negation of <TT>NRPTE</TT> (i.e. &#X223C;<TT>NRPTE</TT>), a pointer to the
+next <TT>struct pte_chain</TT> in the chain is returned<SUP><A NAME="text9" HREF="#note9">1</A></SUP>. This is basically how a PTE chain is implemented.</P><P>To give a taste of the rmap intricacies, we'll give an example of what happens
+when a new PTE needs to map a page. The basic process is to have the caller
+allocate a new <TT>pte_chain</TT> with <TT>pte_chain_alloc()</TT>. This
+allocated chain is passed with the <TT>struct page</TT> and the PTE to
+<TT>page_add_rmap()</TT>. If the existing PTE chain associated with the
+page has slots available, it will be used and the <TT>pte_chain</TT>
+allocated by the caller returned. If no slots were available, the allocated
+<TT>pte_chain</TT> will be added to the chain and NULL returned.</P><P>There is a quite substantial API associated with rmap, for tasks such as
+creating chains and adding and removing PTEs to a chain, but a full listing
+is beyond the scope of this section. Fortunately, the API is confined to
+<TT>mm/rmap.c</TT> and the functions are heavily commented so their purpose
+is clear.</P><P>There are two main benefits, both related to pageout, with the introduction of
+reverse mapping. The first is with the setup and tear-down of pagetables. As
+will be seen in Section <A HREF="understand014.html#sec: Swap Cache">11.4</A>, pages being paged out are
+placed in a swap cache and information is written into the PTE necessary to
+find the page again. This can lead to multiple minor faults as pages are
+put into the swap cache and then faulted again by a process. With rmap,
+the setup and removal of PTEs is atomic. The second major benefit is when
+pages need to paged out, finding all PTEs referencing the pages is a simple
+operation but impractical with 2.4, hence the swap cache.</P><P>Reverse mapping is not without its cost though. The first, and obvious one,
+is the additional space requirements for the PTE chains. Arguably, the second
+is a CPU cost associated with reverse mapping but it has not been proved
+to be significant. What is important to note though is that reverse mapping
+is only a benefit when pageouts are frequent. If the machines workload does
+not result in much pageout or memory is ample, reverse mapping is all cost
+with little or no benefit. At the time of writing, the merits and downsides
+to rmap is still the subject of a number of discussions.</P><H5 CLASS="paragraph">Object-Based Reverse Mapping</H5><P> 
+<A NAME="@mainindex321"></A></P><P>The reverse mapping required for each page can have very expensive space
+requirements. To compound the problem, many of the reverse mapped pages in a
+VMA will be essentially identical. One way of addressing this is to reverse
+map based on the VMAs rather than individual pages. That is, instead of
+having a reverse mapping for each page, all the VMAs which map a particular
+page would be traversed and unmap the page from each. Note that objects
+in this case refers to the VMAs, not an object in the object-orientated
+sense of the word<SUP><A NAME="text10" HREF="#note10">2</A></SUP>. At the time of writing, this feature has not been merged yet and
+was last seen in kernel 2.5.68-mm1 but there is a strong incentive to have
+it available if the problems with it can be resolved. For the very curious,
+the patch for just file/device backed objrmap at this release is available
+<SUP><A NAME="text11" HREF="#note11">3</A></SUP>
+but it is only for the very very curious reader.</P><P>There are two tasks that require all PTEs that map a page to be traversed. The
+first task is <TT>page_referenced()</TT> which checks all PTEs that map a page
+to see if the page has been referenced recently. The second task is when a page
+needs to be unmapped from all processes with <TT>try_to_unmap()</TT>. To
+complicate matters further, there are two types of mappings that must be
+reverse mapped, those that are backed by a file or device and those that
+are anonymous. In both cases, the basic objective is to traverse all VMAs
+which map a particular page and then walk the page table for that VMA to get
+the PTE. The only difference is how it is implemented. The case where it is
+backed by some sort of file is the easiest case and was implemented first so
+we'll deal with it first. For the purposes of illustrating the implementation,
+we'll discuss how <TT>page_referenced()</TT> is implemented.</P><P><TT>page_referenced()</TT> calls <TT>page_referenced_obj()</TT> which is
+the top level function for finding all PTEs within VMAs that map the page. As
+the page is mapped for a file or device, <TT>page</TT>&#X2192;<TT>mapping</TT>
+contains a pointer to a valid <TT>address_space</TT>. The
+<TT>address_space</TT> has two linked lists which contain all VMAs
+which use the mapping with the <TT>address_space</TT>&#X2192;<TT>i_mmap</TT>
+and <TT>address_space</TT>&#X2192;<TT>i_mmap_shared</TT> fields. For every
+VMA that is on these linked lists, <TT>page_referenced_obj_one()</TT>
+is called with the VMA and the page as parameters. The function
+<TT>page_referenced_obj_one()</TT> first checks if the page is in an
+address managed by this VMA and if so, traverses the page tables of the
+<TT>mm_struct</TT> using the VMA (<TT>vma</TT>&#X2192;<TT>vm_mm</TT>) until
+it finds the PTE mapping the page for that <TT>mm_struct</TT>.</P><P>Anonymous page tracking is a lot trickier and was implented in a number
+of stages. It only made a very brief appearance and was removed again in
+2.5.65-mm4 as it conflicted with a number of other changes. The first
+stage in the implementation was to use <TT>page</TT>&#X2192;<TT>mapping</TT>
+and <TT>page</TT>&#X2192;<TT>index</TT> fields to track <TT>mm_struct</TT>
+and <TT>address</TT> pairs. These fields previously had been used
+to store a pointer to <TT>swapper_space</TT> and a pointer to the
+<TT>swp_entry_t</TT> (See Chapter <A HREF="understand014.html#chap: Swap Management">11</A>). Exactly
+how it is addressed is beyond the scope of this section but the summary is
+that <TT>swp_entry_t</TT> is stored in <TT>page</TT>&#X2192;<TT>private</TT></P><P><TT>try_to_unmap_obj()</TT> works in a similar fashion but obviously,
+all the PTEs that reference a page with this method can do so without needing
+to reverse map the individual pages. There is a serious search complexity
+problem that is preventing it being merged. The scenario that describes the
+problem is as follows;</P><P>Take a case where 100 processes have 100 VMAs mapping a single file. To unmap
+a <EM>single</EM> page in this case with object-based reverse mapping would
+require 10,000 VMAs to be searched, most of which are totally unnecessary. With
+page based reverse mapping, only 100 <TT>pte_chain</TT> slots need to be
+examined, one for each process. An optimisation was introduced to order VMAs in
+the <TT>address_space</TT> by virtual address but the search for a single
+page is still far too expensive for object-based reverse mapping to be merged.</P><H5 CLASS="paragraph">PTEs in High Memory</H5><P>
+<A NAME="@mainindex322"></A></P><P>In 2.4, page table entries exist in <TT>ZONE_NORMAL</TT> as the kernel needs to
+be able to address them directly during a page table walk. This was acceptable
+until it was found that, with high memory machines, <TT>ZONE_NORMAL</TT>
+was being consumed by the third level page table PTEs. The obvious answer
+is to move PTEs to high memory which is exactly what 2.6 does.</P><P>As we will see in Chapter <A HREF="understand012.html#chap: High Memory Management">9</A>, addressing
+information in high memory is far from free, so moving PTEs to high memory
+is a compile time configuration option. In short, the problem is that the
+kernel must map pages from high memory into the lower address space before it
+can be used but there is a very limited number of slots available for these
+mappings introducing a troublesome bottleneck. However, for applications with
+a large number of PTEs, there is little other option. At time of writing,
+a proposal has been made for having a User Kernel Virtual Area (UKVA) which
+would be a region in kernel space private to each process but it is unclear
+if it will be merged for 2.6 or not.</P><P>To take the possibility of high memory mapping into account,
+the macro <TT>pte_offset()</TT> from 2.4 has been replaced with
+<TT>pte_offset_map()</TT><A NAME="@mainindex323"></A> in 2.6. If PTEs are in low memory, this will
+behave the same as <TT>pte_offset()</TT> and return the address of the
+PTE. If the PTE is in high memory, it will first be mapped into low memory
+with <TT>kmap_atomic()</TT> so it can be used by the kernel. This PTE must
+be unmapped as quickly as possible with <TT>pte_unmap()</TT>.</P><P>In programming terms, this means that page table walk code looks slightly
+different. In particular, to find the PTE for a given address, the code now
+reads as (taken from <TT>mm/memory.c</TT>);</P><PRE CLASS="verbatim">640         ptep = pte_offset_map(pmd, address);
+641         if (!ptep)
+642                 goto out;
+643 
+644         pte = *ptep;
+645         pte_unmap(ptep);
+</PRE><P>Additionally, the PTE allocation API has changed. Instead of
+<TT>pte_alloc()</TT>, there is now a <TT>pte_alloc_kernel()</TT> for use
+with kernel PTE mappings and <TT>pte_alloc_map()</TT> for userspace mapping.
+The principal difference between them is that <TT>pte_alloc_kernel()</TT>
+will never use high memory for the PTE.</P><P>In memory management terms, the overhead of having to map the PTE from high
+memory should not be ignored. Only one PTE may be mapped per CPU at a time,
+although a second may be mapped with <TT>pte_offset_map_nested()</TT>. This
+introduces a penalty when all PTEs need to be examined, such as during
+<TT>zap_page_range()</TT> when all PTEs in a given range need to be unmapped.</P><P>At time of writing, a patch has been submitted which places PMDs in high
+memory using essentially the same mechanism and API changes. It is likely
+that it will be merged.</P><H5 CLASS="paragraph">Huge TLB Filesystem</H5><P> <A NAME="@mainindex324"></A> Most
+modern architectures support more than one page size. For example, on
+many x86 architectures, there is an option to use 4KiB pages or 4MiB
+pages. Traditionally, Linux only used large pages for mapping the actual
+kernel image and no where else. As TLB slots are a scarce resource, it is
+desirable to be able to take advantages of the large pages especially on
+machines with large amounts of physical memory.</P><P>In 2.6, Linux allows processes to use &#X201C;huge pages&#X201D;, the size of which
+is determined by <TT>HPAGE_SIZE</TT>. The number of available
+huge pages is determined by the system administrator by using the
+<TT>/proc/sys/vm/nr_hugepages</TT> proc interface which ultimatly uses
+the function <TT>set_hugetlb_mem_size()</TT>. As the success of the
+allocation depends on the availability of physically contiguous memory,
+the allocation should be made during system startup.</P><P>The root of the implementation is a <EM>Huge TLB
+Filesystem (hugetlbfs)</EM><A NAME="@mainindex325"></A> which is a pseudo-filesystem implemented in
+<TT>fs/hugetlbfs/inode.c</TT>. Basically, each file in this filesystem is
+backed by a huge page. During initialisation, <TT>init_hugetlbfs_fs()</TT>
+registers the file system and mounts it as an internal filesystem with
+<TT>kern_mount()</TT>.</P><P>There are two ways that huge pages may be accessed by a process. The first
+is by using <TT>shmget()</TT> to setup a shared region backed by huge pages
+and the second is the call <TT>mmap()</TT> on a file opened in the huge
+page filesystem.</P><P>When a shared memory region should be backed by huge pages, the process
+should call <TT>shmget()</TT> and pass <TT>SHM_HUGETLB</TT><A NAME="@mainindex326"></A> as one
+of the flags. This results in <TT>hugetlb_zero_setup()</TT> being called
+which creates a new file in the root of the internal hugetlb filesystem. A
+file is created in the root of the internal filesystem. The name of the
+file is determined by an atomic counter called <TT>hugetlbfs_counter</TT>
+which is incremented every time a shared region is setup.</P><P>To create a file backed by huge pages, a filesystem of type hugetlbfs must
+first be mounted by the system administrator. Instructions on how to perform
+this task are detailed in <TT>Documentation/vm/hugetlbpage.txt</TT>. Once the
+filesystem is mounted, files can be created as normal with the system call
+<TT>open()</TT>. When <TT>mmap()</TT> is called on the open file, the
+<TT>file_operations</TT> struct <TT>hugetlbfs_file_operations</TT>
+ensures that <TT>hugetlbfs_file_mmap()</TT> is called to setup the region
+properly.</P><P>Huge TLB pages have their own function for the management of page tables,
+address space operations and filesystem operations. The names of the functions
+for page table management can all be seen in &lt;<TT>linux/hugetlb.h</TT>&gt;
+and they are named very similar to their &#X201C;normal&#X201D; page equivalents. The
+implementation of the hugetlb functions are located near their normal page
+equivalents so are easy to find.</P><H5 CLASS="paragraph">Cache Flush Management</H5><P> The changes here are minimal. The API
+function <TT>flush_page_to_ram()</TT> has being totally removed and a
+new API <TT>flush_dcache_range()</TT> has been introduced.
+
+	</P><HR CLASS="footnoterule"><DL CLASS="thefootnotes"><DT CLASS="dt-thefootnotes">
+<A NAME="note9" HREF="#text9">1</A></DT><DD CLASS="dd-thefootnotes">Told
+you it was compact
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note10" HREF="#text10">2</A></DT><DD CLASS="dd-thefootnotes">Don't blame me, I didn't name it. In fact the
+original patch for this feature came with the comment &#X201C;From Dave. Crappy
+name&#X201D;
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note11" HREF="#text11">3</A></DT><DD CLASS="dd-thefootnotes"><EM>ftp://ftp.kernel.org/pub/linux/kernel/people/akpm/patches/2.5/2.5.68/2.5.68-mm2/experimental</EM>
+</DD></DL>
+<HR>
+[ <A HREF="understand005.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand007.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

@@ -1,0 +1,593 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Describing Physical Memory</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand018.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand020.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc107">Appendix B</A>  Describing Physical Memory</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc98"></A><A NAME="htoc108">B.1</A>  Initialising Zones</H2><H3 CLASS="subsection"><A NAME="htoc109">B.1.1</A>  Function: setup_memory</H3><P> <EM>Source: arch/i386/kernel/setup.c</EM> <A NAME="func: setup_memory"></A> <A NAME="@codeindex0"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand005.html#fig: setup_memory">2.3</A>.
+This function gets the necessary information to give to the boot memory
+allocator to initialise itself. It is broken up into a number of different
+tasks.</P><UL CLASS="itemize"><LI CLASS="li-itemize">Find the start and ending PFN for low memory (<TT>min_low_pfn</TT>,
+<TT>max_low_pfn</TT>), the start and end PFN for high memory
+(<TT>highstart_pfn</TT>, <TT>highend_pfn</TT>) and the PFN for the last
+page in the system (<TT>max_pfn</TT>).</LI><LI CLASS="li-itemize">Initialise the <TT>bootmem_data</TT> structure and declare which
+pages may be used by the boot memory allocator</LI><LI CLASS="li-itemize">Mark all pages usable by the system as &#X201C;free&#X201D; and then reserve the
+pages used by the bitmap representing the pages</LI><LI CLASS="li-itemize">Reserve pages used by the SMP config or the initrd image if one exists</LI></UL><PRE CLASS="verbatim">991 static unsigned long __init setup_memory(void)
+992 {
+993       unsigned long bootmap_size, start_pfn, max_low_pfn;
+994 
+995       /*
+996        * partially used pages are not usable - thus
+997        * we are rounding upwards:
+998        */
+999       start_pfn = PFN_UP(__pa(&amp;_end));
+1000 
+1001      find_max_pfn();
+1002 
+1003      max_low_pfn = find_max_low_pfn();
+1004 
+1005 #ifdef CONFIG_HIGHMEM
+1006      highstart_pfn = highend_pfn = max_pfn;
+1007      if (max_pfn &gt; max_low_pfn) {
+1008            highstart_pfn = max_low_pfn;
+1009      }
+1010      printk(KERN_NOTICE "%ldMB HIGHMEM available.\n",
+1011            pages_to_mb(highend_pfn - highstart_pfn));
+1012 #endif
+1013      printk(KERN_NOTICE "%ldMB LOWMEM available.\n",
+1014                  pages_to_mb(max_low_pfn));
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>999</B><TT>PFN_UP()</TT><A NAME="@codeindex1"></A> takes a physical address, rounds it up to the
+next page and returns the page frame number. <TT>_end</TT><A NAME="@codeindex2"></A> is the address
+of the end of the loaded kernel image so <TT>start_pfn</TT><A NAME="@codeindex3"></A> is now the
+offset of the first physical page frame that may be used</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1001</B><TT>find_max_pfn()</TT><A NAME="@codeindex4"></A> loops through the e820 map searching for
+the highest available pfn</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1003</B><TT>find_max_low_pfn()</TT><A NAME="@codeindex5"></A> finds the highest page frame
+addressable in <TT>ZONE_NORMAL</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1005-1011</B>If high memory is enabled, start with a high memory region
+of 0. If it turns out there is memory after <TT>max_low_pfn</TT><A NAME="@codeindex6"></A>,
+put the start of high memory (<TT>highstart_pfn</TT><A NAME="@codeindex7"></A>) there and the end
+of high memory at <TT>max_pfn</TT><A NAME="@codeindex8"></A>. Print out an informational message
+on the availability of high memory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1013-1014</B>Print out an informational message on the amount of low memory</DD></DL><PRE CLASS="verbatim">1018      bootmap_size = init_bootmem(start_pfn, max_low_pfn);
+1019 
+1020      register_bootmem_low_pages(max_low_pfn);
+1021 
+1028      reserve_bootmem(HIGH_MEMORY, (PFN_PHYS(start_pfn) +
+1029                  bootmap_size + PAGE_SIZE-1) - (HIGH_MEMORY));
+1030 
+1035      reserve_bootmem(0, PAGE_SIZE);
+1036 
+1037 #ifdef CONFIG_SMP
+1043       reserve_bootmem(PAGE_SIZE, PAGE_SIZE);
+1044 #endif
+1045 #ifdef CONFIG_ACPI_SLEEP
+1046         /*
+1047          * Reserve low memory region for sleep support.
+1048          */
+1049         acpi_reserve_bootmem();
+1050 #endif
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1018</B><TT>init_bootmem()</TT>(See Section <A HREF="understand022.html#func: init_bootmem">E.1.1</A>) initialises
+the <TT>bootmem_data</TT> struct for the <TT>config_page_data</TT>
+node. It sets where physical memory begins and ends for the node, allocates
+a bitmap representing the pages and sets all pages as reserved initially</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1020</B><TT>register_bootmem_low_pages()</TT><A NAME="@codeindex9"></A> reads the e820 map
+and calls <TT>free_bootmem()</TT> (See Section <A HREF="understand022.html#func: free_bootmem">E.3.1</A>) for all usable
+pages in the running system. This is what marks the pages marked as reserved
+during initialisation as free</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1028-1029</B>Reserve the pages that are being used to store the bitmap
+representing the pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1035</B>Reserve page 0 as it is often a special page used by the bios</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1043</B>Reserve an extra page which is required by the trampoline code. The
+trampoline code deals with how userspace enters kernel space</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1045-1050</B>If sleep support is added, reserve memory required for it.
+This is only of interest to laptops interested in suspending and beyond the
+scope of this book</DD></DL><PRE CLASS="verbatim">1051 #ifdef CONFIG_X86_LOCAL_APIC
+1052       /*
+1053        * Find and reserve possible boot-time SMP configuration:
+1054        */
+1055       find_smp_config();
+1056 #endif
+1057 #ifdef CONFIG_BLK_DEV_INITRD
+1058       if (LOADER_TYPE &amp;&amp; INITRD_START) {
+1059             if (INITRD_START + INITRD_SIZE &lt;= 
+                    (max_low_pfn &lt;&lt; PAGE_SHIFT)) {
+1060                   reserve_bootmem(INITRD_START, INITRD_SIZE);
+1061                   initrd_start =
+1062                    INITRD_START ? INITRD_START + PAGE_OFFSET : 0;
+1063                   initrd_end = initrd_start+INITRD_SIZE;
+1064             }
+1065             else {
+1066                   printk(KERN_ERR 
+                           "initrd extends beyond end of memory "
+1067                       "(0x%08lx &gt; 0x%08lx)\ndisabling initrd\n",
+1068                       INITRD_START + INITRD_SIZE,
+1069                       max_low_pfn &lt;&lt; PAGE_SHIFT);
+1070                   initrd_start = 0;
+1071             }
+1072       }
+1073 #endif
+1074 
+1075       return max_low_pfn;
+1076 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1055</B>This function reserves memory that stores config information about
+the SMP setup</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1057-1073</B>If initrd is enabled, the memory containing its image will be
+reserved. initrd provides a tiny filesystem image which is used to boot the
+system</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1075</B>Return the upper limit of addressable memory in <TT>ZONE_NORMAL</TT></DD></DL><H3 CLASS="subsection"><A NAME="htoc110">B.1.2</A>  Function: zone_sizes_init</H3><P> <EM>Source: arch/i386/mm/init.c</EM> <A NAME="func: zone_sizes_init"></A> <A NAME="@codeindex10"></A></P><P>This is the top-level function which is used to initialise each
+of the zones. The size of the zones in PFNs was discovered during
+<TT>setup_memory()</TT> (See Section <A HREF="#func: setup_memory">B.1.1</A>). This function
+populates an array of zone sizes for passing to <TT>free_area_init()</TT>.</P><PRE CLASS="verbatim">323 static void __init zone_sizes_init(void)
+324 {
+325     unsigned long zones_size[MAX_NR_ZONES] = {0, 0, 0};
+326     unsigned int max_dma, high, low;
+327 
+328     max_dma = virt_to_phys((char *)MAX_DMA_ADDRESS) &gt;&gt; PAGE_SHIFT;
+329     low = max_low_pfn;
+330     high = highend_pfn;
+331 
+332     if (low &lt; max_dma)
+333         zones_size[ZONE_DMA] = low;
+334     else {
+335         zones_size[ZONE_DMA] = max_dma;
+336         zones_size[ZONE_NORMAL] = low - max_dma;
+337 #ifdef CONFIG_HIGHMEM
+338         zones_size[ZONE_HIGHMEM] = high - low;
+339 #endif
+340     }
+341     free_area_init(zones_size);
+342 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>325</B>Initialise the sizes to 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>328</B>Calculate the PFN for the maximum possible DMA address. This doubles
+up as the largest number of pages that may exist in <TT>ZONE_DMA</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>329</B><TT>max_low_pfn</TT> is the highest PFN available to
+<TT>ZONE_NORMAL</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>330</B><TT>highend_pfn</TT> is the highest PFN available to
+<TT>ZONE_HIGHMEM</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>332-333</B>If the highest PFN in <TT>ZONE_NORMAL</TT> is below
+<TT>MAX_DMA_ADDRESS</TT>, then just set the size of <TT>ZONE_DMA</TT> to it.
+The other zones remain at 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>335</B>Set the number of pages in <TT>ZONE_DMA</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>336</B>The size of <TT>ZONE_NORMAL</TT> is <TT>max_low_pfn</TT> minus the
+number of pages in <TT>ZONE_DMA</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>338</B>The size of <TT>ZONE_HIGHMEM</TT> is the highest possible PFN minus
+the highest possible PFN in <TT>ZONE_NORMAL</TT> (<TT>max_low_pfn</TT>)</DD></DL><H3 CLASS="subsection"><A NAME="htoc111">B.1.3</A>  Function: free_area_init</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: free_area_init"></A> <A NAME="@codeindex11"></A></P><P>This is the architecture independant function for setting up a UMA
+architecture. It simply calls the core function passing the static
+<TT>contig_page_data</TT> as the node. NUMA architectures will use
+<TT>free_area_init_node()</TT><A NAME="@codeindex12"></A> instead.</P><PRE CLASS="verbatim">838 void __init free_area_init(unsigned long *zones_size)
+839 {
+840     free_area_init_core(0, &amp;contig_page_data, &amp;mem_map, zones_size, 
+                            0, 0, 0);
+841 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>838</B>The parameters passed to <TT>free_area_init_core()</TT> are
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>0</B> is the Node Identifier for the node, which is 0
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>contig_page_data</B> is the static global <TT>pg_data_t</TT>
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>mem_map</B> is the global <TT>mem_map</TT> used for tracking
+	<TT>struct page</TT>s. The function
+	<TT>free_area_init_core()</TT> will allocate memory for this array
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zones_sizes</B> is the array of zone sizes filled by
+<TT>zone_sizes_init()</TT>
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>0</B> This zero is the starting physical address
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>0</B> The second zero is an array of memory hole sizes which doesn't apply
+to UMA architectures
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>0</B> The last 0 is a pointer to a local <TT>mem_map</TT> for this node
+which is used by NUMA architectures
+</DD></DL></DD></DL><H3 CLASS="subsection"><A NAME="htoc112">B.1.4</A>  Function: free_area_init_node</H3><P> <EM>Source: mm/numa.c</EM> <A NAME="func: free_area_init_node"></A> <A NAME="@codeindex13"></A></P><P>There are two versions of this function. The first is almost identical to
+<TT>free_area_init()</TT> except it uses a different starting physical
+address. There is for architectures that have only one node (so they use
+<TT>contig_page_data</TT>) but whose physical address is not at 0.</P><P>This version of the function, called after the pagetable initialisation,
+if for initialisation each <TT>pgdat</TT> in the system. The caller has
+the option of allocating their own local portion of the <TT>mem_map</TT>
+and passing it in as a parameter if they want to optimise it's location
+for the architecture. If they choose not to, it will be allocated later by
+<TT>free_area_init_core()</TT>.</P><PRE CLASS="verbatim"> 61 void __init free_area_init_node(int nid, 
+        pg_data_t *pgdat, struct page *pmap,
+ 62     unsigned long *zones_size, unsigned long zone_start_paddr, 
+ 63     unsigned long *zholes_size)
+ 64 {
+ 65     int i, size = 0;
+ 66     struct page *discard;
+ 67 
+ 68     if (mem_map == (mem_map_t *)NULL)
+ 69         mem_map = (mem_map_t *)PAGE_OFFSET;
+ 70 
+ 71     free_area_init_core(nid, pgdat, &amp;discard, zones_size, 
+                        zone_start_paddr,
+ 72                     zholes_size, pmap);
+ 73     pgdat-&gt;node_id = nid;
+ 74 
+ 75     /*
+ 76      * Get space for the valid bitmap.
+ 77      */
+ 78     for (i = 0; i &lt; MAX_NR_ZONES; i++)
+ 79         size += zones_size[i];
+ 80     size = LONG_ALIGN((size + 7) &gt;&gt; 3);
+ 81     pgdat-&gt;valid_addr_bitmap = 
+                     (unsigned long *)alloc_bootmem_node(pgdat, size);
+ 82     memset(pgdat-&gt;valid_addr_bitmap, 0, size);
+ 83 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>61</B>The parameters to the function are:
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>nid</B> is the Node Identifier (NID) of the <TT>pgdat</TT> passed in
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pgdat</B> is the node to be initialised
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pmap</B> is a pointer to the portion of the <TT>mem_map</TT> for this node
+to use, frequently passed as NULL and allocated later
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zones_size</B> is an array of zone sizes in this node
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zone_start_paddr</B> is the starting physical addres for the node
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>zholes_size</B> is an array of hole sizes in each zone
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>68-69</B>If the global <TT>mem_map</TT> has not been set, set it to the
+beginning of the kernel portion of the linear address space. Remeber that with
+NUMA, <TT>mem_map</TT> is a virtual array with portions filled in by local
+maps used by each node</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>71</B>Call <TT>free_area_init_core()</TT>. Note that <TT>discard</TT>
+is passed in as the third parameter as no global <TT>mem_map</TT> needs to be
+set for NUMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>73</B>Record the <TT>pgdat</TT>s NID</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-79</B>Calculate the total size of the nide</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>80</B>Recalculate size as the number of bits requires to have one bit for
+every byte of the size</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>81</B>Allocate a bitmap to represent where valid areas exist in the node.
+In reality, this is only used by the sparc architecture so it is unfortunate to
+waste the memory every other architecture</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>82</B>Initially, all areas are invalid. Valid regions are marked later in
+the <TT>mem_init()</TT> functions for the sparc. Other architectures just
+ignore the bitmap</DD></DL><H3 CLASS="subsection"><A NAME="htoc113">B.1.5</A>  Function: free_area_init_core</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: free_area_init_core"></A> <A NAME="@codeindex14"></A></P><P>This function is responsible for initialising all zones and allocating
+their local <TT>lmem_map</TT> within a node. In UMA architectures, this
+function is called in a way that will initialise the global <TT>mem_map</TT>
+array. In NUMA architectures, the array is treated as a virtual array that
+is sparsely populated.</P><PRE CLASS="verbatim">684 void __init free_area_init_core(int nid, 
+        pg_data_t *pgdat, struct page **gmap,
+685     unsigned long *zones_size, unsigned long zone_start_paddr, 
+686     unsigned long *zholes_size, struct page *lmem_map)
+687 {
+688     unsigned long i, j;
+689     unsigned long map_size;
+690     unsigned long totalpages, offset, realtotalpages;
+691     const unsigned long zone_required_alignment = 
+                                              1UL &lt;&lt; (MAX_ORDER-1);
+692 
+693     if (zone_start_paddr &amp; ~PAGE_MASK)
+694         BUG();
+695 
+696     totalpages = 0;
+697     for (i = 0; i &lt; MAX_NR_ZONES; i++) {
+698         unsigned long size = zones_size[i];
+699         totalpages += size;
+700     }
+701     realtotalpages = totalpages;
+702     if (zholes_size)
+703         for (i = 0; i &lt; MAX_NR_ZONES; i++)
+704             realtotalpages -= zholes_size[i];
+705             
+706     printk("On node %d totalpages: %lu\n", nid, realtotalpages);
+</PRE><P>This block is mainly responsible for calculating the size of each zone.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>691</B>The zone must be aligned against the maximum sized block that can be
+allocated by the buddy allocator for bitwise operations to work</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>693-694</B>It is a bug if the physical address is not page aligned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>696</B>Initialise the <TT>totalpages</TT> count for this node to 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>697-700</B>Calculate the total size of the node by iterating through
+<TT>zone_sizes</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>701-704</B>Calculate the real amount of memory by substracting the size of
+the holes in <TT>zholes_size</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>706</B>Print an informational message for the user on how much memory is
+available in this node</DD></DL><PRE CLASS="verbatim">708     /*
+709      * Some architectures (with lots of mem and discontinous memory
+710      * maps) have to search for a good mem_map area:
+711      * For discontigmem, the conceptual mem map array starts from 
+712      * PAGE_OFFSET, we need to align the actual array onto a mem map 
+713      * boundary, so that MAP_NR works.
+714      */
+715     map_size = (totalpages + 1)*sizeof(struct page);
+716     if (lmem_map == (struct page *)0) {
+717         lmem_map = (struct page *) alloc_bootmem_node(pgdat, map_size);
+718         lmem_map = (struct page *)(PAGE_OFFSET + 
+719             MAP_ALIGN((unsigned long)lmem_map - PAGE_OFFSET));
+720     }
+721     *gmap = pgdat-&gt;node_mem_map = lmem_map;
+722     pgdat-&gt;node_size = totalpages;
+723     pgdat-&gt;node_start_paddr = zone_start_paddr;
+724     pgdat-&gt;node_start_mapnr = (lmem_map - mem_map);
+725     pgdat-&gt;nr_zones = 0;
+726
+727     offset = lmem_map - mem_map;    
+</PRE><P>This block allocates the local <TT>lmem_map</TT> if necessary and sets the
+<TT>gmap</TT>. In UMA architectures, <TT>gmap</TT> is actually
+<TT>mem_map</TT> and so this is where the memory for it is allocated</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>715</B>Calculate the amount of memory required for the array. It is the
+total number of pages multipled by the size of a <TT>struct page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>716</B>If the map has not already been allocated, allocate it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>717</B>Allocate the memory from the boot memory allocator</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>718</B><TT>MAP_ALIGN()</TT><A NAME="@codeindex15"></A> will align the array on a
+<TT>struct page</TT> sized boundary for calculations that locate offsets
+within the <TT>mem_map</TT> based on the physical address with the
+<TT>MAP_NR()</TT> macro</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>721</B>Set the <TT>gmap</TT> and <TT>pgdat</TT>&#X2192;<TT>node_mem_map</TT>
+variables to the allocated <TT>lmem_map</TT>. In UMA architectures, this
+just set <TT>mem_map</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>722</B>Record the size of the node</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>723</B>Record the starting physical address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>724</B>Record what the offset within <TT>mem_map</TT> this node occupies</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>725</B>Initialise the zone count to 0. This will be set later in the
+function</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>727</B><TT>offset</TT> is now the offset within <TT>mem_map</TT> that
+the local portion <TT>lmem_map</TT> begins at</DD></DL><PRE CLASS="verbatim">728     for (j = 0; j &lt; MAX_NR_ZONES; j++) {
+729         zone_t *zone = pgdat-&gt;node_zones + j;
+730         unsigned long mask;
+731         unsigned long size, realsize;
+732 
+733         zone_table[nid * MAX_NR_ZONES + j] = zone;
+734         realsize = size = zones_size[j];
+735         if (zholes_size)
+736             realsize -= zholes_size[j];
+737 
+738         printk("zone(%lu): %lu pages.\n", j, size);
+739         zone-&gt;size = size;
+740         zone-&gt;name = zone_names[j];
+741         zone-&gt;lock = SPIN_LOCK_UNLOCKED;
+742         zone-&gt;zone_pgdat = pgdat;
+743         zone-&gt;free_pages = 0;
+744         zone-&gt;need_balance = 0;
+745         if (!size)
+746             continue;
+</PRE><P>This block starts a loop which initialises every <TT>zone_t</TT> within
+the node. The initialisation starts with the setting of the simplier fields
+that values already exist for.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>728</B>Loop through all zones in the node</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>733</B>Record a pointer to this zone in the <TT>zone_table</TT>. See
+Section <A HREF="understand005.html#sec: Mapping Pages to Zones">2.4.1</A> </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>734-736</B>Calculate
+the real size of the zone based on the full size in
+<TT>zones_size</TT> minus the size of the holes in <TT>zholes_size</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>738</B>Print an informational message saying how many pages are in this
+zone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>739</B>Record the size of the zone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>740</B><TT>zone_names</TT> is the string name of the zone for printing
+purposes</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>741-744</B>Initialise some other fields for the zone such as it's parent
+<TT>pgdat</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>745-746</B>If the zone has no memory, continue to the next zone as nothing
+further is required</DD></DL><PRE CLASS="verbatim">752         zone-&gt;wait_table_size = wait_table_size(size);
+753         zone-&gt;wait_table_shift =
+754             BITS_PER_LONG - wait_table_bits(zone-&gt;wait_table_size);
+755         zone-&gt;wait_table = (wait_queue_head_t *)
+756             alloc_bootmem_node(pgdat, zone-&gt;wait_table_size
+757                         * sizeof(wait_queue_head_t));
+758 
+759         for(i = 0; i &lt; zone-&gt;wait_table_size; ++i)
+760             init_waitqueue_head(zone-&gt;wait_table + i);
+</PRE><P>Initialise the waitqueue for this zone. Processes waiting on pages in the zone
+use this hashed table to select a queue to wait on. This means that all
+processes waiting in a zone will not have to be woken when a page is unlocked,
+just a smaller subset.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>752</B><TT>wait_table_size()</TT> calculates the size of the table to
+use based on the number of pages in the zone and the desired ratio between the
+number of queues and the number of pages. The table will never be larger than
+4KiB</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>753-754</B>Calculate the shift for the hashing algorithm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>755</B>Allocate a table of <TT>wait_queue_head_t</TT> that can hold
+<TT>zone</TT>&#X2192;<TT>wait_table_size</TT> entries</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>759-760</B>Initialise all of the wait queues</DD></DL><PRE CLASS="verbatim">762         pgdat-&gt;nr_zones = j+1;
+763 
+764         mask = (realsize / zone_balance_ratio[j]);
+765         if (mask &lt; zone_balance_min[j])
+766             mask = zone_balance_min[j];
+767         else if (mask &gt; zone_balance_max[j])
+768             mask = zone_balance_max[j];
+769         zone-&gt;pages_min = mask;
+770         zone-&gt;pages_low = mask*2;
+771         zone-&gt;pages_high = mask*3;
+772 
+773         zone-&gt;zone_mem_map = mem_map + offset;
+774         zone-&gt;zone_start_mapnr = offset;
+775         zone-&gt;zone_start_paddr = zone_start_paddr;
+776 
+777         if ((zone_start_paddr &gt;&gt; PAGE_SHIFT) &amp; 
+                                          (zone_required_alignment-1))
+778             printk("BUG: wrong zone alignment, it will crash\n");
+779 
+</PRE><P>Calculate the watermarks for the zone and record the location of the zone. The
+watermarks are calculated as ratios of the zone size.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>762</B>First, as a new zone is active, update the number of zones in this
+node</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>764</B>Calculate the mask (which will be used as the <TT>pages_min</TT>
+watermark) as the size of the zone divided by the balance ratio for this zone.
+The balance ratio is 128 for all zones as declared at the top of
+<TT>mm/page_alloc.c</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>765-766</B>The <TT>zone_balance_min</TT> ratios are 20 for all zones so
+this means that <TT>pages_min</TT> will never be below 20</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>767-768</B>Similarly, the <TT>zone_balance_max</TT> ratios are all 255
+so <TT>pages_min</TT> will never be over 255</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>769</B><TT>pages_min</TT> is set to <TT>mask</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>770</B><TT>pages_low</TT> is twice the number of pages as
+<TT>pages_min</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>771</B><TT>pages_high</TT> is three times the number of pages as
+<TT>pages_min</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>773</B>Record where the first <TT>struct page</TT> for this zone is
+located within <TT>mem_map</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>774</B>Record the index within <TT>mem_map</TT> this zone begins at</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>775</B>Record the starting physical address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>777-778</B>Ensure that the zone is correctly aligned for use with the
+buddy allocator otherwise the bitwise operations used for the buddy allocator
+will break</DD></DL><PRE CLASS="verbatim">780         /*
+781          * Initially all pages are reserved - free ones are freed
+782          * up by free_all_bootmem() once the early boot process is
+783          * done. Non-atomic initialization, single-pass.
+784          */
+785         for (i = 0; i &lt; size; i++) {
+786             struct page *page = mem_map + offset + i;
+787             set_page_zone(page, nid * MAX_NR_ZONES + j);
+788             set_page_count(page, 0);
+789             SetPageReserved(page);
+790             INIT_LIST_HEAD(&amp;page-&gt;list);
+791             if (j != ZONE_HIGHMEM)
+792                 set_page_address(page, __va(zone_start_paddr));
+793             zone_start_paddr += PAGE_SIZE;
+794         }
+795 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>785-794</B>Initially, all pages in the zone are marked as reserved as
+there is no way to know which ones are in use by the boot memory allocator.
+When the boot memory allocator is retiring in <TT>free_all_bootmem()</TT>,
+the unused pages will have their <TT>PG_reserved</TT> bit cleared</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>786</B>Get the page for this offset</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>787</B>The zone the page belongs to is encoded with the page flags. See
+Section <A HREF="understand005.html#sec: Mapping Pages to Zones">2.4.1</A> </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>788</B>Set the count to 0 as no
+one is using it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>789</B>Set the reserved flag. Later, the boot memory allocator will clear
+this bit if the page is no longer in use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>790</B>Initialise the list head for the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>791-792</B>Set the <TT>page</TT>&#X2192;<TT>virtual</TT> field if it is
+available and the page is in low memory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>793</B>Increment <TT>zone_start_paddr</TT> by a page size as this
+variable will be used to record the beginning of the next zone</DD></DL><PRE CLASS="verbatim">796         offset += size;
+797         for (i = 0; ; i++) {
+798             unsigned long bitmap_size;
+799 
+800             INIT_LIST_HEAD(&amp;zone-&gt;free_area[i].free_list);
+801             if (i == MAX_ORDER-1) {
+802                 zone-&gt;free_area[i].map = NULL;
+803                 break;
+804             }
+805 
+829             bitmap_size = (size-1) &gt;&gt; (i+4);
+830             bitmap_size = LONG_ALIGN(bitmap_size+1);
+831             zone-&gt;free_area[i].map = 
+832               (unsigned long *) alloc_bootmem_node(pgdat, 
+                                                       bitmap_size);
+833         }
+834     }
+835     build_zonelists(pgdat);
+836 }
+</PRE><P>This block initialises the free lists for the zone and allocates the bitmap
+used by the buddy allocator to record the state of page buddies.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>797</B>This will loop from 0 to <TT>MAX_ORDER-1</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>800</B>Initialise the linked list for the <TT>free_list</TT> of the
+current order <TT>i</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>801-804</B>If this is the last order, then set the free area map to NULL
+as this is what marks the end of the free lists</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>829</B>Calculate the <TT>bitmap_size</TT> to be the number of bytes
+required to hold a bitmap where each bit represents on pair of buddies that
+are 2<SUP><I>i</I></SUP> number of pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>830</B>Align the size to a long with <TT>LONG_ALIGN()</TT> as all bitwise
+operations are on longs</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>831-832</B>Allocate the memory for the map</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>834</B>This loops back to move to the next zone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>835</B>Build the zone fallback lists for this node with
+<TT>build_zonelists()</TT></DD></DL><H3 CLASS="subsection"><A NAME="htoc114">B.1.6</A>  Function: build_zonelists</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: build_zonelists"></A> <A NAME="@codeindex16"></A></P><P>This builds the list of fallback zones for each zone in the requested node.
+This is for when an allocation cannot be satisified and another zone is
+consulted. When this is finished, allocatioons from <TT>ZONE_HIGHMEM</TT> will
+fallback to <TT>ZONE_NORMAL</TT>. Allocations from <TT>ZONE_NORMAL</TT> will fall
+back to <TT>ZONE_DMA</TT> which in turn has nothing to fall back on.</P><PRE CLASS="verbatim">589 static inline void build_zonelists(pg_data_t *pgdat)
+590 {
+591     int i, j, k;
+592 
+593     for (i = 0; i &lt;= GFP_ZONEMASK; i++) {
+594         zonelist_t *zonelist;
+595         zone_t *zone;
+596 
+597         zonelist = pgdat-&gt;node_zonelists + i;
+598         memset(zonelist, 0, sizeof(*zonelist));
+599 
+600         j = 0;
+601         k = ZONE_NORMAL;
+602         if (i &amp; __GFP_HIGHMEM)
+603             k = ZONE_HIGHMEM;
+604         if (i &amp; __GFP_DMA)
+605             k = ZONE_DMA;
+606 
+607         switch (k) {
+608             default:
+609                 BUG();
+610             /*
+611              * fallthrough:
+612              */
+613             case ZONE_HIGHMEM:
+614                 zone = pgdat-&gt;node_zones + ZONE_HIGHMEM;
+615                 if (zone-&gt;size) {
+616 #ifndef CONFIG_HIGHMEM
+617                     BUG();
+618 #endif
+619                     zonelist-&gt;zones[j++] = zone;
+620                 }
+621             case ZONE_NORMAL:
+622                 zone = pgdat-&gt;node_zones + ZONE_NORMAL;
+623                 if (zone-&gt;size)
+624                     zonelist-&gt;zones[j++] = zone;
+625             case ZONE_DMA:
+626                 zone = pgdat-&gt;node_zones + ZONE_DMA;
+627                 if (zone-&gt;size)
+628                     zonelist-&gt;zones[j++] = zone;
+629         }
+630         zonelist-&gt;zones[j++] = NULL;
+631     } 
+632 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>593</B>This looks through the maximum possible number of zones</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>597</B>Get the zonelist for this zone and zero it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>600</B>Start <TT>j</TT> at 0 which corresponds to <TT>ZONE_DMA</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>601-605</B>Set <TT>k</TT> to be the type of zone currently being examined</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>614</B>Get the <TT>ZONE_HIGHMEM</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>615-620</B>If the zone has memory, then <TT>ZONE_HIGHMEM</TT> is the preferred
+zone to allocate from for high memory allocations. If <TT>ZONE_HIGHMEM</TT> has no
+memory, then <TT>ZONE_NORMAL</TT> will become the preferred zone when the next
+case is fallen through to as <TT>j</TT> is not incremented for an empty zone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>621-624</B>Set the next preferred zone to allocate from to be
+<TT>ZONE_NORMAL</TT>. Again, do not use it if the zone has no memory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>626-628</B>Set the final fallback zone to be <TT>ZONE_DMA</TT>. The check is
+still made for <TT>ZONE_DMA</TT> having memory as in a NUMA architecture, not all
+nodes will have a <TT>ZONE_DMA</TT></DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc99"></A><A NAME="htoc115">B.2</A>  Page Operations</H2><H3 CLASS="subsection">Contents</H3><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD CLASS="hbar" COLSPAN=2></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> B.2 Page Operations</TD><TD VALIGN=top ALIGN=right NOWRAP>216</TD></TR>
+<TR><TD VALIGN=top ALIGN=left> B.2.1 Locking Pages</TD><TD VALIGN=top ALIGN=right NOWRAP>216</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>  B.2.1.1 Function: <TT>lock_page()</TT></TD><TD VALIGN=top ALIGN=right NOWRAP>216</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>  B.2.1.2 Function: <TT>__lock_page()</TT></TD><TD VALIGN=top ALIGN=right NOWRAP>216</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>  B.2.1.3 Function: <TT>sync_page()</TT></TD><TD VALIGN=top ALIGN=right NOWRAP>217</TD></TR>
+<TR><TD VALIGN=top ALIGN=left> B.2.2 Unlocking Pages</TD><TD VALIGN=top ALIGN=right NOWRAP>218</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>  B.2.2.1 Function: <TT>unlock_page()</TT></TD><TD VALIGN=top ALIGN=right NOWRAP>218</TD></TR>
+<TR><TD VALIGN=top ALIGN=left> B.2.3 Waiting on Pages</TD><TD VALIGN=top ALIGN=right NOWRAP>219</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>  B.2.3.1 Function: <TT>wait_on_page()</TT></TD><TD VALIGN=top ALIGN=right NOWRAP>219</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>  B.2.3.2 Function: <TT>___wait_on_page()</TT></TD><TD VALIGN=top ALIGN=right NOWRAP>219</TD></TR>
+<TR><TD CLASS="hbar" COLSPAN=2></TD></TR>
+</TABLE><H3 CLASS="subsection"><A NAME="htoc116">B.2.1</A>  Locking Pages</H3><H4 CLASS="subsubsection"><A NAME="htoc117">B.2.1.1</A>  Function: lock_page</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: lock_page"></A> <A NAME="@codeindex17"></A></P><P>This function tries to lock a page. If the page cannot be locked, it will
+cause the process to sleep until the page is available.</P><PRE CLASS="verbatim">921 void lock_page(struct page *page)
+922 {
+923     if (TryLockPage(page))
+924         __lock_page(page);
+925 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>923</B><TT>TryLockPage()</TT><A NAME="@codeindex18"></A> is just a wrapper around
+<TT>test_and_set_bit()</TT> for the <TT>PG_locked</TT> bit in
+<TT>page</TT>&#X2192;<TT>flags</TT>. If the bit was previously clear, the function
+returns immediately as the page is now locked</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>924</B>Otherwise call <TT>__lock_page()</TT>(See Section <A HREF="#func: __lock_page">B.2.1.2</A>)
+to put the process to sleep</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc118">B.2.1.2</A>  Function: __lock_page</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: __lock_page"></A> <A NAME="@codeindex19"></A></P><P>This is called after a <TT>TryLockPage()</TT> failed. It will locate the
+waitqueue for this page and sleep on it until the lock can be acquired.</P><PRE CLASS="verbatim">897 static void __lock_page(struct page *page)
+898 {
+899     wait_queue_head_t *waitqueue = page_waitqueue(page);
+900     struct task_struct *tsk = current;
+901     DECLARE_WAITQUEUE(wait, tsk);
+902 
+903     add_wait_queue_exclusive(waitqueue, &amp;wait);
+904     for (;;) {
+905         set_task_state(tsk, TASK_UNINTERRUPTIBLE);
+906         if (PageLocked(page)) {
+907             sync_page(page);
+908             schedule();
+909         }
+910         if (!TryLockPage(page))
+911             break;
+912     }
+913     __set_task_state(tsk, TASK_RUNNING);
+914     remove_wait_queue(waitqueue, &amp;wait);
+915 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>899</B><TT>page_waitqueue()</TT><A NAME="@codeindex20"></A> is the implementation of the hash
+algorithm which determines which wait queue this page belongs to in the table
+<TT>zone</TT>&#X2192;<TT>wait_table</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>900-901</B>Initialise the waitqueue for this task</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>903</B>Add this process to the waitqueue returned by
+<TT>page_waitqueue()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>904-912</B>Loop here until the lock is acquired</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>905</B>Set the process states as being in uninterruptible sleep. When
+<TT>schedule()</TT> is called, the process will be put to sleep and will not
+wake again until the queue is explicitly woken up</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>906</B>If the page is still locked then call <TT>sync_page()</TT>
+function to schedule the page to be synchronised with it's backing storage.
+Call <TT>schedule()</TT> to sleep until the queue is woken up such as when IO
+on the page completes</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>910-1001</B>Try and lock the page again. If we succeed, exit the loop,
+otherwise sleep on the queue again</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>913-914</B>The lock is now acquired so set the process state to
+<TT>TASK_RUNNING</TT> and remove it from the wait queue. The function now
+returns with the lock acquired</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc119">B.2.1.3</A>  Function: sync_page</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: sync_page"></A> <A NAME="@codeindex21"></A></P><P>This calls the filesystem-specific <TT>sync_page()</TT> to synchronsise the
+page with it's backing storage.</P><PRE CLASS="verbatim">140 static inline int sync_page(struct page *page)
+141 {
+142     struct address_space *mapping = page-&gt;mapping;
+143 
+144     if (mapping &amp;&amp; mapping-&gt;a_ops &amp;&amp; mapping-&gt;a_ops-&gt;sync_page)
+145         return mapping-&gt;a_ops-&gt;sync_page(page);
+146     return 0;
+147 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>142</B>Get the <TT>address_space</TT> for the page if it exists</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>144-145</B>If a backing exists, and it has an associated
+<TT>address_space_operations</TT> which provides a <TT>sync_page()</TT>
+function, then call it</DD></DL><H3 CLASS="subsection"><A NAME="htoc120">B.2.2</A>  Unlocking Pages</H3><H4 CLASS="subsubsection"><A NAME="htoc121">B.2.2.1</A>  Function: unlock_page</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: unlock_page"></A> <A NAME="@codeindex22"></A></P><P>This function unlocks a page and wakes up any processes that may be waiting on
+it.</P><PRE CLASS="verbatim">874 void unlock_page(struct page *page)
+875 {
+876     wait_queue_head_t *waitqueue = page_waitqueue(page);
+877     ClearPageLaunder(page);
+878     smp_mb__before_clear_bit();
+879     if (!test_and_clear_bit(PG_locked, &amp;(page)-&gt;flags))
+880         BUG();
+881     smp_mb__after_clear_bit(); 
+882 
+883     /*
+884      * Although the default semantics of wake_up() are
+885      * to wake all, here the specific function is used
+886      * to make it even more explicit that a number of
+887      * pages are being waited on here.
+888      */
+889     if (waitqueue_active(waitqueue))
+890         wake_up_all(waitqueue);
+891 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>876</B><TT>page_waitqueue()</TT><A NAME="@codeindex23"></A> is the implementation of the hash
+algorithm which determines which wait queue this page belongs to in the table
+<TT>zone</TT>&#X2192;<TT>wait_table</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>877</B>Clear the launder bit as IO has now completed on the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>878</B>This is a memory block operations which must be called before
+performing bit operations that may be seen by multiple processors</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>879-880</B>Clear the <TT>PG_locked</TT> bit. It is a <TT>BUG()</TT>
+if the bit was already cleared</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>881</B>Complete the SMP memory block operation</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>889-890</B>If there are processes waiting on the page queue for this page,
+wake them</DD></DL><H3 CLASS="subsection"><A NAME="htoc122">B.2.3</A>  Waiting on Pages</H3><H4 CLASS="subsubsection"><A NAME="htoc123">B.2.3.1</A>  Function: wait_on_page</H4><P> <EM>Source: include/linux/pagemap.h</EM> <A NAME="func: wait_on_page"></A> <A NAME="@codeindex24"></A></P><PRE CLASS="verbatim"> 94 static inline void wait_on_page(struct page * page)
+ 95 {
+ 96     if (PageLocked(page))
+ 97         ___wait_on_page(page);
+ 98 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>96-97</B>If the page is currently locked, then call
+<TT>___wait_on_page()</TT> to sleep until it is unlocked</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc124">B.2.3.2</A>  Function: ___wait_on_page</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: ___wait_on_page"></A> <A NAME="@codeindex25"></A></P><P>This function is called after <TT>PageLocked()</TT> has been used to
+determine the page is locked. The calling process will probably sleep until
+the <TT>page</TT> is unlocked.</P><PRE CLASS="verbatim">849 void ___wait_on_page(struct page *page)
+850 {
+851     wait_queue_head_t *waitqueue = page_waitqueue(page);
+852     struct task_struct *tsk = current;
+853     DECLARE_WAITQUEUE(wait, tsk);
+854 
+855     add_wait_queue(waitqueue, &amp;wait);
+856     do {
+857         set_task_state(tsk, TASK_UNINTERRUPTIBLE);
+858         if (!PageLocked(page))
+859             break;
+860         sync_page(page);
+861         schedule();
+862     } while (PageLocked(page));
+863     __set_task_state(tsk, TASK_RUNNING);
+864     remove_wait_queue(waitqueue, &amp;wait);
+865 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>851</B><TT>page_waitqueue()</TT><A NAME="@codeindex26"></A> is the implementation of the hash
+algorithm which determines which wait queue this page belongs to in the table
+<TT>zone</TT>&#X2192;<TT>wait_table</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>852-853</B>Initialise the waitqueue for the current task</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>855</B>Add this task to the waitqueue returned by
+<TT>page_waitqueue()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>857</B>Set the process state to be in uninterruptible sleep. When
+<TT>schedule()</TT> is called, the process will sleep</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>858-859</B>Check to make sure the page was not unlocked since we last
+checked</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>860</B>Call <TT>sync_page()</TT>(See Section <A HREF="#func: sync_page">B.2.1.3</A>) to call the
+filesystem-specific function to synchronise the page with it's backing storage</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>861</B>Call <TT>schedule()</TT> to go to sleep. The process will be woken
+when the page is unlocked</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>862</B>Check if the page is still locked. Remember that multiple pages
+could be using this wait queue and there could be processes sleeping that wish
+to lock this page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>863-864</B>The page has been unlocked. Set the process to be in the
+<TT>TASK_RUNNING</TT> state and remove the process from the waitqueue</DD></DL><P>	</P><HR>
+[ <A HREF="understand018.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand020.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

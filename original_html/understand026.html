@@ -1,0 +1,531 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>High Memory Mangement</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand025.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand027.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc370">Appendix I</A>  High Memory Mangement</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc125"></A><A NAME="htoc371">I.1</A>  Mapping High Memory Pages</H2><H4 CLASS="subsubsection"><A NAME="htoc372">I.1.0.5</A>  Function: kmap</H4><P> <EM>Source: include/asm-i386/highmem.c</EM> <A NAME="func: kmap"></A> <A NAME="@codeindex265"></A></P><P>This API is used by callers willing to block.</P><PRE CLASS="verbatim">   62 #define kmap(page) __kmap(page, 0)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>62</B>The core function <TT>__kmap()</TT> is called with the second
+parameter indicating that the caller is willing to block</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc373">I.1.0.6</A>  Function: kmap_nonblock</H4><P> <EM>Source: include/asm-i386/highmem.c</EM> <A NAME="func: kmap_nonblock"></A> <A NAME="@codeindex266"></A></P><PRE CLASS="verbatim"> 63 #define kmap_nonblock(page) __kmap(page, 1)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>62</B>The core function <TT>__kmap()</TT> is called with the second
+parameter indicating that the caller is not willing to block</DD></DL><H3 CLASS="subsection"><A NAME="htoc374">I.1.1</A>  Function: __kmap</H3><P> <EM>Source: include/asm-i386/highmem.h</EM> <A NAME="func: __kmap"></A> <A NAME="@codeindex267"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand012.html#fig: kmap">9.1</A>. </P><PRE CLASS="verbatim"> 65 static inline void *kmap(struct page *page, int nonblocking)
+ 66 {
+ 67     if (in_interrupt())
+ 68         out_of_line_bug();
+ 69     if (page &lt; highmem_start_page)
+ 70         return page_address(page);
+ 71     return kmap_high(page);
+ 72 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>67-68</B>This function may not be used from interrupt as it may
+sleep. Instead of <TT>BUG()</TT>, <TT>out_of_line_bug()</TT> calls
+<TT>do_exit()</TT> and returns an error code. <TT>BUG()</TT> is not used
+because <TT>BUG()</TT> kills the process with extreme prejudice which would
+result in the fabled &#X201C;Aiee, killing interrupt handler!&#X201D; kernel panic</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>69-70</B>If the page is already in low memory, return a direct mapping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>71</B>Call <TT>kmap_high()</TT>(See Section <A HREF="#func: kmap_high">I.1.2</A>) for the beginning
+of the architecture independent work</DD></DL><H3 CLASS="subsection"><A NAME="htoc375">I.1.2</A>  Function: kmap_high</H3><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: kmap_high"></A> <A NAME="@codeindex268"></A></P><PRE CLASS="verbatim">132 void *kmap_high(struct page *page, int nonblocking)
+133 {
+134     unsigned long vaddr;
+135 
+142     spin_lock(&amp;kmap_lock);
+143     vaddr = (unsigned long) page-&gt;virtual;
+144     if (!vaddr) {
+145         vaddr = map_new_virtual(page, nonblocking);
+146         if (!vaddr)
+147             goto out;
+148     }
+149     pkmap_count[PKMAP_NR(vaddr)]++;
+150     if (pkmap_count[PKMAP_NR(vaddr)] &lt; 2)
+151         BUG();
+152 out:
+153     spin_unlock(&amp;kmap_lock);
+154     return (void*) vaddr;
+155 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>142</B>The <TT>kmap_lock</TT> protects the <TT>virtual</TT> field
+of a page and the <TT>pkmap_count</TT> array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>143</B>Get the virtual address of the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>144-148</B>If it is not already mapped, call <TT>map_new_virtual()</TT>
+which will map the page and return the virtual address. If it fails, goto
+<TT>out</TT> to free the spinlock and return NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>149</B>Increase the reference count for this page mapping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>150-151</B>If the count is currently less than 2, it is a serious bug. In
+reality, severe breakage would have to be introduced to cause this to happen</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>153</B>Free the <TT>kmap_lock</TT></DD></DL><H3 CLASS="subsection"><A NAME="htoc376">I.1.3</A>  Function: map_new_virtual</H3><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: map_new_virtual"></A> <A NAME="@codeindex269"></A></P><P>This function is divided into three principle parts. The scanning for a free
+slot, waiting on a queue if none is avaialble and mapping the page.</P><PRE CLASS="verbatim"> 80 static inline unsigned long map_new_virtual(struct page *page)
+ 81 {
+ 82     unsigned long vaddr;
+ 83     int count;
+ 84 
+ 85 start:
+ 86     count = LAST_PKMAP;
+ 87     /* Find an empty entry */
+ 88     for (;;) {
+ 89         last_pkmap_nr = (last_pkmap_nr + 1) &amp; LAST_PKMAP_MASK;
+ 90         if (!last_pkmap_nr) {
+ 91             flush_all_zero_pkmaps();
+ 92             count = LAST_PKMAP;
+ 93         }
+ 94         if (!pkmap_count[last_pkmap_nr])
+ 95             break;  /* Found a usable entry */
+ 96         if (--count)
+ 97             continue;
+ 98 
+ 99         if (nonblocking)
+100             return 0;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>86</B>Start scanning at the last possible slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>88-119</B>This look keeps scanning and waiting until a slot becomes free.
+This allows the possibility of an infinite loop for some processes if they were
+unlucky</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B><TT>last_pkmap_nr</TT> is the last pkmap that was scanned. To
+prevent searching over the same pages, this value is recorded so the list
+is searched circularly. When it reaches <TT>LAST_PKMAP</TT>, it wraps
+around to 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>90-93</B>When <TT>last_pkmap_nr</TT> wraps around, call
+<TT>flush_all_zero_pkmaps()</TT> (See Section <A HREF="#func: flush_all_zero_pkmaps">I.1.4</A>)
+which will set all entries from 1 to 0 in the <TT>pkmap_count</TT>
+array before flushing the TLB. Count is set back to <TT>LAST_PKMAP</TT>
+to restart scanning</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>94-95</B>If this element is 0, a usable slot has been found for the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>96-96</B>Move to the next index to scan</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>99-100</B>The next block of code is going to sleep waiting for a slot to
+be free. If the caller requested that the function not block, return now</DD></DL><PRE CLASS="verbatim">105         {
+106             DECLARE_WAITQUEUE(wait, current);
+107 
+108             current-&gt;state = TASK_UNINTERRUPTIBLE;
+109             add_wait_queue(&amp;pkmap_map_wait, &amp;wait);
+110             spin_unlock(&amp;kmap_lock);
+111             schedule();
+112             remove_wait_queue(&amp;pkmap_map_wait, &amp;wait);
+113             spin_lock(&amp;kmap_lock);
+114 
+115             /* Somebody else might have mapped it while we
+                   slept */
+116             if (page-&gt;virtual)
+117                 return (unsigned long) page-&gt;virtual;
+118 
+119             /* Re-start */
+120             goto start;
+121         }
+122     }
+</PRE><P>If there is no available slot after scanning all the pages once, we sleep on
+the <TT>pkmap_map_wait</TT> queue until we are woken up after an unmap</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>106</B>Declare the wait queue</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>108</B>Set the task as interruptible because we are sleeping in kernel
+space</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>109</B>Add ourselves to the <TT>pkmap_map_wait</TT> queue</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>110</B>Free the <TT>kmap_lock</TT> spinlock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>111</B>Call <TT>schedule()</TT> which will put us to sleep. We are woken up
+after a slot becomes free after an unmap</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>112</B>Remove ourselves from the wait queue</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>113</B>Re-acquire <TT>kmap_lock</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>116-117</B>If someone else mapped the page while we slept, just return the
+address and the reference count will be incremented by <TT>kmap_high()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>120</B>Restart the scanning</DD></DL><PRE CLASS="verbatim">123     vaddr = PKMAP_ADDR(last_pkmap_nr);
+124     set_pte(&amp;(pkmap_page_table[last_pkmap_nr]), mk_pte(page,
+            kmap_prot));
+125 
+126     pkmap_count[last_pkmap_nr] = 1;
+127     page-&gt;virtual = (void *) vaddr;
+128 
+129     return vaddr;
+130 }
+</PRE><P>A slot has been found, map the page</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>123</B>Get the virtual address for the slot found</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>124</B>Make the PTE entry with the page and required protection and place
+it in the page tables at the found slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>126</B>Initialise the value in the <TT>pkmap_count</TT> array to 1. The
+count is incremented in the parent function and we are sure this is the first
+mapping if we are in this function in the first place</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>127</B>Set the <TT>virtual</TT> field for the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>129</B>Return the virtual address</DD></DL><H3 CLASS="subsection"><A NAME="htoc377">I.1.4</A>  Function: flush_all_zero_pkmaps</H3><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: flush_all_zero_pkmaps"></A> <A NAME="@codeindex270"></A></P><P>This function cycles through the <TT>pkmap_count</TT> array and sets all
+entries from 1 to 0 before flushing the TLB.</P><PRE CLASS="verbatim"> 42 static void flush_all_zero_pkmaps(void)
+ 43 {
+ 44     int i;
+ 45 
+ 46     flush_cache_all();
+ 47 
+ 48     for (i = 0; i &lt; LAST_PKMAP; i++) {
+ 49         struct page *page;
+ 50 
+ 57         if (pkmap_count[i] != 1)
+ 58             continue;
+ 59         pkmap_count[i] = 0;
+ 60 
+ 61         /* sanity check */
+ 62         if (pte_none(pkmap_page_table[i]))
+ 63             BUG();
+ 64 
+ 72         page = pte_page(pkmap_page_table[i]);
+ 73         pte_clear(&amp;pkmap_page_table[i]);
+ 74 
+ 75         page-&gt;virtual = NULL;
+ 76     }
+ 77     flush_tlb_all();
+ 78 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>46</B>As the global page tables are about to change, the CPU caches of all
+processors have to be flushed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>48-76</B>Cycle through the entire <TT>pkmap_count</TT> array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>57-58</B>If the element is not 1, move to the next element</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>59</B>Set from 1 to 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>62-63</B>Make sure the PTE is not somehow mapped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>72-73</B>Unmap the page from the PTE and clear the PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>75</B>Update the <TT>virtual</TT> field as the page is unmapped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>77</B>Flush the TLB</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc126"></A><A NAME="htoc378">I.2</A>  Mapping High Memory Pages Atomically</H2><P>The following is an example <TT>km_type</TT><A NAME="@codeindex271"></A> enumeration for
+the x86. It lists the different uses interrupts have for atomically calling
+kmap. Note how <TT>KM_TYPE_NR</TT> is the last element so it doubles up
+as a count of the number of elements.</P><PRE CLASS="verbatim"> 4 enum km_type {
+  5     KM_BOUNCE_READ,
+  6     KM_SKB_SUNRPC_DATA,
+  7     KM_SKB_DATA_SOFTIRQ,
+  8     KM_USER0,
+  9     KM_USER1,
+ 10     KM_BH_IRQ,
+ 11     KM_TYPE_NR
+ 12 };
+</PRE><H3 CLASS="subsection"><A NAME="htoc379">I.2.1</A>  Function: kmap_atomic</H3><P> <EM>Source: include/asm-i386/highmem.h</EM> <A NAME="func: kmap_atomic"></A> <A NAME="@codeindex272"></A></P><P>This is the atomic version of <TT>kmap()</TT>. Note that at no point is a
+spinlock held or does it sleep. A spinlock is not required as every processor
+has its own reserved space.</P><PRE CLASS="verbatim"> 89 static inline void *kmap_atomic(struct page *page, 
+                                    enum km_type type)
+ 90 {
+ 91     enum fixed_addresses idx;
+ 92     unsigned long vaddr;
+ 93 
+ 94     if (page &lt; highmem_start_page)
+ 95         return page_address(page);
+ 96 
+ 97     idx = type + KM_TYPE_NR*smp_processor_id();
+ 98     vaddr = __fix_to_virt(FIX_KMAP_BEGIN + idx);
+ 99 #if HIGHMEM_DEBUG
+100    if (!pte_none(*(kmap_pte-idx)))
+101        out_of_line_bug();
+102 #endif
+103     set_pte(kmap_pte-idx, mk_pte(page, kmap_prot));
+104     __flush_tlb_one(vaddr);
+105 
+106     return (void*) vaddr;
+107 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B>The parameters are the page to map and the type of usage required.
+One slot per usage per processor is maintained</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>94-95</B>If the page is in low memory, return a direct mapping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>97</B><TT>type</TT> gives which slot to use. <TT>KM_TYPE_NR *
+smp_processor_id()</TT> gives the set of slots reserved for this processor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>98</B>Get the virtual address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>100-101</B>Debugging code. In reality a PTE will always exist</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>103</B>Set the PTE into the reserved slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>104</B>Flush the TLB for this slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>106</B>Return the virtual address</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc127"></A><A NAME="htoc380">I.3</A>  Unmapping Pages</H2><H3 CLASS="subsection"><A NAME="htoc381">I.3.1</A>  Function: kunmap</H3><P> <EM>Source: include/asm-i386/highmem.h</EM> <A NAME="func: kunmap"></A> <A NAME="@codeindex273"></A></P><PRE CLASS="verbatim"> 74 static inline void kunmap(struct page *page)
+ 75 {
+ 76     if (in_interrupt())
+ 77         out_of_line_bug();
+ 78     if (page &lt; highmem_start_page)
+ 79         return;
+ 80     kunmap_high(page);
+ 81 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>76-77</B><TT>kunmap()</TT> cannot be called from interrupt so exit
+gracefully</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-79</B>If the page already is in low memory, there is no need to unmap</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>80</B>Call the architecture independent function <TT>kunmap_high()</TT></DD></DL><H3 CLASS="subsection"><A NAME="htoc382">I.3.2</A>  Function: kunmap_high</H3><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: kunmap_high"></A> <A NAME="@codeindex274"></A></P><P>This is the architecture independent part of the <TT>kunmap()</TT> operation.</P><PRE CLASS="verbatim">157 void kunmap_high(struct page *page)
+158 {
+159     unsigned long vaddr;
+160     unsigned long nr;
+161     int need_wakeup;
+162 
+163     spin_lock(&amp;kmap_lock);
+164     vaddr = (unsigned long) page-&gt;virtual;
+165     if (!vaddr)
+166         BUG();
+167     nr = PKMAP_NR(vaddr);
+168 
+173     need_wakeup = 0;
+174     switch (--pkmap_count[nr]) {
+175     case 0:
+176         BUG();
+177     case 1:
+188         need_wakeup = waitqueue_active(&amp;pkmap_map_wait);
+189     }
+190     spin_unlock(&amp;kmap_lock);
+191 
+192     /* do wake-up, if needed, race-free outside of the spin lock */
+193     if (need_wakeup)
+194         wake_up(&amp;pkmap_map_wait);
+195 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>163</B>Acquire <TT>kmap_lock</TT> protecting the <TT>virtual</TT>
+field and the <TT>pkmap_count</TT> array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>164</B>Get the virtual page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>165-166</B>If the virtual field is not set, it is a double unmapping or
+unmapping of a non-mapped page so <TT>BUG()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>167</B>Get the index within the <TT>pkmap_count</TT> array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>173</B>By default, a wakeup call to processes calling <TT>kmap()</TT> is
+not needed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>174</B>Check the value of the index after decrement</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>175-176</B>Falling to 0 is a bug as the TLB needs to be flushed to make 0 a
+valid entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>177-188</B>If it has dropped to 1 (the entry is now free but
+needs a TLB flush), check to see if there is anyone sleeping on the
+<TT>pkmap_map_wait</TT> queue. If necessary, the queue will be woken up
+after the spinlock is freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>190</B>Free <TT>kmap_lock</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>193-194</B>If there are waiters on the queue and a slot has been freed, wake
+them up</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc128"></A><A NAME="htoc383">I.4</A>  Unmapping High Memory Pages Atomically</H2><H3 CLASS="subsection"><A NAME="htoc384">I.4.1</A>  Function: kunmap_atomic</H3><P> <EM>Source: include/asm-i386/highmem.h</EM> <A NAME="func: kunmap_atomic"></A> <A NAME="@codeindex275"></A></P><P>This entire function is debug code. The reason is that as pages are only mapped
+here atomically, they will only be used in a tiny place for a short time before
+being unmapped. It is safe to leave the page there as it will not be referenced
+after unmapping and another mapping to the same slot will simply replce it.</P><PRE CLASS="verbatim">109 static inline void kunmap_atomic(void *kvaddr, enum km_type type)
+110 {
+111 #if HIGHMEM_DEBUG
+112     unsigned long vaddr = (unsigned long) kvaddr &amp; PAGE_MASK;
+113     enum fixed_addresses idx = type + KM_TYPE_NR*smp_processor_id();
+114 
+115     if (vaddr &lt; FIXADDR_START) // FIXME
+116         return;
+117 
+118     if (vaddr != __fix_to_virt(FIX_KMAP_BEGIN+idx))
+119         out_of_line_bug();
+120 
+121     /*
+122      * force other mappings to Oops if they'll try to access
+123      * this pte without first remap it
+124      */
+125     pte_clear(kmap_pte-idx);
+126     __flush_tlb_one(vaddr);
+127 #endif
+128 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>112</B>Get the virtual address and ensure it is aligned to a page boundary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>115-116</B>If the address supplied is not in the fixed area, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>118-119</B>If the address does not correspond to the reserved slot for this
+type of usage and processor, declare it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>125-126</B>Unmap the page now so that if it is referenced again, it will
+cause an Oops</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc129"></A><A NAME="htoc385">I.5</A>  Bounce Buffers</H2><H3 CLASS="subsection"><A NAME="htoc386">I.5.1</A>  Creating Bounce Buffers</H3><H4 CLASS="subsubsection"><A NAME="htoc387">I.5.1.1</A>  Function: create_bounce</H4><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: create_bounce"></A> <A NAME="@codeindex276"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand012.html#fig: create_bounce">9.3</A>. 
+High level function for the creation of bounce buffers. It is broken into
+two major parts, the allocation of the necessary resources, and the copying
+of data from the template.</P><PRE CLASS="verbatim">405 struct buffer_head * create_bounce(int rw, 
+                                       struct buffer_head * bh_orig)
+406 {
+407     struct page *page;
+408     struct buffer_head *bh;
+409 
+410     if (!PageHighMem(bh_orig-&gt;b_page))
+411         return bh_orig;
+412 
+413     bh = alloc_bounce_bh();
+420     page = alloc_bounce_page();
+421 
+422     set_bh_page(bh, page, 0);
+423 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>405</B>The parameters of the function are
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>rw</B> is set to 1 if this is a write buffer
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>bh_orig</B> is the template buffer head to copy from
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>410-411</B>If the template buffer head is already in low memory, simply
+return it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>413</B>Allocate a buffer head from the slab allocator or from the
+emergency pool if it fails</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>420</B>Allocate a page from the buddy allocator or the emergency pool if
+it fails</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>422</B>Associate the allocated page with the allocated
+<TT>buffer_head</TT></DD></DL><PRE CLASS="verbatim">424     bh-&gt;b_next = NULL;
+425     bh-&gt;b_blocknr = bh_orig-&gt;b_blocknr;
+426     bh-&gt;b_size = bh_orig-&gt;b_size;
+427     bh-&gt;b_list = -1;
+428     bh-&gt;b_dev = bh_orig-&gt;b_dev;
+429     bh-&gt;b_count = bh_orig-&gt;b_count;
+430     bh-&gt;b_rdev = bh_orig-&gt;b_rdev;
+431     bh-&gt;b_state = bh_orig-&gt;b_state;
+432 #ifdef HIGHMEM_DEBUG
+433     bh-&gt;b_flushtime = jiffies;
+434     bh-&gt;b_next_free = NULL;
+435     bh-&gt;b_prev_free = NULL;
+436     /* bh-&gt;b_this_page */
+437     bh-&gt;b_reqnext = NULL;
+438     bh-&gt;b_pprev = NULL;
+439 #endif
+440     /* bh-&gt;b_page */
+441     if (rw == WRITE) {
+442         bh-&gt;b_end_io = bounce_end_io_write;
+443         copy_from_high_bh(bh, bh_orig);
+444     } else
+445         bh-&gt;b_end_io = bounce_end_io_read;
+446     bh-&gt;b_private = (void *)bh_orig;
+447     bh-&gt;b_rsector = bh_orig-&gt;b_rsector;
+448 #ifdef HIGHMEM_DEBUG
+449     memset(&amp;bh-&gt;b_wait, -1, sizeof(bh-&gt;b_wait));
+450 #endif
+451 
+452     return bh;
+453 }
+</PRE><P>Populate the newly created <TT>buffer_head</TT></P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>431</B>Copy in information essentially verbatim except for the
+<TT>b_list</TT> field as this buffer is not directly connected to the
+others on the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>433-438</B>Debugging only information</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>441-444</B>If this is a buffer that is to be written to then the callback
+function to end the IO is <TT>bounce_end_io_write()</TT>(See Section <A HREF="#func: bounce_end_io_write">I.5.2.1</A>)
+which is called when the device has received all the information. As
+the data exists in high memory, it is copied &#X201C;down&#X201D; with
+<TT>copy_from_high_bh()</TT> (See Section <A HREF="#func: copy_from_high_bh">I.5.2.3</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>437-438</B>If we are waiting for a device to write data into the buffer,
+then the callback function <TT>bounce_end_io_read()</TT>(See Section <A HREF="#func: bounce_end_io_read">I.5.2.2</A>)
+is used</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>446-447</B>Copy the remaining information from the template
+<TT>buffer_head</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>452</B>Return the new bounce buffer</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc388">I.5.1.2</A>  Function: alloc_bounce_bh</H4><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: alloc_bounce_bh"></A> <A NAME="@codeindex277"></A></P><P>This function first tries to allocate a <TT>buffer_head</TT> from the
+slab allocator and if that fails, an emergency pool will be used.</P><PRE CLASS="verbatim">369 struct buffer_head *alloc_bounce_bh (void)
+370 {
+371     struct list_head *tmp;
+372     struct buffer_head *bh;
+373 
+374     bh = kmem_cache_alloc(bh_cachep, SLAB_NOHIGHIO);
+375     if (bh)
+376         return bh;
+380
+381     wakeup_bdflush();
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>374</B>Try to allocate a new <TT>buffer_head</TT> from the slab
+allocator. Note how the request is made to <EM>not</EM> use IO operations that
+involve high IO to avoid recursion</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>375-376</B>If the allocation was successful, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>381</B>If it was not, wake up <B>bdflush</B> to launder pages</DD></DL><PRE CLASS="verbatim">383 repeat_alloc:
+387     tmp = &amp;emergency_bhs;
+388     spin_lock_irq(&amp;emergency_lock);
+389     if (!list_empty(tmp)) {
+390         bh = list_entry(tmp-&gt;next, struct buffer_head,
+                    b_inode_buffers);
+391         list_del(tmp-&gt;next);
+392         nr_emergency_bhs--;
+393     }
+394     spin_unlock_irq(&amp;emergency_lock);
+395     if (bh)
+396         return bh;
+397 
+398     /* we need to wait I/O completion */
+399     run_task_queue(&amp;tq_disk);
+400 
+401     yield();
+402     goto repeat_alloc;
+403 }
+</PRE><P>The allocation from the slab failed so allocate from the emergency pool.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>387</B>Get the end of the emergency buffer head list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>388</B>Acquire the lock protecting the pools</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>389-393</B>If the pool is not empty, take a <TT>buffer_head</TT> from
+the list and decrement the <TT>nr_emergency_bhs</TT> counter</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>394</B>Release the lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>395-396</B>If the allocation was successful, return it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>399</B>If not, we are seriously short of memory and the only way the
+pool will replenish is if high memory IO completes. Therefore, requests on
+<TT>tq_disk</TT> are started so the data will be written to disk, probably
+freeing up pages in the process</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>401</B>Yield the processor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>402</B>Attempt to allocate from the emergency pools again</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc389">I.5.1.3</A>  Function: alloc_bounce_page</H4><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: alloc_bounce_page"></A> <A NAME="@codeindex278"></A></P><P>This function is essentially identical to <TT>alloc_bounce_bh()</TT>. It
+first tries to allocate a page from the buddy allocator and if that fails,
+an emergency pool will be used.</P><PRE CLASS="verbatim">333 struct page *alloc_bounce_page (void)
+334 {
+335     struct list_head *tmp;
+336     struct page *page;
+337 
+338     page = alloc_page(GFP_NOHIGHIO);
+339     if (page)
+340         return page;
+344
+345     wakeup_bdflush();
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>338-340</B>Allocate from the buddy allocator and return the page if
+successful</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>345</B>Wake <B>bdflush</B> to launder pages</DD></DL><PRE CLASS="verbatim">347 repeat_alloc:
+351     tmp = &amp;emergency_pages;
+352     spin_lock_irq(&amp;emergency_lock);
+353     if (!list_empty(tmp)) {
+354         page = list_entry(tmp-&gt;next, struct page, list);
+355         list_del(tmp-&gt;next);
+356         nr_emergency_pages--;
+357     }
+358     spin_unlock_irq(&amp;emergency_lock);
+359     if (page)
+360         return page;
+361 
+362     /* we need to wait I/O completion */
+363     run_task_queue(&amp;tq_disk);
+364 
+365     yield();
+366     goto repeat_alloc;
+367 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>351</B>Get the end of the emergency buffer head list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>352</B>Acquire the lock protecting the pools</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>353-357</B>If the pool is not empty, take a page from the list and
+decrement the number of available <TT>nr_emergency_pages</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>358</B>Release the lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>359-360</B>If the allocation was successful, return it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>363</B>Run the IO task queue to try and replenish the emergency pool</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>365</B>Yield the processor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>366</B>Attempt to allocate from the emergency pools again</DD></DL><H3 CLASS="subsection"><A NAME="htoc390">I.5.2</A>  Copying via Bounce Buffers</H3><H4 CLASS="subsubsection"><A NAME="htoc391">I.5.2.1</A>  Function: bounce_end_io_write</H4><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: bounce_end_io_write"></A> <A NAME="@codeindex279"></A></P><P>This function is called when a bounce buffer used for writing to a device
+completes IO. As the buffer is copied <EM>from</EM> high memory and to the
+device, there is nothing left to do except reclaim the resources</P><PRE CLASS="verbatim">319 static void bounce_end_io_write (struct buffer_head *bh, 
+                                     int uptodate)
+320 {
+321     bounce_end_io(bh, uptodate);
+322 }
+</PRE><H4 CLASS="subsubsection"><A NAME="htoc392">I.5.2.2</A>  Function: bounce_end_io_read</H4><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: bounce_end_io_read"></A> <A NAME="@codeindex280"></A></P><P>This is called when data has been read from the device and needs to be copied
+to high memory. It is called from interrupt so has to be more careful</P><PRE CLASS="verbatim">324 static void bounce_end_io_read (struct buffer_head *bh, 
+                                    int uptodate)
+325 {
+326     struct buffer_head *bh_orig = 
+                (struct buffer_head *)(bh-&gt;b_private);
+327 
+328     if (uptodate)
+329         copy_to_high_bh_irq(bh_orig, bh);
+330     bounce_end_io(bh, uptodate);
+331 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>328-329</B>The data is just copied to the bounce buffer to needs to be
+moved to high memory with <TT>copy_to_high_bh_irq()</TT>
+(See Section <A HREF="#func: copy_to_high_bh_irq">I.5.2.4</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>330</B>Reclaim the resources</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc393">I.5.2.3</A>  Function: copy_from_high_bh</H4><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: copy_from_high_bh"></A> <A NAME="@codeindex281"></A></P><P>This function copies data from a high memory <TT>buffer_head</TT> to a
+bounce buffer.</P><PRE CLASS="verbatim">215 static inline void copy_from_high_bh (struct buffer_head *to,
+216              struct buffer_head *from)
+217 {
+218     struct page *p_from;
+219     char *vfrom;
+220 
+221     p_from = from-&gt;b_page;
+222 
+223     vfrom = kmap_atomic(p_from, KM_USER0);
+224     memcpy(to-&gt;b_data, vfrom + bh_offset(from), to-&gt;b_size);
+225     kunmap_atomic(vfrom, KM_USER0);
+226 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>223</B>Map the high memory page into low memory. This path is protected by
+the IRQ safe lock <TT>io_request_lock</TT> so it is safe to call
+<TT>kmap_atomic()</TT> (See Section <A HREF="#func: kmap_atomic">I.2.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>224</B>Copy the data</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>225</B>Unmap the page</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc394">I.5.2.4</A>  Function: copy_to_high_bh_irq</H4><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: copy_to_high_bh_irq"></A> <A NAME="@codeindex282"></A></P><P>Called from interrupt after the device has finished writing data to the bounce
+buffer. This function copies data to high memory</P><PRE CLASS="verbatim">228 static inline void copy_to_high_bh_irq (struct buffer_head *to,
+229              struct buffer_head *from)
+230 {
+231     struct page *p_to;
+232     char *vto;
+233     unsigned long flags;
+234 
+235     p_to = to-&gt;b_page;
+236     __save_flags(flags);
+237     __cli();
+238     vto = kmap_atomic(p_to, KM_BOUNCE_READ);
+239     memcpy(vto + bh_offset(to), from-&gt;b_data, to-&gt;b_size);
+240     kunmap_atomic(vto, KM_BOUNCE_READ);
+241     __restore_flags(flags);
+242 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>236-237</B>Save the flags and disable interrupts</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>238</B>Map the high memory page into low memory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>239</B>Copy the data</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>240</B>Unmap the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>241</B>Restore the interrupt flags</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc395">I.5.2.5</A>  Function: bounce_end_io</H4><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: bounce_end_io"></A> <A NAME="@codeindex283"></A></P><P>Reclaims the resources used by the bounce buffers. If emergency pools are
+depleted, the resources are added to it.</P><PRE CLASS="verbatim">244 static inline void bounce_end_io (struct buffer_head *bh, 
+                                      int uptodate)
+245 {
+246     struct page *page;
+247     struct buffer_head *bh_orig = 
+                   (struct buffer_head *)(bh-&gt;b_private);
+248     unsigned long flags;
+249 
+250     bh_orig-&gt;b_end_io(bh_orig, uptodate);
+251 
+252     page = bh-&gt;b_page;
+253 
+254     spin_lock_irqsave(&amp;emergency_lock, flags);
+255     if (nr_emergency_pages &gt;= POOL_SIZE)
+256         __free_page(page);
+257     else {
+258         /*
+259          * We are abusing page-&gt;list to manage
+260          * the highmem emergency pool:
+261          */
+262         list_add(&amp;page-&gt;list, &amp;emergency_pages);
+263         nr_emergency_pages++;
+264     }
+265     
+266     if (nr_emergency_bhs &gt;= POOL_SIZE) {
+267 #ifdef HIGHMEM_DEBUG
+268         /* Don't clobber the constructed slab cache */
+269         init_waitqueue_head(&amp;bh-&gt;b_wait);
+270 #endif
+271         kmem_cache_free(bh_cachep, bh);
+272     } else {
+273         /*
+274          * Ditto in the bh case, here we abuse b_inode_buffers:
+275          */
+276         list_add(&amp;bh-&gt;b_inode_buffers, &amp;emergency_bhs);
+277         nr_emergency_bhs++;
+278     }
+279     spin_unlock_irqrestore(&amp;emergency_lock, flags);
+280 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>250</B>Call the IO completion callback for the original
+<TT>buffer_head</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>252</B>Get the pointer to the buffer page to free</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>254</B>Acquire the lock to the emergency pool</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>255-256</B>If the page pool is full, just return the page to the buddy
+allocator</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>257-264</B>Otherwise add this page to the emergency pool</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>266-272</B>If the <TT>buffer_head</TT> pool is full, just return it to
+the slab allocator</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>272-278</B>Otherwise add this <TT>buffer_head</TT> to the pool</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>279</B>Release the lock</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc130"></A><A NAME="htoc396">I.6</A>  Emergency Pools</H2><P>There is only one function of relevance to the emergency pools
+and that is the init function. It is called during system startup and then
+the code is deleted as it is never needed again</P><H3 CLASS="subsection"><A NAME="htoc397">I.6.1</A>  Function: init_emergency_pool</H3><P> <EM>Source: mm/highmem.c</EM> <A NAME="func: init_emergency_pool"></A> <A NAME="@codeindex284"></A></P><P>Create a pool for emergency pages and for emergency <TT>buffer_head</TT>s</P><PRE CLASS="verbatim">282 static __init int init_emergency_pool(void)
+283 {
+284     struct sysinfo i;
+285     si_meminfo(&amp;i);
+286     si_swapinfo(&amp;i);
+287     
+288     if (!i.totalhigh)
+289         return 0;
+290 
+291     spin_lock_irq(&amp;emergency_lock);
+292     while (nr_emergency_pages &lt; POOL_SIZE) {
+293         struct page * page = alloc_page(GFP_ATOMIC);
+294         if (!page) {
+295             printk("couldn't refill highmem emergency pages");
+296             break;
+297         }
+298         list_add(&amp;page-&gt;list, &amp;emergency_pages);
+299         nr_emergency_pages++;
+300     }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>288-289</B>If there is no high memory available, do not bother</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>291</B>Acquire the lock protecting the pools</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>292-300</B>Allocate <TT>POOL_SIZE</TT> pages from the buddy allocator
+and add them to a linked list. Keep a count of the number of pages in the
+pool with <TT>nr_emergency_pages</TT></DD></DL><PRE CLASS="verbatim">301     while (nr_emergency_bhs &lt; POOL_SIZE) {
+302         struct buffer_head * bh = 
+                kmem_cache_alloc(bh_cachep, SLAB_ATOMIC);
+303         if (!bh) {
+304             printk("couldn't refill highmem emergency bhs");
+305             break;
+306         }
+307         list_add(&amp;bh-&gt;b_inode_buffers, &amp;emergency_bhs);
+308         nr_emergency_bhs++;
+309     }
+310     spin_unlock_irq(&amp;emergency_lock);
+311     printk("allocated %d pages and %d bhs reserved for the 
+            highmem bounces\n",
+312        nr_emergency_pages, nr_emergency_bhs);
+313 
+314     return 0;
+315 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>301-309</B>Allocate <TT>POOL_SIZE</TT> <TT>buffer_head</TT>s
+from the slab allocator and add them to a linked list linked by
+<TT>b_inode_buffers</TT>. Keep track of how many heads are in the pool
+with <TT>nr_emergency_bhs</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>310</B>Release the lock protecting the pools</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>314</B>Return success</DD></DL><P>	</P><HR>
+[ <A HREF="understand025.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand027.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

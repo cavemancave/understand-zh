@@ -1,0 +1,485 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Physical Page Allocation</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand008.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand010.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc41">Chapter 6</A>  Physical Page Allocation</H1><P> 
+<A NAME="chap: Physical Page Allocation"></A>
+<A NAME="@mainindex575"></A></P><P>This chapter describes how physical pages are managed and allocated
+in Linux. The principal algorithmm used is the <EM>Binary Buddy
+Allocator</EM><A NAME="@mainindex576"></A>, devised by Knowlton [<A HREF="understand031.html#knowlton65"><CITE>Kno65</CITE></A>] and further described
+by Knuth [<A HREF="understand031.html#knuth68"><CITE>Knu68</CITE></A>]. It is has been shown to be extremely fast in
+comparison to other allocators [<A HREF="understand031.html#korn85"><CITE>KB85</CITE></A>].</P><P>This is an allocation scheme which combines a normal power-of-two allocator
+with free buffer coalescing [<A HREF="understand031.html#vahalia96"><CITE>Vah96</CITE></A>]<A NAME="@mainindex577"></A> and the
+basic concept behind it is quite simple. Memory is broken up into large blocks
+of pages where each block is a power of two number of pages. If a block of
+the desired size is not available, a large block is broken up in half and the
+two blocks are <EM>buddies</EM><A NAME="@mainindex578"></A> to each other. One half is used
+for the allocation and the other is free. The blocks are continuously halved
+as necessary until a block of the desired size is available. When a block
+is later freed, the buddy is examined and the two coalesced if it is free.</P><P>This chapter will begin with describing how Linux remembers what blocks of
+memory are free. After that the methods for allocating and freeing pages will
+be discussed in details. The subsequent section will cover the flags which
+affect the allocator behaviour and finally the problem of fragmentation and
+how the allocator handles it will be covered.</P><H2 CLASS="section"><A NAME="toc42"></A><A NAME="htoc42">6.1</A>  Managing Free Blocks</H2><P>
+<A NAME="sec: Managing Free Blocks"></A>
+<A NAME="@mainindex579"></A></P><P>As stated, the allocator maintains blocks of free pages where each block
+is a power of two number of pages. The exponent for the power of two sized
+block is referred to as the <EM>order</EM><A NAME="@mainindex580"></A>. An array
+of <TT>free_area_t</TT> structs are maintained for each order that
+points to a linked list of blocks of pages that are free as indicated by
+Figure <A HREF="#fig: Free page block management">6.1</A>. </P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html029.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 6.1: Free page block management</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Free page block management"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Hence, the 0th element of the array will point to a list of free page
+blocks of size 2<SUP>0</SUP> or 1 page, the 1st element will be a list of 2<SUP>1</SUP>
+(2) pages up to 2<SUP><I>MAX</I>_<I>ORDER</I>&#X2212;1</SUP> number of pages, where the
+<TT>MAX_ORDER</TT><A NAME="@mainindex581"></A> is currently defined as 10. This eliminates the
+chance that a larger block will be split to satisfy a request where a smaller
+block would have sufficed. The page blocks are maintained on a linear linked
+list via <TT>page</TT>&#X2192;<TT>list</TT>.</P><P>Each zone has a <TT>free_area_t</TT><A NAME="@mainindex582"></A> struct array
+called <TT>free_area[MAX_ORDER]</TT>. It is declared in
+&lt;<TT>linux/mm.h</TT>&gt; as follows:</P><PRE CLASS="verbatim"> 22 typedef struct free_area_struct {
+ 23         struct list_head        free_list;
+ 24         unsigned long           *map;
+ 25 } free_area_t; 
+</PRE><P>The fields in this struct are simply:</P><DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>free_list</B> A linked list of free page blocks;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>map</B> A bitmap representing the state of a pair of buddies.
+</DD></DL><P>Linux saves memory by only using one bit instead of two to represent each pair
+of buddies. Each time a buddy is allocated or freed, the bit representing
+the pair of buddies is toggled so that the bit is zero if the pair of pages
+are both free or both full and 1 if only one buddy is in use. To toggle the
+correct bit, the macro <TT>MARK_USED()</TT><A NAME="@mainindex583"></A> in <TT>page_alloc.c</TT>
+is used which is declared as follows:</P><PRE CLASS="verbatim">164 #define MARK_USED(index, order, area) \
+165         __change_bit((index) &gt;&gt; (1+(order)), (area)-&gt;map)
+</PRE><P><TT>index</TT> is the index of the page within the global <TT>mem_map</TT>
+array. By shifting it right by <TT>1+order</TT> bits, the bit within map
+representing the pair of buddies is revealed.</P><H2 CLASS="section"><A NAME="toc43"></A><A NAME="htoc43">6.2</A>  Allocating Pages</H2><P>
+<A NAME="Sec: Allocating Pages"></A></P><P>Linux provides a quite sizable API for the allocation of page frames.
+All of them take a <TT>gfp_mask</TT><A NAME="@mainindex584"></A> as a parameter which is a set of
+flags that determine how the allocator will behave. The flags are discussed in
+Section <A HREF="#Sec: GFP Flags">6.4</A>.</P><P>The allocation API functions all use the core function
+<TT>__alloc_pages()</TT> but the APIs exist so that the correct node and
+zone will be chosen. Different users will require different zones such as
+<TT>ZONE_DMA</TT> for certain device drivers or <TT>ZONE_NORMAL</TT> for disk
+buffers and callers should not have to be aware of what node is being
+used. A full list of page allocation APIs are listed in Table <A HREF="#tab: Physical Pages Allocation API">6.1</A>.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex585"></A><TT>struct page * alloc_page(unsigned int gfp_mask)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate a single page and return a struct address</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex586"></A><TT>struct page * alloc_pages(unsigned int gfp_mask, unsigned int order)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate 2<SUP><I>order</I></SUP> number of pages and returns a
+struct page</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex587"></A><TT>unsigned long get_free_page(unsigned int gfp_mask)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate a single page, zero it and return a virtual address</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex588"></A><TT>unsigned long __get_free_page(unsigned int gfp_mask)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate a single page and return a virtual address</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex589"></A><TT>unsigned long __get_free_pages(unsigned int gfp_mask, unsigned int order)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate 2<SUP><I>order</I></SUP> number of pages and return a virtual
+address</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex590"></A><TT>struct page * __get_dma_pages(unsigned int gfp_mask, unsigned int order)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Allocate 2<SUP><I>order</I></SUP> number of pages from the DMA zone and return
+a struct page</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 6.1: Physical Pages Allocation API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Physical Pages Allocation API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Allocations are always for a specified order, 0 in the case where a single
+page is required. If a free block cannot be found of the requested order,
+a higher order block is split into two buddies. One is allocated and the
+other is placed on the free list for the lower order. Figure <A HREF="#fig: Allocating physical pages">6.2</A>
+shows where a 2<SUP>4</SUP> block is split and how the
+buddies are added to the free lists until a block for the process is available.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html030.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 6.2: Allocating physical
+pages</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Allocating physical pages"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>When the block is later freed, the buddy will be checked. If both are free,
+they are merged to form a higher order block and placed on the higher free
+list where its buddy is checked and so on. If the buddy is not free, the
+freed block is added to the free list at the current order. During these
+list manipulations, interrupts have to be disabled to prevent an interrupt
+handler manipulating the lists while a process has them in an inconsistent
+state. This is achieved by using an interrupt safe spinlock.</P><P>The second decision to make is which memory node or <TT>pg_data_t</TT>
+to use. Linux uses a node-local allocation policy<A NAME="@mainindex591"></A>
+which aims to use the memory bank associated with the CPU running the page
+allocating process. Here, the function <TT>_alloc_pages()</TT> is what is
+important as this function is different depending on whether the kernel is
+built for a UMA (function in <TT>mm/page_alloc.c</TT>) or NUMA (function
+in <TT>mm/numa.c</TT>) machine.</P><P>Regardless of which API is used, <TT>__alloc_pages()</TT> in
+<TT>mm/page_alloc.c</TT> is the heart of the allocator. This function,
+which is never called directly, examines the selected zone and checks if
+it is suitable to allocate from based on the number of available pages. If
+the zone is not suitable, the allocator may fall back to other zones. The
+order of zones to fall back on are decided at boot time by the function
+<TT>build_zonelists()</TT> but generally <TT>ZONE_HIGHMEM</TT> will fall back
+to <TT>ZONE_NORMAL</TT> and that in turn will fall back to <TT>ZONE_DMA</TT>. If
+number of free pages reaches the <TT>pages_low</TT> watermark, it will
+wake <B>kswapd</B><A NAME="@mainindex592"></A> to begin freeing up pages from zones and if memory
+is extremely tight, the caller will do the work of <B>kswapd</B> itself.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html031.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 6.3: Call Graph: <TT>alloc_pages()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: alloc_pages"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Once the zone has finally been decided on, the function <TT>rmqueue()</TT>
+is called to allocate the block of pages or split higher level blocks if
+one of the appropriate size is not available.</P><H2 CLASS="section"><A NAME="toc44"></A><A NAME="htoc44">6.3</A>  Free Pages</H2><P>
+<A NAME="Sec: Free Pages"></A></P><P>The API for the freeing of pages is a lot simpler and exists to help remember
+the order of the block to free as one disadvantage of a buddy allocator is
+that the caller has to remember the size of the original allocation. The
+API for freeing is listed in Table <A HREF="#tab: Physical Pages Free API">6.2</A>.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> 
+<A NAME="@mainindex593"></A><TT>void __free_pages(struct page *page, unsigned int order)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Free an order number of pages from the given page</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex594"></A><TT>void __free_page(struct page *page)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Free a single page</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex595"></A><TT>void free_page(void *addr)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Free a page from the given virtual address</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 6.2: Physical Pages Free API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Physical Pages Free API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The principal function for freeing pages is <TT>__free_pages_ok()</TT>
+and it should not be called directly. Instead the function
+<TT>__free_pages()</TT> is provided which performs simple checks first as
+indicated in Figure <A HREF="#fig: __free_pages">6.4</A>. </P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html032.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 6.4: Call Graph: <TT>__free_pages()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: __free_pages"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>When a buddy is freed, Linux tries to coalesce the buddies<A NAME="@mainindex596"></A> together immediately if possible. This is not optimal as the
+worst case scenario will have many coalitions followed by the immediate
+splitting of the same blocks [<A HREF="understand031.html#vahalia96"><CITE>Vah96</CITE></A>].</P><P>To detect if the buddies can be merged or not, Linux checks
+the bit corresponding to the affected pair of buddies in
+<TT>free_area</TT>&#X2192;<TT>map</TT>. As one buddy has just been freed by this
+function, it is obviously known that at least one buddy is free. If the bit
+in the map is 0 after toggling, we know that the other buddy must also be
+free because if the bit is 0, it means both buddies are either both free or
+both allocated. If both are free, they may be merged.</P><P>Calculating the address of the buddy is a well known concept [<A HREF="understand031.html#knuth68"><CITE>Knu68</CITE></A>]. As
+the allocations are always in blocks of size 2<SUP><I>k</I></SUP>, the address of the block,
+or at least its offset within <TT>zone_mem_map</TT> will also be a
+power of 2<SUP><I>k</I></SUP>. The end result is that there will always be at least <EM>k</EM>
+number of zeros to the right of the address. To get the address of the buddy,
+the <EM>kth</EM> bit from the right is examined. If it is 0, then the buddy
+will have this bit flipped. To get this bit, Linux creates a <TT>mask</TT>
+which is calculated as</P><PRE> mask = ( 0 &lt;&lt; k) </PRE><P>The mask we are interested in is</P><PRE> imask = 1 +  mask </PRE><P>Linux takes a shortcut in calculating this by noting that</P><PRE> imask = -mask = 1 +  mask </PRE><P>Once the buddy is merged, it is removed for the free list and the newly
+coalesced pair moves to the next higher order to see if it may also be merged.</P><H2 CLASS="section"><A NAME="toc45"></A><A NAME="htoc45">6.4</A>  Get Free Page (GFP) Flags</H2><P>
+<A NAME="Sec: GFP Flags"></A>
+<A NAME="@mainindex597"></A>
+<A NAME="@mainindex598"></A></P><P>A persistent concept through the whole VM is the <EM>Get Free Page
+(GFP)</EM><A NAME="@mainindex599"></A><A NAME="@mainindex600"></A> flags. These flags determine how the allocator and
+<B>kswapd</B> will behave for the allocation and freeing of pages. For
+example, an interrupt handler may not sleep so it will <EM>not</EM>
+have the <TT>__GFP_WAIT</TT> flag set as this flag indicates
+the caller may sleep. There are three sets of GFP flags, all defined in
+&lt;<TT>linux/mm.h</TT>&gt;.</P><P>The first of the three is the set of zone modifiers<A NAME="@mainindex601"></A>
+listed in Table <A HREF="#tab: Zone GFP Flags">6.3</A>. These flags indicate that the
+caller must try to allocate from a particular zone. The reader will note
+there is not a zone modifier for <TT>ZONE_NORMAL</TT>. This is because the zone
+modifier flag is used as an offset within an array and 0 implicitly means
+allocate from <TT>ZONE_NORMAL</TT>.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD ALIGN=left NOWRAP><B>Flag</B>		</TD><TD ALIGN=left NOWRAP><B>Description</B></TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>__GFP_DMA</TT><A NAME="@mainindex602"></A>	</TD><TD ALIGN=left NOWRAP>Allocate from <TT>ZONE_DMA</TT> if possible</TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>__GFP_HIGHMEM</TT><A NAME="@mainindex603"></A></TD><TD ALIGN=left NOWRAP>Allocate from <TT>ZONE_HIGHMEM</TT> if possible</TD></TR>
+<TR><TD ALIGN=left NOWRAP><TT>GFP_DMA</TT><A NAME="@mainindex604"></A>	</TD><TD ALIGN=left NOWRAP>Alias for <TT>__GFP_DMA</TT></TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 6.3: Low Level GFP Flags Affecting Zone Allocation</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Zone GFP Flags"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The next flags are action modifiers listed in Table <A HREF="#tab: Low GFP Flags">6.4</A>.
+They change the behaviour of the VM and what the calling process may do. The
+low level flags on their own are too primitive to be easily used.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>Flag</B>		</TD><TD VALIGN=top ALIGN=left><B>Description</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>__GFP_WAIT</TT><A NAME="@mainindex605"></A></TD><TD VALIGN=top ALIGN=left>Indicates that the caller is not high priority
+			and can sleep or reschedule</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>__GFP_HIGH</TT><A NAME="@mainindex606"></A></TD><TD VALIGN=top ALIGN=left>Used by a high priority or kernel
+			process. Kernel 2.2.x used it to determine if a
+			process could access emergency pools of memory. In
+			2.4.x kernels, it does not appear to be used</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>__GFP_IO</TT><A NAME="@mainindex607"></A></TD><TD VALIGN=top ALIGN=left>Indicates that the caller can perform low
+			level IO. In 2.4.x, the main affect this has is
+			determining if <TT>try_to_free_buffers()</TT><A NAME="@mainindex608"></A>
+			can flush buffers or not. It is used by at least
+			one journaled filesystem</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>__GFP_HIGHIO</TT><A NAME="@mainindex609"></A></TD><TD VALIGN=top ALIGN=left>Determines that IO can be performed on pages
+			mapped in high memory. Only used in
+			<TT>try_to_free_buffers()</TT><A NAME="@mainindex610"></A></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>__GFP_FS</TT><A NAME="@mainindex611"></A></TD><TD VALIGN=top ALIGN=left>Indicates if the caller can make calls to the
+			filesystem layer. This is used when the caller is
+			filesystem related, the buffer cache for instance,
+			and wants to avoid recursively calling itself</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 6.4: Low Level GFP Flags Affecting Allocator behaviour</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Low GFP Flags"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>It is difficult to know what the correct combinations are for each instance
+so a few high level combinations are defined and listed in Table 
+<A HREF="#tab: Low GFP Flags Combination">6.5</A>. For clarity the <TT>__GFP_</TT>
+is removed from the table combinations so, the <TT>__GFP_HIGH</TT>
+flag will read as <TT>HIGH</TT> below. The combinations to form the
+high level flags are listed in Table <A HREF="#tab: High GFP Flags">6.6</A> To help
+understand this, take <TT>GFP_ATOMIC</TT> as an example. It has only
+the <TT>__GFP_HIGH</TT> flag set. This means it is high priority, will
+use emergency pools (if they exist) but will not sleep, perform IO or access
+the filesystem. This flag would be used by an interrupt handler for example.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>Flag</B></TD><TD VALIGN=top ALIGN=left><B>Low Level Flag Combination</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>GFP_ATOMIC</TT><A NAME="@mainindex612"></A></TD><TD VALIGN=top ALIGN=left>HIGH</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>GFP_NOIO</TT><A NAME="@mainindex613"></A></TD><TD VALIGN=top ALIGN=left>HIGH | WAIT</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>GFP_NOHIGHIO</TT><A NAME="@mainindex614"></A></TD><TD VALIGN=top ALIGN=left>HIGH | WAIT | IO</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>GFP_NOFS</TT><A NAME="@mainindex615"></A></TD><TD VALIGN=top ALIGN=left>HIGH | WAIT | IO | HIGHIO</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>GFP_KERNEL</TT><A NAME="@mainindex616"></A></TD><TD VALIGN=top ALIGN=left>HIGH | WAIT | IO | HIGHIO | FS</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>GFP_NFS</TT><A NAME="@mainindex617"></A></TD><TD VALIGN=top ALIGN=left>HIGH | WAIT | IO | HIGHIO | FS</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>GFP_USER</TT><A NAME="@mainindex618"></A></TD><TD VALIGN=top ALIGN=left>WAIT | IO | HIGHIO | FS</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>GFP_HIGHUSER</TT><A NAME="@mainindex619"></A></TD><TD VALIGN=top ALIGN=left>WAIT | IO | HIGHIO | FS | HIGHMEM</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>GFP_KSWAPD</TT><A NAME="@mainindex620"></A></TD><TD VALIGN=top ALIGN=left>WAIT | IO | HIGHIO | FS</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 6.5: Low Level GFP Flag Combinations For High Level Use</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Low GFP Flags Combination"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>Flag</B></TD><TD VALIGN=top ALIGN=left><B>Description</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>GFP_ATOMIC</TT><A NAME="@mainindex621"></A></TD><TD VALIGN=top ALIGN=left>This flag is used whenever the caller cannot
+		sleep and must be serviced if at all possible. Any interrupt
+		handler that requires memory must use this flag to avoid
+		sleeping or performing IO. Many subsystems during init
+		will use this system such as <TT>buffer_init()</TT> and
+		<TT>inode_init()</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>GFP_NOIO</TT><A NAME="@mainindex622"></A></TD><TD VALIGN=top ALIGN=left>This is used by callers who are already
+		performing an IO related function. For example, when the
+		loop back device is trying to get a page for a buffer head,
+		it uses this flag to make sure it will not perform some
+		action that would result in more IO. If fact, it appears the
+		flag was introduced specifically to avoid a deadlock in the
+		loopback device.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>GFP_NOHIGHIO</TT><A NAME="@mainindex623"></A></TD><TD VALIGN=top ALIGN=left>This is only used in one place in
+		<TT>alloc_bounce_page()</TT> during the creating of a
+		bounce buffer for IO in high memory</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>GFP_NOFS</TT><A NAME="@mainindex624"></A></TD><TD VALIGN=top ALIGN=left>This is only used by the buffer cache and
+		filesystems to make sure they do not recursively call
+		themselves by accident</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>GFP_KERNEL</TT><A NAME="@mainindex625"></A></TD><TD VALIGN=top ALIGN=left>The most liberal of the combined flags. It
+		indicates that the caller is free to do whatever it
+		pleases. Strictly speaking the difference between this flag
+		and <TT>GFP_USER</TT> is that this could use emergency
+		pools of pages but that is a no-op on 2.4.x kernels</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>GFP_USER</TT><A NAME="@mainindex626"></A></TD><TD VALIGN=top ALIGN=left>Another flag of historical significance. In
+		the 2.2.x series, an allocation was given a LOW, MEDIUM
+		or HIGH priority. If memory was tight, a request with
+		<TT>GFP_USER</TT> (low) would fail where as the others
+		would keep trying. Now it has no significance and is not
+		treated any different to <TT>GFP_KERNEL</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>GFP_HIGHUSER</TT><A NAME="@mainindex627"></A></TD><TD VALIGN=top ALIGN=left>This flag indicates that the allocator should
+		allocate from <TT>ZONE_HIGHMEM</TT> if possible. It is used
+		when the page is allocated on behalf of a user process</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>GFP_NFS</TT><A NAME="@mainindex628"></A></TD><TD VALIGN=top ALIGN=left>This flag is defunct. In the 2.0.x series,
+		this flag determined what the reserved page size was. Normally
+		20 free pages were reserved. If this flag was set, only 5 would
+		be reserved. Now it is not treated differently anywhere</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>GFP_KSWAPD</TT><A NAME="@mainindex629"></A></TD><TD VALIGN=top ALIGN=left>More historical significance. In reality this is
+		not treated any different to <TT>GFP_KERNEL</TT></TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 6.6: High Level GFP Flags Affecting Allocator Behaviour</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: High GFP Flags"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H3 CLASS="subsection">6.4.1  Process Flags</H3><P>
+<A NAME="Sec: Process Flags"></A>
+<A NAME="@mainindex630"></A></P><P>A process may also set flags in the <TT>task_struct</TT> which affects
+allocator behaviour. The full list of process flags are defined in
+&lt;<TT>linux/sched.h</TT>&gt; but only the ones affecting VM behaviour
+are listed in Table <A HREF="#tab: Process Allocator Flags">6.7</A>. </P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>Flag</B>	</TD><TD VALIGN=top ALIGN=left><B>Description</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PF_MEMALLOC</TT><A NAME="@mainindex631"></A>	</TD><TD VALIGN=top ALIGN=left>This flags the process as a memory allocator.
+		<B>kswapd</B> sets this flag and it is set for any process
+		that is about to be killed by the <EM>Out Of Memory
+		(OOM)</EM> killer which is discussed in Chapter 
+<A HREF="understand016.html#chap: Out Of Memory Management">13</A>. It tells the buddy allocator 
+to ignore zone watermarks and assign the pages if at all possible</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PF_MEMDIE</TT><A NAME="@mainindex632"></A></TD><TD VALIGN=top ALIGN=left>This is set by the OOM killer and functions
+		the same as the <TT>PF_MEMALLOC</TT> flag by telling
+		the page allocator to give pages if at all possible as the
+		process is about to die</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>PF_FREE_PAGES</TT><A NAME="@mainindex633"></A></TD><TD VALIGN=top ALIGN=left>Set when the buddy allocator calls
+		<TT>try_to_free_pages()</TT> itself to indicate that
+		free pages should be reserved for the calling process in
+		<TT>__free_pages_ok()</TT> instead of returning to the
+		free lists</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 6.7: Process Flags Affecting Allocator behaviour</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Process Allocator Flags"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc46"></A><A NAME="htoc46">6.5</A>  Avoiding Fragmentation</H2><P>
+<A NAME="@mainindex634"></A><A NAME="@mainindex635"></A></P><P>One important problem that must be addressed with any allocator is the
+problem of internal<A NAME="@mainindex636"></A> and external<A NAME="@mainindex637"></A> fragmentation. External fragmentation is the inability
+to service a request because the available memory exists only in small
+blocks. Internal fragmentation is defined as the wasted space where a
+large block had to be assigned to service a small request. In Linux,
+external fragmentation is not a serious problem as large requests for
+contiguous pages are rare and usually <TT>vmalloc()</TT><A NAME="@mainindex638"></A> (see Chapter
+<A HREF="understand010.html#chap: Non-Contiguous Memory Allocation">7</A>) is sufficient to service the
+request. The lists of free blocks ensure that large blocks do not have to
+be split unnecessarily.</P><P>Internal fragmentation is the single most serious failing of the binary
+buddy system. While fragmentation is expected to be in the region of
+28% [<A HREF="understand031.html#wilson95"><CITE>WJNB95</CITE></A>], it has been shown that it can be in the region of 60%,
+in comparison to just 1% with the first fit allocator [<A HREF="understand031.html#johnstone98"><CITE>JW98</CITE></A>].
+It has also been shown that using variations of the buddy system will not
+help the situation significantly [<A HREF="understand031.html#peterson77"><CITE>PN77</CITE></A>]. To address this problem,
+Linux uses a <EM>slab allocator</EM> [<A HREF="understand031.html#bonwick94"><CITE>Bon94</CITE></A>] to carve up pages into
+small blocks of memory for allocation [<A HREF="understand031.html#tanenbaum01"><CITE>Tan01</CITE></A>] which is discussed
+further in Chapter <A HREF="understand011.html#chap: Slab Allocator">8</A>. With this combination of
+allocators, the kernel can ensure that the amount of memory wasted due to
+internal fragmentation is kept to a minimum.</P><H2 CLASS="section"><A NAME="toc47"></A><A NAME="htoc47">6.6</A>  What's New In 2.6</H2><P>
+<A NAME="new: Physical Page Allocation"></A></P><H5 CLASS="paragraph">Allocating Pages</H5><P> The first noticeable difference seems
+cosmetic at first. The function <TT>alloc_pages()</TT> is now a macro
+and defined in &lt;<TT>linux/gfp.h</TT>&gt; instead of a function defined in
+&lt;<TT>linux/mm.h</TT>&gt;. The new layout is still very recognisable and the
+main difference is a subtle but important one. In 2.4, there was specific code
+dedicated to selecting the correct node to allocate from based on the running
+CPU but 2.6 removes this distinction between NUMA and UMA architectures.</P><P>In 2.6, the function <TT>alloc_pages()</TT> calls <TT>numa_node_id()</TT> to
+return the logical ID of the node associated with the current running CPU. This
+NID is passed to <TT>_alloc_pages()</TT> which calls <TT>NODE_DATA()</TT>
+with the NID as a parameter. On UMA architectures, this will unconditionally
+result in <TT>contig_page_data</TT> being returned but NUMA architectures
+instead set up an array which <TT>NODE_DATA()</TT> uses NID as an offset into.
+In other words, architectures are responsible for setting up a CPU ID to
+NUMA memory node mapping. This is effectively still a node-local allocation
+policy as is used in 2.4 but it is a lot more clearly defined.</P><H5 CLASS="paragraph">Per-CPU Page Lists</H5><P> The most important addition to the page
+allocation is the addition of the per-cpu lists, first discussed in Section
+<A HREF="understand005.html#new: Describing Physical Memory">2.6</A>.</P><P>In 2.4, a page allocation requires an interrupt safe spinlock to be held
+while the allocation takes place. In 2.6, pages are allocated from a
+<TT>struct per_cpu_pageset</TT> by <TT>buffered_rmqueue()</TT>. If
+the low watermark (<TT>per_cpu_pageset</TT>&#X2192;<TT>low</TT>) has not been
+reached, the pages will be allocated from the pageset with no requirement
+for a spinlock to be held. Once the low watermark is reached, a large number
+of pages will be allocated in bulk with the interrupt safe spinlock held,
+added to the per-cpu list and then one returned to the caller. </P><P>Higher order allocations, which are relatively rare, still require the
+interrupt safe spinlock to be held and there will be no delay in the splits
+or coalescing. With 0 order allocations, splits will be delayed until the
+low watermark is reached in the per-cpu set and coalescing will be delayed
+until the high watermark is reached.</P><P>However, strictly speaking, this is not a lazy<A NAME="@mainindex639"></A> buddy
+algorithm [<A HREF="understand031.html#barkley89"><CITE>BL89</CITE></A>]. While pagesets introduce a merging delay for
+order-0 allocations, it is a side-effect rather than an intended feature and
+there is no method available to drain the pagesets and merge the buddies. In
+other words, despite the per-cpu and new accounting code which bulks up
+the amount of code in <TT>mm/page_alloc.c</TT>, the core of the buddy
+algorithm remains the same as it was in 2.4.</P><P>The implication of this change is straight forward; the number of times
+the spinlock protecting the buddy lists must be acquired is reduced.
+Higher order allocations are relatively rare in Linux so the optimisation
+is for the common case. This change will be noticeable on large number of
+CPU machines but will make little difference to single CPUs. There are a few
+issues with pagesets but they are not recognised as a serious problem. The
+first issue is that high order allocations may fail if the pagesets hold
+order-0 pages that would normally be merged into higher order contiguous
+blocks. The second is that an order-0 allocation may fail if memory is low,
+the current CPU pageset is empty and other CPU's pagesets are full, as no
+mechanism exists for reclaiming pages from &#X201C;remote&#X201D; pagesets. The last
+potential problem is that buddies of newly freed pages could exist in other
+pagesets leading to possible fragmentation problems.</P><H5 CLASS="paragraph">Freeing Pages</H5><P>Two new API function have been introduced for the freeing of pages called
+<TT>free_hot_page()</TT> and <TT>free_cold_page()</TT>. Predictably,
+the determine if the freed pages are placed on the hot or cold lists in the
+per-cpu pagesets. However, while the <TT>free_cold_page()</TT> is exported
+and available for use, it is actually never called.</P><P>Order-0 page frees from <TT>__free_pages()</TT> and frees resuling from
+page cache releases by <TT>__page_cache_release()</TT> are placed on
+the hot list where as higher order allocations are freed immediately with
+<TT>__free_pages_ok()</TT>. Order-0 are usually related to userspace
+and are the most common type of allocation and free. By keeping them local
+to the CPU lock contention will be reduced as most allocations will also be
+of order-0.</P><P>Eventually, lists of pages must be passed to <TT>free_pages_bulk()</TT> or
+the pageset lists would hold all free pages. This <TT>free_pages_bulk()</TT>
+function takes a list of page block allocations, the <TT>order</TT> of each
+block and the <TT>count</TT> number of blocks to free from the list. There
+are two principal cases where this is used. The first is higher order frees
+passed to <TT>__free_pages_ok()</TT>. In this case, the page block
+is placed on a linked list, of the specified order and a count of 1. The
+second case is where the high watermark is reached in the pageset for the
+running CPU. In this case, the pageset is passed, with an order of 0 and
+a count of <TT>pageset</TT>&#X2192;<TT>batch</TT>.</P><P>Once the core function <TT>__free_pages_bulk()</TT> is reached, the
+mechanisms for freeing pages is to the buddy lists is very similar to 2.4.</P><H5 CLASS="paragraph">GFP Flags</H5><P>There are still only three zones, so the zone modifiers remain the same but
+three new GFP flags have been added that affect how hard the VM will work,
+or not work, to satisfy a request. The flags are:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>__GFP_NOFAIL</B><A NAME="@mainindex640"></A>  This flag is used by a caller to indicate that the
+allocation should never fail and the allocator should keep trying to allocate
+indefinitely.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>__GFP_REPEAT</B><A NAME="@mainindex641"></A>  This flag is used by a caller to indicate that the
+request should try to repeat the allocation if it fails. In the current
+implementation, it behaves the same as <TT>__GFP_NOFAIL</TT> but later the
+decision might be made to fail after a while</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>__GFP_NORETRY</B><A NAME="@mainindex642"></A>  This flag is almost the opposite of
+<TT>__GFP_NOFAIL</TT>. It indicates that if the allocation fails it should
+just return immediately.</DD></DL><P>At time of writing, they are not heavily used but they have just
+been introduced and are likely to be used more over time. The
+<TT>__GFP_REPEAT</TT> flag in particular is likely to be heavily used as
+blocks of code which implement this flags behaviour exist throughout the kernel.</P><P>The next GFP flag that has been introduced is an allocation modifier called
+<TT>__GFP_COLD</TT> which is used to ensure that cold pages are allocated
+from the per-cpu lists. From the perspective of the VM, the only user of this
+flag is the function <TT>page_cache_alloc_cold()</TT> which is mainly
+used during IO readahead. Usually page allocations will be taken from the
+hot pages list.</P><P>The last new flag is <TT>__GFP_NO_GROW</TT>. This is an internal
+flag used only be the slab allocator (discussed in Chapter 
+<A HREF="understand011.html#chap: Slab Allocator">8</A>) which aliases the flag to <TT>SLAB_NO_GROW</TT>.
+It is used to indicate when new slabs should never be allocated for a particular
+cache. In reality, the GFP flag has just been introduced to complement the old
+<TT>SLAB_NO_GROW</TT> flag which is currently unused in the main kernel.
+
+	</P><HR>
+[ <A HREF="understand008.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand010.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

@@ -1,0 +1,785 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Code Commentary Contents</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand001.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand003.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter">Code Commentary Contents</H1><P>
+</LI><LI CLASS="li-toc"><A HREF="understand018.html#htoc106">Appendix A  Introduction</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc107">Appendix B  Describing Physical Memory</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019.html#htoc108">B.1  Initialising Zones</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019.html#htoc109">B.1.1  Function: setup_memory</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc110">B.1.2  Function: zone_sizes_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc111">B.1.3  Function: free_area_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc112">B.1.4  Function: free_area_init_node</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc113">B.1.5  Function: free_area_init_core</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc114">B.1.6  Function: build_zonelists</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc115">B.2  Page Operations</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019.html#htoc116">B.2.1  Locking Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019.html#htoc117">B.2.1.1  Function: lock_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc118">B.2.1.2  Function: __lock_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc119">B.2.1.3  Function: sync_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc120">B.2.2  Unlocking Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019.html#htoc121">B.2.2.1  Function: unlock_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc122">B.2.3  Waiting on Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019.html#htoc123">B.2.3.1  Function: wait_on_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019.html#htoc124">B.2.3.2  Function: ___wait_on_page</A>
+</LI></UL>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand020.html#htoc125">Appendix C  Page Table Management</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand020.html#htoc126">C.1  Page Table Initialisation</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand020.html#htoc127">C.1.1  Function: paging_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand020.html#htoc128">C.1.2  Function: pagetable_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand020.html#htoc129">C.1.3  Function: fixrange_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand020.html#htoc130">C.1.4  Function: kmap_init</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand020.html#htoc131">C.2  Page Table Walking</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand020.html#htoc132">C.2.1  Function: follow_page</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc133">Appendix D  Process Address Space</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc134">D.1  Process Memory Descriptors</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc135">D.1.1  Initalising a Descriptor</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc136">D.1.2  Copying a Descriptor</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc137">D.1.2.1  Function: copy_mm</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc138">D.1.2.2  Function: mm_init</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc139">D.1.3  Allocating a Descriptor</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc140">D.1.3.1  Function: allocate_mm</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc141">D.1.3.2  Function: mm_alloc</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc142">D.1.4  Destroying a Descriptor</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc143">D.1.4.1  Function: mmput</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc144">D.1.4.2  Function: mmdrop</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc145">D.1.4.3  Function: __mmdrop</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc146">D.2  Creating Memory Regions</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc147">D.2.1  Creating A Memory Region</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc148">D.2.1.1  Function: do_mmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc149">D.2.1.2  Function: do_mmap_pgoff</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc150">D.2.2  Inserting a Memory Region</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc151">D.2.2.1  Function: __insert_vm_struct</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc152">D.2.2.2  Function: find_vma_prepare</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc153">D.2.2.3  Function: vma_link</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc154">D.2.2.4  Function: __vma_link</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc155">D.2.2.5  Function: __vma_link_list</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc156">D.2.2.6  Function: __vma_link_rb</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc157">D.2.2.7  Function: __vma_link_file</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc158">D.2.3  Merging Contiguous Regions</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc159">D.2.3.1  Function: vma_merge</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc160">D.2.3.2  Function: can_vma_merge</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc161">D.2.4  Remapping and Moving a Memory Region</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc162">D.2.4.1  Function: sys_mremap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc163">D.2.4.2  Function: do_mremap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc164">D.2.4.3  Function: move_vma</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc165">D.2.4.4  Function: make_pages_present</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc166">D.2.4.5  Function: get_user_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc167">D.2.4.6  Function: move_page_tables</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc168">D.2.4.7  Function: move_one_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc169">D.2.4.8  Function: get_one_pte</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc170">D.2.4.9  Function: alloc_one_pte</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc171">D.2.4.10  Function: copy_one_pte</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc172">D.2.5  Deleting a memory region</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc173">D.2.5.1  Function: do_munmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc174">D.2.5.2  Function: unmap_fixup</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc175">D.2.6  Deleting all memory regions</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc176">D.2.6.1  Function: exit_mmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc177">D.2.6.2  Function: clear_page_tables</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc178">D.2.6.3  Function: free_one_pgd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc179">D.2.6.4  Function: free_one_pmd</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc180">D.3  Searching Memory Regions</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc181">D.3.1  Finding a Mapped Memory Region</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc182">D.3.1.1  Function: find_vma</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc183">D.3.1.2  Function: find_vma_prev</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc184">D.3.1.3  Function: find_vma_intersection</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc185">D.3.2  Finding a Free Memory Region</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc186">D.3.2.1  Function: get_unmapped_area</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc187">D.3.2.2  Function: arch_get_unmapped_area</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc188">D.4  Locking and Unlocking Memory Regions</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc189">D.4.1  Locking a Memory Region</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc190">D.4.1.1  Function: sys_mlock</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc191">D.4.1.2  Function: sys_mlockall</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc192">D.4.1.3  Function: do_mlockall</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc193">D.4.1.4  Function: do_mlock</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc194">D.4.2  Unlocking the region</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc195">D.4.2.1  Function: sys_munlock</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc196">D.4.2.2  Function: sys_munlockall</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc197">D.4.3  Fixing up regions after locking/unlocking</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc198">D.4.3.1  Function: mlock_fixup</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc199">D.4.3.2  Function: mlock_fixup_all</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc200">D.4.3.3  Function: mlock_fixup_start</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc201">D.4.3.4  Function: mlock_fixup_end</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc202">D.4.3.5  Function: mlock_fixup_middle</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc203">D.5  Page Faulting</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc204">D.5.1  x86 Page Fault Handler</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc205">D.5.1.1  Function: do_page_fault</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc206">D.5.2  Expanding the Stack</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc207">D.5.2.1  Function: expand_stack</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc208">D.5.3  Architecture Independent Page Fault Handler</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc209">D.5.3.1  Function: handle_mm_fault</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc210">D.5.3.2  Function: handle_pte_fault</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc211">D.5.4  Demand Allocation</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc212">D.5.4.1  Function: do_no_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc213">D.5.4.2  Function: do_anonymous_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc214">D.5.5  Demand Paging</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc215">D.5.5.1  Function: do_swap_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc216">D.5.5.2  Function: can_share_swap_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc217">D.5.5.3  Function: exclusive_swap_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc218">D.5.6  Copy On Write (COW) Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc219">D.5.6.1  Function: do_wp_page</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc220">D.6  Page-Related Disk IO</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc221">D.6.1  Generic File Reading</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc222">D.6.1.1  Function: generic_file_read</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc223">D.6.1.2  Function: do_generic_file_read</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc224">D.6.1.3  Function: generic_file_readahead</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc225">D.6.2  Generic File <TT>mmap()</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc226">D.6.2.1  Function: generic_file_mmap</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc227">D.6.3  Generic File Truncation</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc228">D.6.3.1  Function: vmtruncate</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc229">D.6.3.2  Function: vmtruncate_list</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc230">D.6.3.3  Function: zap_page_range</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc231">D.6.3.4  Function: zap_pmd_range</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc232">D.6.3.5  Function: zap_pte_range</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc233">D.6.3.6  Function: truncate_inode_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc234">D.6.3.7  Function: truncate_list_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc235">D.6.3.8  Function: truncate_complete_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc236">D.6.3.9  Function: do_flushpage</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc237">D.6.3.10  Function: truncate_partial_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc238">D.6.4  Reading Pages for the Page Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc239">D.6.4.1  Function: filemap_nopage</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc240">D.6.4.2  Function: page_cache_read</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc241">D.6.5  File Readahead for <TT>nopage()</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc242">D.6.5.1  Function: nopage_sequential_readahead</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc243">D.6.5.2  Function: read_cluster_nonblocking</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc244">D.6.6  Swap Related Read-Ahead</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021.html#htoc245">D.6.6.1  Function: swapin_readahead</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021.html#htoc246">D.6.6.2  Function: valid_swaphandles</A>
+</LI></UL>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc247">Appendix E  Boot Memory Allocator</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022.html#htoc248">E.1  Initialising the Boot Memory Allocator</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022.html#htoc249">E.1.1  Function: init_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc250">E.1.2  Function: init_bootmem_node</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc251">E.1.3  Function: init_bootmem_core</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc252">E.2  Allocating Memory</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022.html#htoc253">E.2.1  Reserving Large Regions of Memory</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022.html#htoc254">E.2.1.1  Function: reserve_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc255">E.2.1.2  Function: reserve_bootmem_node</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc256">E.2.1.3  Function: reserve_bootmem_core</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc257">E.2.2  Allocating Memory at Boot Time</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022.html#htoc258">E.2.2.1  Function: alloc_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc259">E.2.2.2  Function: __alloc_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc260">E.2.2.3  Function: alloc_bootmem_node</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc261">E.2.2.4  Function: __alloc_bootmem_node</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc262">E.2.2.5  Function: __alloc_bootmem_core</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc263">E.3  Freeing Memory</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022.html#htoc264">E.3.1  Function: free_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc265">E.3.2  Function: free_bootmem_core</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc266">E.4  Retiring the Boot Memory Allocator</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022.html#htoc267">E.4.1  Function: mem_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc268">E.4.2  Function: free_pages_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc269">E.4.3  Function: one_highpage_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc270">E.4.4  Function: free_all_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022.html#htoc271">E.4.5  Function: free_all_bootmem_core</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc272">Appendix F  Physical Page Allocation</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand023.html#htoc273">F.1  Allocating Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand023.html#htoc274">F.1.1  Function: alloc_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc275">F.1.2  Function: _alloc_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc276">F.1.3  Function: __alloc_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc277">F.1.4  Function: rmqueue</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc278">F.1.5  Function: expand</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc279">F.1.6  Function: balance_classzone</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc280">F.2  Allocation Helper Functions</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand023.html#htoc281">F.2.1  Function: alloc_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc282">F.2.2  Function: __get_free_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc283">F.2.3  Function: __get_free_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc284">F.2.4  Function: __get_dma_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc285">F.2.5  Function: get_zeroed_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc286">F.3  Free Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand023.html#htoc287">F.3.1  Function: __free_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc288">F.3.2  Function: __free_pages_ok</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc289">F.4  Free Helper Functions</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand023.html#htoc290">F.4.1  Function: free_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc291">F.4.2  Function: __free_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023.html#htoc292">F.4.3  Function: free_page</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc293">Appendix G  Non-Contiguous Memory Allocation</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand024.html#htoc294">G.1  Allocating A Non-Contiguous Area</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand024.html#htoc295">G.1.1  Function: vmalloc</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc296">G.1.2  Function: __vmalloc</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc297">G.1.3  Function: get_vm_area</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc298">G.1.4  Function: vmalloc_area_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc299">G.1.5  Function: __vmalloc_area_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc300">G.1.6  Function: alloc_area_pmd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc301">G.1.7  Function: alloc_area_pte</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc302">G.1.8  Function: vmap</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc303">G.2  Freeing A Non-Contiguous Area</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand024.html#htoc304">G.2.1  Function: vfree</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc305">G.2.2  Function: vmfree_area_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc306">G.2.3  Function: free_area_pmd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024.html#htoc307">G.2.4  Function: free_area_pte</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc308">Appendix H  Slab Allocator</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc309">H.1  Cache Manipulation</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc310">H.1.1  Cache Creation</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc311">H.1.1.1  Function: kmem_cache_create</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc312">H.1.2  Calculating the Number of Objects on a Slab</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc313">H.1.2.1  Function: kmem_cache_estimate</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc314">H.1.3  Cache Shrinking</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc315">H.1.3.1  Function: kmem_cache_shrink</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc316">H.1.3.2  Function: __kmem_cache_shrink</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc317">H.1.3.3  Function: __kmem_cache_shrink_locked</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc318">H.1.4  Cache Destroying</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc319">H.1.4.1  Function: kmem_cache_destroy</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc320">H.1.5  Cache Reaping</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc321">H.1.5.1  Function: kmem_cache_reap</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc322">H.2  Slabs</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc323">H.2.1  Storing the Slab Descriptor</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc324">H.2.1.1  Function: kmem_cache_slabmgmt</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc325">H.2.1.2  Function: kmem_find_general_cachep</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc326">H.2.2  Slab Creation</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc327">H.2.2.1  Function: kmem_cache_grow</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc328">H.2.3  Slab Destroying</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc329">H.2.3.1  Function: kmem_slab_destroy</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc330">H.3  Objects</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc331">H.3.1  Initialising Objects in a Slab</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc332">H.3.1.1  Function: kmem_cache_init_objs</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc333">H.3.2  Object Allocation</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc334">H.3.2.1  Function: kmem_cache_alloc</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc335">H.3.2.2  Function: __kmem_cache_alloc (UP Case)</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc336">H.3.2.3  Function: __kmem_cache_alloc (SMP Case)</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc337">H.3.2.4  Function: kmem_cache_alloc_head</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc338">H.3.2.5  Function: kmem_cache_alloc_one</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc339">H.3.2.6  Function: kmem_cache_alloc_one_tail</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc340">H.3.2.7  Function: kmem_cache_alloc_batch</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc341">H.3.3  Object Freeing</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc342">H.3.3.1  Function: kmem_cache_free</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc343">H.3.3.2  Function: __kmem_cache_free (UP Case)</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc344">H.3.3.3  Function: __kmem_cache_free (SMP Case)</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc345">H.3.3.4  Function: kmem_cache_free_one</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc346">H.3.3.5  Function: free_block</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc347">H.3.3.6  Function: __free_block</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc348">H.4  Sizes Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc349">H.4.1  Initialising the Sizes Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc350">H.4.1.1  Function: kmem_cache_sizes_init</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc351">H.4.2  <TT>kmalloc()</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc352">H.4.2.1  Function: kmalloc</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc353">H.4.3  <TT>kfree()</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc354">H.4.3.1  Function: kfree</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc355">H.5  Per-CPU Object Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc356">H.5.1  Enabling Per-CPU Caches</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc357">H.5.1.1  Function: enable_all_cpucaches</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc358">H.5.1.2  Function: enable_cpucache</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc359">H.5.1.3  Function: kmem_tune_cpucache</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc360">H.5.2  Updating Per-CPU Information</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc361">H.5.2.1  Function: smp_call_function_all_cpus</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc362">H.5.2.2  Function: do_ccupdate_local</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc363">H.5.3  Draining a Per-CPU Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc364">H.5.3.1  Function: drain_cpu_caches</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc365">H.6  Slab Allocator Initialisation</A>
+<UL CLASS="toc">
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc366">H.6.0.2  Function: kmem_cache_init</A>
+</LI></UL>
+</UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc367">H.7  Interfacing with the Buddy Allocator</A>
+<UL CLASS="toc">
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025.html#htoc368">H.7.0.3  Function: kmem_getpages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025.html#htoc369">H.7.0.4  Function: kmem_freepages</A>
+</LI></UL>
+</UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc370">Appendix I  High Memory Mangement</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026.html#htoc371">I.1  Mapping High Memory Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026.html#htoc372">I.1.0.5  Function: kmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc373">I.1.0.6  Function: kmap_nonblock</A>
+</LI></UL>
+<A HREF="understand026.html#htoc374">I.1.1  Function: __kmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc375">I.1.2  Function: kmap_high</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc376">I.1.3  Function: map_new_virtual</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc377">I.1.4  Function: flush_all_zero_pkmaps</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc378">I.2  Mapping High Memory Pages Atomically</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026.html#htoc379">I.2.1  Function: kmap_atomic</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc380">I.3  Unmapping Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026.html#htoc381">I.3.1  Function: kunmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc382">I.3.2  Function: kunmap_high</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc383">I.4  Unmapping High Memory Pages Atomically</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026.html#htoc384">I.4.1  Function: kunmap_atomic</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc385">I.5  Bounce Buffers</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026.html#htoc386">I.5.1  Creating Bounce Buffers</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026.html#htoc387">I.5.1.1  Function: create_bounce</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc388">I.5.1.2  Function: alloc_bounce_bh</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc389">I.5.1.3  Function: alloc_bounce_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc390">I.5.2  Copying via Bounce Buffers</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026.html#htoc391">I.5.2.1  Function: bounce_end_io_write</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc392">I.5.2.2  Function: bounce_end_io_read</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc393">I.5.2.3  Function: copy_from_high_bh</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc394">I.5.2.4  Function: copy_to_high_bh_irq</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc395">I.5.2.5  Function: bounce_end_io</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026.html#htoc396">I.6  Emergency Pools</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026.html#htoc397">I.6.1  Function: init_emergency_pool</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc398">Appendix J  Page Frame Reclamation</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc399">J.1  Page Cache Operations</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc400">J.1.1  Adding Pages to the Page Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc401">J.1.1.1  Function: add_to_page_cache</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc402">J.1.1.2  Function: add_to_page_cache_unique</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc403">J.1.1.3  Function: __add_to_page_cache</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc404">J.1.1.4  Function: add_page_to_inode_queue</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc405">J.1.1.5  Function: add_page_to_hash_queue</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc406">J.1.2  Deleting Pages from the Page Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc407">J.1.2.1  Function: remove_inode_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc408">J.1.2.2  Function: __remove_inode_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc409">J.1.2.3  Function: remove_page_from_inode_queue</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc410">J.1.2.4  Function: remove_page_from_hash_queue</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc411">J.1.3  Acquiring/Releasing Page Cache Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc412">J.1.3.1  Function: page_cache_get</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc413">J.1.3.2  Function: page_cache_release</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc414">J.1.4  Searching the Page Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc415">J.1.4.1  Function: find_get_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc416">J.1.4.2  Function: __find_get_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc417">J.1.4.3  Function: __find_page_nolock</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc418">J.1.4.4  Function: find_lock_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc419">J.1.4.5  Function: __find_lock_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc420">J.1.4.6  Function: __find_lock_page_helper</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc421">J.2  LRU List Operations</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc422">J.2.1  Adding Pages to the LRU Lists</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc423">J.2.1.1  Function: lru_cache_add</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc424">J.2.1.2  Function: add_page_to_active_list</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc425">J.2.1.3  Function: add_page_to_inactive_list</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc426">J.2.2  Deleting Pages from the LRU Lists</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc427">J.2.2.1  Function: lru_cache_del</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc428">J.2.2.2  Function: __lru_cache_del</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc429">J.2.2.3  Function: del_page_from_active_list</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc430">J.2.2.4  Function: del_page_from_inactive_list</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc431">J.2.3  Activating Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc432">J.2.3.1  Function: mark_page_accessed</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc433">J.2.3.2  Function: activate_lock</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc434">J.2.3.3  Function: activate_page_nolock</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc435">J.3  Refilling <TT>inactive_list</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc436">J.3.1  Function: refill_inactive</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc437">J.4  Reclaiming Pages from the LRU Lists</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc438">J.4.1  Function: shrink_cache</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc439">J.5  Shrinking all caches</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc440">J.5.1  Function: shrink_caches</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc441">J.5.2  Function: try_to_free_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc442">J.5.3  Function: try_to_free_pages_zone</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc443">J.6  Swapping Out Process Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc444">J.6.1  Function: swap_out</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc445">J.6.2  Function: swap_out_mm</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc446">J.6.3  Function: swap_out_vma</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc447">J.6.4  Function: swap_out_pgd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc448">J.6.5  Function: swap_out_pmd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc449">J.6.6  Function: try_to_swap_out</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc450">J.7  Page Swap Daemon</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc451">J.7.1  Initialising kswapd</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc452">J.7.1.1  Function: kswapd_init</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc453">J.7.2  kswapd Daemon</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027.html#htoc454">J.7.2.1  Function: kswapd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc455">J.7.2.2  Function: kswapd_can_sleep</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc456">J.7.2.3  Function: kswapd_can_sleep_pgdat</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc457">J.7.2.4  Function: kswapd_balance</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027.html#htoc458">J.7.2.5  Function: kswapd_balance_pgdat</A>
+</LI></UL>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc459">Appendix K  Swap Management</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc460">K.1  Scanning for Free Entries</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc461">K.1.1  Function: get_swap_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc462">K.1.2  Function: scan_swap_map</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc463">K.2  Swap Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc464">K.2.1  Adding Pages to the Swap Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc465">K.2.1.1  Function: add_to_swap_cache</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc466">K.2.1.2  Function: swap_duplicate</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc467">K.2.2  Deleting Pages from the Swap Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc468">K.2.2.1  Function: swap_free</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc469">K.2.2.2  Function: swap_entry_free</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc470">K.2.3  Acquiring/Releasing Swap Cache Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc471">K.2.3.1  Function: swap_info_get</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc472">K.2.3.2  Function: swap_info_put</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc473">K.2.4  Searching the Swap Cache</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc474">K.2.4.1  Function: lookup_swap_cache</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc475">K.3  Swap Area IO</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc476">K.3.1  Reading Backing Storage</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc477">K.3.1.1  Function: read_swap_cache_async</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc478">K.3.2  Writing Backing Storage</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc479">K.3.2.1  Function: swap_writepage</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc480">K.3.2.2  Function: remove_exclusive_swap_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc481">K.3.2.3  Function: free_swap_and_cache</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc482">K.3.3  Block IO</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc483">K.3.3.1  Function: rw_swap_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc484">K.3.3.2  Function: rw_swap_page_base</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc485">K.3.3.3  Function: get_swaphandle_info</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc486">K.4  Activating a Swap Area</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc487">K.4.1  Function: sys_swapon</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc488">K.4.2  Function: swap_setup</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc489">K.5  Deactivating a Swap Area</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028.html#htoc490">K.5.1  Function: sys_swapoff</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc491">K.5.2  Function: try_to_unuse</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc492">K.5.3  Function: unuse_process</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc493">K.5.4  Function: unuse_vma</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc494">K.5.5  Function: unuse_pgd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc495">K.5.6  Function: unuse_pmd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028.html#htoc496">K.5.7  Function: unuse_pte</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc497">Appendix L  Shared Memory Virtual Filesystem</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc498">L.1  Initialising <TT>shmfs</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc499">L.1.1  Function: init_tmpfs</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc500">L.1.2  Function: shmem_read_super</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc501">L.1.3  Function: shmem_set_size</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc502">L.2  Creating Files in <TT>tmpfs</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc503">L.2.1  Function: shmem_create</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc504">L.2.2  Function: shmem_mknod</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc505">L.2.3  Function: shmem_get_inode</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc506">L.3  File Operations in <TT>tmpfs</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc507">L.3.1  Memory Mapping</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc508">L.3.1.1  Function: shmem_mmap</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc509">L.3.2  Reading Files</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc510">L.3.2.1  Function: shmem_file_read</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc511">L.3.2.2  Function: do_shmem_file_read</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc512">L.3.2.3  Function: file_read_actor</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc513">L.3.3  Writing</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc514">L.3.3.1  Function: shmem_file_write</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc515">L.3.4  Symbolic Linking</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc516">L.3.4.1  Function: shmem_symlink</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc517">L.3.4.2  Function: shmem_readlink_inline</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc518">L.3.4.3  Function: shmem_follow_link_inline</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc519">L.3.4.4  Function: shmem_readlink</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc520">L.3.5  Synchronising</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc521">L.3.5.1  Function: shmem_sync_file</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc522">L.4  Inode Operations in <TT>tmpfs</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc523">L.4.1  Truncating</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc524">L.4.1.1  Function: shmem_truncate</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc525">L.4.1.2  Function: shmem_truncate_indirect</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc526">L.4.1.3  Function: shmem_truncate_direct</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc527">L.4.1.4  Function: shmem_free_swp</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc528">L.4.2  Linking</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc529">L.4.2.1  Function: shmem_link</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc530">L.4.3  Unlinking</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc531">L.4.3.1  Function: shmem_unlink</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc532">L.4.4  Making Directories</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc533">L.4.4.1  Function: shmem_mkdir</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc534">L.4.5  Removing Directories</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc535">L.4.5.1  Function: shmem_rmdir</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc536">L.4.5.2  Function: shmem_empty</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc537">L.4.5.3  Function: shmem_positive</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc538">L.5  Page Faulting within a Virtual File</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc539">L.5.1  Reading Pages during Page Fault</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc540">L.5.1.1  Function: shmem_nopage</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc541">L.5.1.2  Function: shmem_getpage</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc542">L.5.2  Locating Swapped Pages</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc543">L.5.2.1  Function: shmem_alloc_entry</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc544">L.5.2.2  Function: shmem_swp_entry</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc545">L.6  Swap Space Interaction</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc546">L.6.1  Function: shmem_writepage</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc547">L.6.2  Function: shmem_unuse</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc548">L.6.3  Function: shmem_unuse_inode</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc549">L.6.4  Function: shmem_find_swp</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc550">L.7  Setting up Shared Regions</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc551">L.7.1  Function: shmem_zero_setup</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc552">L.7.2  Function: shmem_file_setup</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc553">L.8  System V IPC</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc554">L.8.1  Creating a SYSV shared region</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc555">L.8.1.1  Function: sys_shmget</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc556">L.8.1.2  Function: newseg</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029.html#htoc557">L.8.2  Attaching a SYSV Shared Region</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029.html#htoc558">L.8.2.1  Function: sys_shmat</A>
+</LI></UL>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand030.html#htoc559">Appendix M  Out of Memory Management</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand030.html#htoc560">M.1  Determining Available Memory</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand030.html#htoc561">M.1.1  Function: vm_enough_memory</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand030.html#htoc562">M.2  Detecting and Recovering from OOM</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand030.html#htoc563">M.2.1  Function: out_of_memory</A>
+</LI><LI CLASS="li-toc"><A HREF="understand030.html#htoc564">M.2.2  Function: oom_kill</A>
+</LI><LI CLASS="li-toc"><A HREF="understand030.html#htoc565">M.2.3  Function: select_bad_process</A>
+</LI><LI CLASS="li-toc"><A HREF="understand030.html#htoc566">M.2.4  Function: badness</A>
+</LI><LI CLASS="li-toc"><A HREF="understand030.html#htoc567">M.2.5  Function: oom_kill_task</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc">Reference
+	</P><HR>
+[ <A HREF="understand001.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand003.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

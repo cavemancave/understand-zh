@@ -1,0 +1,1312 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Process Address Space</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand006.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand008.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc25">Chapter 4</A>  Process Address Space</H1><P>
+<A NAME="chap: Process Address Space"></A>
+<A NAME="@mainindex327"></A>
+<A NAME="@mainindex328"></A></P><P>One of the principal advantages of virtual memory is that each process has
+its own virtual address space, which is mapped to physical memory by the
+operating system. In this chapter we will discuss the process address space
+and how Linux manages it.</P><P><A NAME="@mainindex329"></A>Zero pageThe kernel treats the userspace portion
+of the address space very differently to the kernel portion. For example,
+allocations for the kernel are satisfied immediately and are visible globally
+no matter what process is on the CPU. <TT>vmalloc()</TT> is partially
+an exception as a minor page fault will occur to sync the process page
+tables with the reference page tables, but the page will still be allocated
+immediately upon request. With a process, space is simply reserved in the
+linear address space by pointing a page table entry to a read-only globally
+visible page filled with zeros. On writing, a page fault is triggered which
+results in a new page being allocated, filled with zeros, placed in the page
+table entry and marked writable. It is filled with zeros so that the new
+page will appear exactly the same as the global zero-filled page.</P><P>The userspace portion is not trusted or presumed to be constant. After
+each context switch, the userspace portion of the linear address space
+can potentially change except when a <EM>Lazy TLB</EM> switch is used as
+discussed later in Section <A HREF="#sec: Process Address Space Descriptor">4.3</A>. As
+a result of this, the kernel must be prepared to catch all exception and
+addressing errors raised from userspace. This is discussed in Section <A HREF="#sec: Exception Handling">4.5</A>.</P><P>This chapter begins with how the linear address space is broken up and what the
+purpose of each section is. We then cover the structures maintained to describe
+each process, how they are allocated, initialised and then destroyed. Next,
+we will cover how individual regions within the process space are created
+and all the various functions associated with them. That will bring us to
+exception handling related to the process address space, page faulting and
+the various cases that occur to satisfy a page fault. Finally, we will cover
+how the kernel safely copies information to and from userspace.</P><H2 CLASS="section"><A NAME="toc28"></A><A NAME="htoc26">4.1</A>  Linear Address Space</H2><P>
+<A NAME="sec: Linear Address Space"></A>
+<A NAME="@mainindex330"></A></P><P>From a user perspective, the address space is a flat linear address space
+but predictably, the kernel's perspective is very different. The address
+space is split into two parts, the userspace part which potentially
+changes with each full context switch and the kernel address space which
+remains constant. The location of the split is determined by the value of
+<TT>PAGE_OFFSET</TT><A NAME="@mainindex331"></A> which is at <TT>0xC0000000</TT> on the x86. This
+means that 3GiB is available for the process to use while the remaining 1GiB
+is always mapped by the kernel<A NAME="@mainindex332"></A>. The linear virtual
+address space as the kernel sees it is illustrated in Figure <A >??</A>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html010.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.1: Kernel Address Space</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Kernel Address Space"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>
+<A NAME="@mainindex333"></A></P><P>8MiB (the amount of memory addressed by two PGDs) is reserved at
+<TT>PAGE_OFFSET</TT> for loading the kernel image to run. 8MiB is
+simply a reasonable amount of space to reserve for the purposes of loading
+the kernel image. The kernel image is placed in this reserved space
+during kernel page tables initialisation as discussed in Section 
+<A HREF="understand006.html#sec: Bootstrapping">3.6.1</A>. Somewhere shortly after the image, the
+<TT>mem_map</TT> for UMA architectures, as discussed in Chapter 
+<A HREF="understand005.html#chap: Describing Physical Memory">2</A>, is stored. The location of the array
+is usually at the 16MiB mark to avoid using <TT>ZONE_DMA</TT> but not always.
+With NUMA architectures, portions of the virtual <TT>mem_map</TT> will
+be scattered throughout this region and where they are actually located is
+architecture dependent.</P><P>The region between <TT>PAGE_OFFSET</TT> and <TT>VMALLOC_START
+- VMALLOC_OFFSET</TT> is the physical memory map and the size of the region
+depends on the amount of available RAM. As we saw in Section 
+<A HREF="understand006.html#sec: Kernel Page Tables">3.6</A>, page table entries exist to map physical memory
+to the virtual address range beginning at <TT>PAGE_OFFSET</TT>. Between
+the physical memory map and the vmalloc address space, there is a gap of space
+<TT>VMALLOC_OFFSET</TT><A NAME="@mainindex334"></A> in size, which on the x86 is 8MiB, to guard
+against out of bounds errors. For illustration, on a x86 with 32MiB of RAM,
+<TT>VMALLOC_START</TT> will be located at <TT>PAGE_OFFSET
++ 0x02000000 + 0x00800000</TT>.</P><P>In low memory systems, the remaining amount of the virtual address space, minus
+a 2 page gap, is used by <TT>vmalloc()</TT> for representing non-contiguous
+memory allocations in a contiguous virtual address space. In high-memory
+systems, the vmalloc area extends as far as <TT>PKMAP_BASE</TT><A NAME="@mainindex335"></A>
+minus the two page gap and two extra regions are introduced. The first,
+which begins at <TT>PKMAP_BASE</TT>, is an area reserved for the mapping
+of high memory pages into low memory with <TT>kmap()</TT><A NAME="@mainindex336"></A> as discussed
+in Chapter <A HREF="understand012.html#chap: High Memory Management">9</A>. The second is for fixed
+virtual address mappings which extends from <TT>FIXADDR_START</TT><A NAME="@mainindex337"></A>
+to <TT>FIXADDR_TOP</TT><A NAME="@mainindex338"></A>. Fixed virtual addresses are needed
+for subsystems that need to know the virtual address at compile time
+such as the <EM>Advanced Programmable Interrupt Controller
+(APIC)</EM><A NAME="@mainindex339"></A>. <TT>FIXADDR_TOP</TT> is statically defined to be
+<TT>0xFFFFE000</TT> on the x86 which is one page before the end of the
+virtual address space. The size of the fixed mapping region is calculated
+at compile time in <TT>__FIXADDR_SIZE</TT><A NAME="@mainindex340"></A> and used to index
+back from <TT>FIXADDR_TOP</TT> to give the start of the region
+<TT>FIXADDR_START</TT></P><P>The region required for <TT>vmalloc()</TT>, <TT>kmap()</TT> and the fixed
+virtual address mapping is what limits the size of <TT>ZONE_NORMAL</TT>. As
+the running kernel needs these functions, a region of at least
+<TT>VMALLOC_RESERVE</TT><A NAME="@mainindex341"></A> will be reserved at the top of the address
+space. <TT>VMALLOC_RESERVE</TT> is architecture specific but on the x86,
+it is defined as 128MiB. This is why <TT>ZONE_NORMAL</TT> is generally referred
+to being only 896MiB<A NAME="@mainindex342"></A><A NAME="@mainindex343"></A> in size; it is the 1GiB of the upper potion of the linear address
+space minus the minimum 128MiB that is reserved for the vmalloc region.</P><H2 CLASS="section"><A NAME="toc29"></A><A NAME="htoc27">4.2</A>  Managing the Address Space</H2><P>
+<A NAME="@mainindex344"></A></P><P>The address space usable by the process is managed by a high level
+<TT>mm_struct</TT><A NAME="@mainindex345"></A> which is roughly analogous to the
+<TT>vmspace</TT><A NAME="@mainindex346"></A> struct in BSD [<A HREF="understand031.html#mckusick96"><CITE>McK96</CITE></A>].</P><P>Each address space consists of a number of page-aligned regions of memory
+that are in use. They never overlap and represent a set of addresses
+which contain pages that are related to each other in terms of protection
+and purpose. These regions are represented by a <TT>struct</TT>
+<TT>vm_area_struct</TT><A NAME="@mainindex347"></A> and are roughly analogous to the
+<TT>vm_map_entry</TT> struct in BSD. For clarity, a region may
+represent the process heap for use with <TT>malloc()</TT>, a memory mapped
+file such as a shared library or a block of anonymous memory allocated with
+<TT>mmap()</TT>. The pages for this region may still have to be allocated,
+be active and resident or have been paged out.</P><P>If a region is backed by a file, its
+<TT>vm_file</TT> field will be set. By traversing
+<TT>vm_file</TT>&#X2192;<TT>f_dentry</TT>&#X2192;<TT>d_inode</TT>&#X2192;<TT>i_mapping</TT>,
+the associated <TT>address_space</TT><A NAME="@mainindex348"></A> for the region may be
+obtained. The <TT>address_space</TT> has all the filesystem specific
+information required to perform page-based operations on disk.</P><P>The relationship between the different address space related structures
+is illustraed in <A HREF="#fig: Data Structures related to the Address Space">4.2</A>.
+A number of system calls are provided which affect the address space and
+regions. These are listed in Table 
+<A >??</A>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html011.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.2: Data Structures related to the Address
+Space</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Data Structures related to the Address Space"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>System Call</B></TD><TD VALIGN=top ALIGN=left><B>Description</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>fork()</TT></TD><TD VALIGN=top ALIGN=left>Creates a new process with a new address space. All the
+		pages are marked COW and are shared between the two processes
+		until a page fault occurs to make private copies</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>clone()</TT></TD><TD VALIGN=top ALIGN=left><TT>clone()</TT> allows a new process to be created that
+		shares parts of its context with its parent and is how
+		threading is implemented in Linux. <TT>clone()</TT> without
+		the <TT>CLONE_VM</TT> set will create a new address
+		space which is essentially the same as <TT>fork()</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>mmap()</TT></TD><TD VALIGN=top ALIGN=left><TT>mmap()</TT> creates a new region within the process
+		linear address space</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>mremap()</TT></TD><TD VALIGN=top ALIGN=left>Remaps or resizes a region of memory. If the virtual
+		 address space is not available for the mapping, the region
+		 may be moved unless the move is forbidden by the caller.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>munmap()</TT></TD><TD VALIGN=top ALIGN=left>This destroys part or all of a region. If the region been
+		unmapped is in the middle of an existing region, the existing
+		region is split into two separate regions</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>shmat()</TT></TD><TD VALIGN=top ALIGN=left>This attaches a shared memory segment to a process address
+		space</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>shmdt()</TT></TD><TD VALIGN=top ALIGN=left>Removes a shared memory segment from an address space</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>execve()</TT></TD><TD VALIGN=top ALIGN=left>This loads a new executable file replacing the current
+		address space</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>exit()</TT></TD><TD VALIGN=top ALIGN=left>Destroys an address space and all regions</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 4.1: System Calls Related to Memory Regions</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: System Calls Related to Memory
+Regions"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc30"></A><A NAME="htoc28">4.3</A>  Process Address Space Descriptor</H2><P>
+<A NAME="sec: Process Address Space Descriptor"></A>
+<A NAME="@mainindex349"></A></P><P>The process address space is described by the <TT>mm_struct</TT><A NAME="@mainindex350"></A>
+struct meaning that only one exists for each process and is shared between
+userspace threads. In fact, threads are identified in the task list by
+finding all <TT>task_struct</TT>s which have pointers to the same
+<TT>mm_struct</TT>.<A NAME="@mainindex351"></A></P><P>A unique <TT>mm_struct</TT> is not needed for kernel threads as they
+will never page fault or access the userspace portion. The only exception
+is page faulting within the vmalloc space. The page fault handling code
+treats this as a special case and updates the current page table with
+information in the the master page table. As a <TT>mm_struct</TT> is
+not needed for kernel threads, the <TT>task_struct</TT>&#X2192;<TT>mm</TT> field
+for kernel threads is always NULL. For some tasks such as the boot idle
+task, the <TT>mm_struct</TT> is never setup but for kernel threads,
+a call to <TT>daemonize()</TT> will call <TT>exit_mm()</TT> to decrement
+the usage counter.</P><P><A NAME="@mainindex352"></A>As TLB flushes are extremely expensive, especially with
+architectures such as the PPC, a technique called <EM>lazy TLB</EM><A NAME="@mainindex353"></A> is
+employed which avoids unnecessary TLB flushes by processes which do not access
+the userspace page tables as the kernel portion of the address space is always
+visible. The call to <TT>switch_mm()</TT>, which results in a TLB flush,
+is avoided by &#X201C;borrowing&#X201D; the <TT>mm_struct</TT> used by the previous
+task and placing it in <TT>task_struct</TT>&#X2192;<TT>active_mm</TT>. This
+technique has made large improvements to context switches times.</P><P>When entering lazy TLB, the function <TT>enter_lazy_tlb()</TT> is called
+to ensure that a <TT>mm_struct</TT> is not shared between processors
+in SMP machines, making it a NULL operation on UP machines. The second time
+use of lazy TLB is during process exit when <TT>start_lazy_tlb()</TT>
+is used briefly while the process is waiting to be reaped by the parent.</P><P>The struct has two reference counts called <TT>mm_users</TT><A NAME="@mainindex354"></A> and
+<TT>mm_count</TT><A NAME="@mainindex355"></A> for two types of &#X201C;users&#X201D;. <TT>mm_users</TT>
+is a reference count of processes accessing the userspace portion of for this
+<TT>mm_struct</TT>, such as the page tables and file mappings. Threads
+and the <TT>swap_out()</TT> code for instance will increment this count
+making sure a <TT>mm_struct</TT> is not destroyed early. When it drops
+to 0, <TT>exit_mmap()</TT> will delete all mappings and tear down the page
+tables before decrementing the <TT>mm_count</TT>.</P><P><TT>mm_count</TT> is a reference count of the &#X201C;anonymous users&#X201D;
+for the <TT>mm_struct</TT> initialised at 1 for the &#X201C;real&#X201D; user. An
+anonymous user is one that does not necessarily care about the userspace
+portion and is just borrowing the <TT>mm_struct</TT>. Example users
+are kernel threads which use lazy TLB switching. When this count drops to 0,
+the <TT>mm_struct</TT> can be safely destroyed. Both reference counts
+exist because anonymous users need the <TT>mm_struct</TT> to exist even
+if the userspace mappings get destroyed and there is no point delaying the
+teardown of the page tables.</P><P>The <TT>mm_struct</TT> is defined in &lt;<TT>linux/sched.h</TT>&gt;
+as follows:</P><PRE CLASS="verbatim">206 struct mm_struct {
+207     struct vm_area_struct * mmap;
+208     rb_root_t mm_rb;
+209     struct vm_area_struct * mmap_cache;
+210     pgd_t * pgd;
+211     atomic_t mm_users;
+212     atomic_t mm_count;
+213     int map_count;
+214     struct rw_semaphore mmap_sem;
+215     spinlock_t page_table_lock;
+216 
+217     struct list_head mmlist;
+221 
+222     unsigned long start_code, end_code, start_data, end_data;
+223     unsigned long start_brk, brk, start_stack;
+224     unsigned long arg_start, arg_end, env_start, env_end;
+225     unsigned long rss, total_vm, locked_vm;
+226     unsigned long def_flags;
+227     unsigned long cpu_vm_mask;
+228     unsigned long swap_address;
+229 
+230     unsigned dumpable:1;
+231 
+232     /* Architecture-specific MM context */
+233     mm_context_t context;
+234 };
+</PRE><P>The meaning of each of the field in this sizeable struct is as follows: </P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>mmap</B>The head of a linked list of all VMA regions in the address space;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>mm_rb</B>The VMAs are arranged in a linked list and in a red-black
+tree for fast lookups. This is the root of the tree;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>mmap_cache</B>The VMA found during the last call to <TT>find_vma()</TT>
+is stored in this field on the assumption that the area will be used again
+soon;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pgd</B>The Page Global Directory for this process;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>mm_users</B>A reference count of users accessing the userspace portion
+of the address space as explained at the beginning of the section;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>mm_count</B>A reference count of the anonymous users for the
+<TT>mm_struct</TT> starting at 1 for the &#X201C;real&#X201D; user as explained at
+the beginning of this section;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>map_count</B>Number of VMAs in use;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>mmap_sem</B><A NAME="@mainindex356"></A> This is a long lived lock which protects the VMA list
+for readers and writers. As users of this lock require it for a long time
+and may need to sleep, a spinlock is inappropriate. A reader of the list
+takes this semaphore with <TT>down_read()</TT>. If they need to write,
+it is taken with <TT>down_write()</TT> and the <TT>page_table_lock</TT>
+spinlock is later acquired while the VMA linked lists are being updated;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>page_table_lock</B>This protects most fields on the
+<TT>mm_struct</TT>. As well as the page tables, it protects the RSS
+(see below) count and the VMA from modification;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>mmlist</B><A NAME="@mainindex357"></A> All <TT>mm_struct</TT>s are linked together via this field;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>start_code, end_code</B>The start and end address of the code section;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>start_data, end_data</B>The start and end address of the data section;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>start_brk, brk</B>The start and end address of the heap;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>start_stack</B>Predictably enough, the start of the stack region;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>arg_start, arg_end</B>The start and end address of command line
+arguments;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>env_start, env_end</B>The start and end address of environment variables;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>rss</B><A NAME="@mainindex358"></A> <EM>Resident Set Size (RSS)</EM><A NAME="@mainindex359"></A> is the number of resident
+pages for this process. It should be noted that the global zero page is not
+accounted for by RSS;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>total_vm</B><A NAME="@mainindex360"></A> The total memory space occupied by all VMA regions in
+the process;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>locked_vm</B><A NAME="@mainindex361"></A> The number of resident pages locked in memory;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>def_flags</B><A NAME="@mainindex362"></A> Only one possible value, <TT>VM_LOCKED</TT>. It is
+used to determine if all future mappings are locked by default or not;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>cpu_vm_mask</B><A NAME="@mainindex363"></A> A bitmask representing all possible CPUs in an SMP
+system. The mask is used by an <EM>InterProcessor Interrupt (IPI)</EM><A NAME="@mainindex364"></A>
+to determine if a processor should execute a particular function or not. This
+is important during TLB flush for each CPU;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>swap_address</B>Used by the pageout daemon to record the last address
+that was swapped from when swapping out entire processes;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>dumpable</B>Set by <TT>prctl()</TT>, this flag is important only when
+tracing a process;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>context</B>Architecture specific MMU context.</DD></DL><P>There are a small number of functions for dealing with
+<TT>mm_struct</TT>s. They are described in Table <A >??</A>.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>Function</B></TD><TD VALIGN=top ALIGN=left><B>Description</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>mm_init()</TT><A NAME="@mainindex365"></A></TD><TD VALIGN=top ALIGN=left>Initialises a <TT>mm_struct</TT> by setting
+		starting values for each field, allocating a PGD, initialising
+		spinlocks etc.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>allocate_mm()</TT><A NAME="@mainindex366"></A></TD><TD VALIGN=top ALIGN=left>Allocates a <TT>mm_struct()</TT> from the
+slab allocator</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>mm_alloc()</TT><A NAME="@mainindex367"></A></TD><TD VALIGN=top ALIGN=left>Allocates a <TT>mm_struct</TT> using
+		<TT>allocate_mm()</TT> and calls <TT>mm_init()</TT> to
+		initialise it</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>exit_mmap()</TT><A NAME="@mainindex368"></A></TD><TD VALIGN=top ALIGN=left>Walks through a <TT>mm_struct</TT> and unmaps
+		all VMAs associated with it</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>copy_mm()</TT><A NAME="@mainindex369"></A></TD><TD VALIGN=top ALIGN=left>Makes an exact copy of the current tasks
+		<TT>mm_struct</TT> for a new task. This is only used
+		during fork</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>free_mm()</TT><A NAME="@mainindex370"></A></TD><TD VALIGN=top ALIGN=left>Returns the <TT>mm_struct</TT> to the slab
+allocator</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 4.2: Functions related to memory region descriptors</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Functions related to memory
+region descriptors"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H3 CLASS="subsection">4.3.1  Allocating a Descriptor</H3><P>
+<A NAME="@mainindex371"></A></P><P>Two functions are provided to allocate a <TT>mm_struct</TT>. To be
+slightly confusing, they are essentially the same but with small important
+differences. <TT>allocate_mm()</TT><A NAME="@mainindex372"></A> is just a preprocessor macro which
+allocates a <TT>mm_struct</TT> from the <EM>slab allocator</EM> (see
+Chapter <A HREF="understand011.html#chap: Slab Allocator">8</A>). <TT>mm_alloc()</TT><A NAME="@mainindex373"></A> allocates from
+slab and then calls <TT>mm_init()</TT><A NAME="@mainindex374"></A> to initialise it.</P><H3 CLASS="subsection">4.3.2  Initialising a Descriptor</H3><P>
+<A NAME="@mainindex375"></A></P><P>The initial <TT>mm_struct</TT> in the system is called
+<TT>init_mm()</TT><A NAME="@mainindex376"></A> and is statically initialised at compile time using
+the macro <TT>INIT_MM()</TT><A NAME="@mainindex377"></A>.</P><PRE CLASS="verbatim">238 #define INIT_MM(name) \
+239 {                                                       \
+240     mm_rb:          RB_ROOT,                            \
+241     pgd:            swapper_pg_dir,                     \
+242     mm_users:       ATOMIC_INIT(2),                     \
+243     mm_count:       ATOMIC_INIT(1),                     \
+244     mmap_sem:       __RWSEM_INITIALIZER(name.mmap_sem), \
+245     page_table_lock: SPIN_LOCK_UNLOCKED,                \
+246     mmlist:         LIST_HEAD_INIT(name.mmlist),        \
+247 }
+</PRE><P>Once it is established, new <TT>mm_struct</TT>s are created using their
+parent <TT>mm_struct</TT> as a template. The function responsible for
+the copy operation is <TT>copy_mm()</TT><A NAME="@mainindex378"></A> and it uses <TT>init_mm()</TT>
+to initialise process specific fields.</P><H3 CLASS="subsection">4.3.3  Destroying a Descriptor</H3><P>While a new user increments the usage count with
+<TT>atomic_inc(&amp;mm-&gt;mm_users)</TT>, it is decremented with a call
+to <TT>mmput()</TT><A NAME="@mainindex379"></A>. If the <TT>mm_users</TT> count reaches zero, all
+the mapped regions are destroyed with <TT>exit_mmap()</TT><A NAME="@mainindex380"></A> and the page
+tables destroyed as there is no longer any users of the userspace portions. The
+<TT>mm_count</TT> count is decremented with <TT>mmdrop()</TT><A NAME="@mainindex381"></A> as all the
+users of the page tables and VMAs are counted as one <TT>mm_struct</TT>
+user. When <TT>mm_count</TT> reaches zero, the <TT>mm_struct</TT>
+will be destroyed.</P><H2 CLASS="section"><A NAME="toc31"></A><A NAME="htoc29">4.4</A>  Memory Regions</H2><P>
+<A NAME="@mainindex382"></A>
+<A NAME="@mainindex383"></A>
+<A NAME="@mainindex384"></A>
+<A NAME="@mainindex385"></A></P><P>The full address space of a process is rarely used, only sparse regions are.
+Each region is represented by a <TT>vm_area_struct</TT><A NAME="@mainindex386"></A> which
+never overlap and represent a set of addresses with the same protection
+and purpose. Examples of a region include a read-only shared library loaded
+into the address space or the process heap. A full list of mapped regions a
+process has may be viewed via the proc interface at <TT>/proc/PID/maps</TT>
+where PID is the process ID of the process that is to be examined.</P><P>The region may have a number of different structures associated with it
+as illustrated in Figure
+<A HREF="#fig: Data Structures related to the Address Space">4.2</A>. At the top, there
+is the <TT>vm_area_struct</TT> which on its own is enough to represent
+anonymous memory.</P><P>If the region is backed by a file, the <TT>struct file</TT> is
+available through the <TT>vm_file</TT> field which has a pointer to the
+<TT>struct inode</TT>. The inode is used to get the <TT>struct
+address_space</TT> which has all the private information about the file
+including a set of pointers to filesystem functions which perform the
+filesystem specific operations such as reading and writing pages to disk.</P><P>The struct <TT>vm_area_struct</TT> is declared as follows in
+&lt;<TT>linux/mm.h</TT>&gt;:</P><PRE CLASS="verbatim"> 44 struct vm_area_struct {
+ 45     struct mm_struct * vm_mm;
+ 46     unsigned long vm_start;
+ 47     unsigned long vm_end;
+ 49 
+ 50     /* linked list of VM areas per task, sorted by address */
+ 51     struct vm_area_struct *vm_next;
+ 52 
+ 53     pgprot_t vm_page_prot;
+ 54     unsigned long vm_flags;
+ 55 
+ 56     rb_node_t vm_rb;
+ 57 
+ 63     struct vm_area_struct *vm_next_share;
+ 64     struct vm_area_struct **vm_pprev_share;
+ 65 
+ 66     /* Function pointers to deal with this struct. */
+ 67     struct vm_operations_struct * vm_ops;
+ 68 
+ 69     /* Information about our backing store: */
+ 70     unsigned long vm_pgoff;
+ 72     struct file * vm_file;
+ 73     unsigned long vm_raend;
+ 74     void * vm_private_data;
+ 75 };
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_mm</B>The <TT>mm_struct</TT> this VMA belongs to;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_start</B>The starting address of the region;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_end</B>The end address of the region;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_next</B>All the VMAs in an address space are linked together in an
+address-ordered singly linked list via this field It is interesting to note
+that the VMA list is one of the very rare cases where a singly linked list
+is used in the kernel;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_page_prot</B>The protection flags that are set for each PTE in this
+VMA. The different bits are described in Table <A >??</A>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_flags</B>A set of flags describing the protections and properties of
+the VMA. They are all defined in &lt;<TT>linux/mm.h</TT>&gt; and are described
+in Table <A HREF="#tab: Memory Region Flags">4.3</A> </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_rb</B>As
+well as being in a linked list, all the VMAs are stored on a
+<EM>red-black tree</EM> for fast lookups. This is important for page fault
+handling when finding the correct region quickly is important, especially
+for a large number of mapped regions;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_next_share</B>Shared VMA regions based on file mappings (such as
+shared libraries) linked together with this field;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_pprev_share</B>The complement of <TT>vm_next_share</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_ops</B>The <TT>vm_ops</TT> field contains functions pointers for
+<TT>open()</TT>, <TT>close()</TT> and <TT>nopage()</TT>. These are needed
+for syncing with information from the disk;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_pgoff</B>This is the page aligned offset within a file that is
+memory mapped;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_file</B>The <TT>struct file</TT> pointer to the file being mapped;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_raend</B>This is the end address of a read-ahead window. When a fault
+occurs, a number of additional pages after the desired page will be paged in.
+This field determines how many additional pages are faulted in;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vm_private_data</B>Used by some device drivers to store private
+information. Not of concern to the memory manager.</DD></DL><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV><TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD ALIGN=left NOWRAP COLSPAN=2><B>Protection Flags</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<B>Flags</B></TD><TD VALIGN=top ALIGN=left><B>Description</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>VM_READ</TT>		</TD><TD VALIGN=top ALIGN=left>Pages may be read</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_WRITE</TT> 		</TD><TD VALIGN=top ALIGN=left>Pages may be written</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_EXEC</TT> 		</TD><TD VALIGN=top ALIGN=left>Pages may be executed</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_SHARED</TT> 	</TD><TD VALIGN=top ALIGN=left>Pages may be shared</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_DONTCOPY</TT> 	</TD><TD VALIGN=top ALIGN=left>VMA will not be copied on fork</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_DONTEXPAND</TT> 	</TD><TD VALIGN=top ALIGN=left>Prevents a region being resized. Flag is unused</TD></TR>
+</TABLE><TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD ALIGN=left NOWRAP COLSPAN=2><B>mmap Related Flags</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>VM_MAYREAD</TT><A NAME="@mainindex387"></A></TD><TD VALIGN=top ALIGN=left>Allow the <TT>VM_READ</TT> flag to be set</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_MAYWRITE</TT><A NAME="@mainindex388"></A></TD><TD VALIGN=top ALIGN=left>Allow the <TT>VM_WRITE</TT> flag to be set</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_MAYEXEC</TT><A NAME="@mainindex389"></A></TD><TD VALIGN=top ALIGN=left>Allow the <TT>VM_EXEC</TT> flag to be set</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_MAYSHARE</TT><A NAME="@mainindex390"></A></TD><TD VALIGN=top ALIGN=left>Allow the <TT>VM_SHARE</TT> flag to be set</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_GROWSDOWN</TT><A NAME="@mainindex391"></A></TD><TD VALIGN=top ALIGN=left>Shared segment (probably stack) may grow down</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_GROWSUP</TT><A NAME="@mainindex392"></A></TD><TD VALIGN=top ALIGN=left>Shared segment (probably heap) may grow up</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_SHM</TT><A NAME="@mainindex393"></A></TD><TD VALIGN=top ALIGN=left>Pages are used by shared SHM memory segment</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_DENYWRITE</TT><A NAME="@mainindex394"></A></TD><TD VALIGN=top ALIGN=left>What <TT>MAP_DENYWRITE</TT> for
+<TT>mmap()</TT> translates to. Now unused</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_EXECUTABLE</TT><A NAME="@mainindex395"></A></TD><TD VALIGN=top ALIGN=left>What <TT>MAP_EXECUTABLE</TT> for
+<TT>mmap()</TT> translates to. Now unused</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_STACK_FLAGS</TT><A NAME="@mainindex396"></A></TD><TD VALIGN=top ALIGN=left>Flags used by
+			<TT>setup_arg_flags()</TT><A NAME="@mainindex397"></A> to setup the stack</TD></TR>
+</TABLE><TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD ALIGN=left NOWRAP COLSPAN=2><B>Locking Flags</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP>
+<TT>VM_LOCKED</TT><A NAME="@mainindex398"></A></TD><TD VALIGN=top ALIGN=left>If set, the pages will not be swapped out. Set by mlock()</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_IO</TT><A NAME="@mainindex399"></A></TD><TD VALIGN=top ALIGN=left>Signals that the area is a mmaped region for IO to a device. It will
+also prevent the region being core dumped</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_RESERVED</TT><A NAME="@mainindex400"></A></TD><TD VALIGN=top ALIGN=left>Do not swap out this region, used by device drivers</TD></TR>
+</TABLE><TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left NOWRAP><B>madvise() Flags</B></TD><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP> 
+<TT>VM_SEQ_READ</TT><A NAME="@mainindex401"></A></TD><TD VALIGN=top ALIGN=left>A hint that pages will be accessed sequentially</TD></TR>
+<TR><TD VALIGN=top ALIGN=left NOWRAP><TT>VM_RAND_READ</TT><A NAME="@mainindex402"></A></TD><TD VALIGN=top ALIGN=left>A hint stating that readahead in the region is useless</TD></TR>
+</TABLE><DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.3: Memory Region Flags</TD></TR>
+</TABLE></DIV><P>
+<A NAME="tab: Memory Region Flags"></A>
+</P><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>All the regions are linked together on a linked list ordered by address via
+the <TT>vm_next</TT> field. When searching for a free area, it is a simple
+matter of traversing the list but a frequent operation is to search for the
+VMA for a particular address such as during page faulting for example. In this
+case, the red-black tree is traversed as it has <I>O</I>(log<I>N</I>)
+search time on average. The tree is ordered so that lower addresses than
+the current node are on the left leaf and higher addresses are on the right.</P><H3 CLASS="subsection">4.4.1  Memory Region Operations</H3><P>
+<A NAME="@mainindex403"></A></P><P>There are three operations which a VMA may support called
+<TT>open()</TT>, <TT>close()</TT> and <TT>nopage()</TT>. It supports
+these with a <TT>vm_operations_struct</TT><A NAME="@mainindex404"></A> in the VMA called
+<TT>vma</TT>&#X2192;<TT>vm_ops</TT>. The struct contains three function pointers
+and is declared as follows in &lt;<TT>linux/mm.h</TT>&gt;:</P><PRE CLASS="verbatim">133 struct vm_operations_struct {
+134     void (*open)(struct vm_area_struct * area);
+135     void (*close)(struct vm_area_struct * area);
+136     struct page * (*nopage)(struct vm_area_struct * area, 
+                                unsigned long address, 
+                                int unused);
+137 };
+</PRE><P>The <TT>open()</TT> and <TT>close()</TT> functions are will be called every
+time a region is created or deleted. These functions are only used by a
+small number of devices, one filesystem and System V shared regions which
+need to perform additional operations when regions are opened or closed. For
+example, the System V <TT>open()</TT> callback will increment the number of
+VMAs using a shared segment (<TT>shp</TT>&#X2192;<TT>shm_nattch</TT>).</P><P>The main operation of interest is the <TT>nopage()</TT> callback. This
+callback is used during a page-fault by <TT>do_no_page()</TT>. The callback
+is responsible for locating the page in the page cache or allocating a page
+and populating it with the required data before returning it.</P><P>Most files that are mapped will use a generic <TT>vm_operations_struct()</TT>
+called <TT>generic_file_vm_ops</TT><A NAME="@mainindex405"></A>. It registers only a
+<TT>nopage()</TT> function called <TT>filemap_nopage()</TT><A NAME="@mainindex406"></A>. This
+<TT>nopage()</TT> function will either locating the page in the page cache
+or read the information from disk. The struct is declared as follows in
+<TT>mm/filemap.c</TT>:</P><PRE CLASS="verbatim">2243 static struct vm_operations_struct generic_file_vm_ops = {
+2244     nopage:         filemap_nopage,
+2245 };
+</PRE><H3 CLASS="subsection">4.4.2  File/Device backed memory regions</H3><P>
+<A NAME="sec: File/Device backed memory regions"></A>
+<A NAME="@mainindex407"></A>
+<A NAME="@mainindex408"></A></P><P>In the event the region is backed by a file, the <TT>vm_file</TT> leads
+to an associated <TT>address_space</TT><A NAME="@mainindex409"></A> as shown in Figure 
+<A HREF="#fig: Data Structures related to the Address Space">4.2</A>. The struct
+contains information of relevance to the filesystem such as the number of
+dirty pages which must be flushed to disk. It is declared as follows in
+&lt;<TT>linux/fs.h</TT>&gt;:</P><PRE CLASS="verbatim">406 struct address_space {
+407     struct list_head        clean_pages;    
+408     struct list_head        dirty_pages;    
+409     struct list_head        locked_pages;   
+410     unsigned long           nrpages;        
+411     struct address_space_operations *a_ops; 
+412     struct inode            *host;          
+413     struct vm_area_struct   *i_mmap;        
+414     struct vm_area_struct   *i_mmap_shared; 
+415     spinlock_t              i_shared_lock;  
+416     int                     gfp_mask;       
+417 };
+</PRE><P>A brief description of each field is as follows:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>clean_pages</B>List of clean pages that need no synchronisation with
+backing stoarge;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>dirty_pages</B>List of dirty pages that need synchronisation with backing storage;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>locked_pages</B>List of pages that are locked in memory;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>nrpages</B>Number of resident pages in use by the address space;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>a_ops</B>A struct of function for manipulating the filesystem. Each
+filesystem provides it's own <TT>address_space_operations</TT> although
+they sometimes use generic functions;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>host</B>The host inode the file belongs to;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>i_mmap</B>A list of private mappings using this <TT>address_space</TT>;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>i_mmap_shared</B>A list of VMAs which share mappings in this
+<TT>address_space</TT>;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>i_shared_lock</B>A spinlock to protect this structure;
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>gfp_mask</B>The mask to use when calling <TT>__alloc_pages()</TT> for 
+		 new pages.</DD></DL><P>Periodically the memory manager will need to flush information to disk. The
+memory manager does not know and does not care how information is written
+to disk, so the <TT>a_ops</TT> struct is used to call the relevant
+functions. It is declared as follows in &lt;<TT>linux/fs.h</TT>&gt;:</P><PRE CLASS="verbatim">385 struct address_space_operations {
+386     int (*writepage)(struct page *);
+387     int (*readpage)(struct file *, struct page *);
+388     int (*sync_page)(struct page *);
+389     /*
+390      * ext3 requires that a successful prepare_write() call be
+391      * followed by a commit_write() call - they must be balanced
+392      */
+393     int (*prepare_write)(struct file *, struct page *, 
+                             unsigned, unsigned);
+394     int (*commit_write)(struct file *, struct page *, 
+                             unsigned, unsigned);
+395     /* Unfortunately this kludge is needed for FIBMAP. 
+         * Don't use it */
+396     int (*bmap)(struct address_space *, long);
+397     int (*flushpage) (struct page *, unsigned long);
+398     int (*releasepage) (struct page *, int);
+399 #define KERNEL_HAS_O_DIRECT
+400     int (*direct_IO)(int, struct inode *, struct kiobuf *, 
+                         unsigned long, int);
+401 #define KERNEL_HAS_DIRECT_FILEIO
+402     int (*direct_fileIO)(int, struct file *, struct kiobuf *, 
+                             unsigned long, int);
+403     void (*removepage)(struct page *);
+404 };
+</PRE><P>These fields are all function pointers which are described as follows;</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>writepage</B>Write a page to disk. The offset within the file to write
+to is stored within the page struct. It is up to the filesystem specific
+code to find the block. See <TT>buffer.c:block_write_full_page()</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>readpage</B>Read a page from disk. See
+<TT>buffer.c:block_read_full_page()</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>sync_page</B>Sync a dirty page with disk. See
+<TT>buffer.c:block_sync_page()</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>prepare_write</B>This is called before data is copied from userspace
+into a page that will be written to disk. With a journaled filesystem,
+this ensures the filesystem log is up to date. With normal filesystems,
+it makes sure the needed buffer pages are allocated. See
+<TT>buffer.c:block_prepare_write()</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>commit_write</B>After the data has been copied from userspace,
+this function is called to commit the information to disk. See
+<TT>buffer.c:block_commit_write()</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>bmap</B>Maps a block so that raw IO can be performed. Mainly of concern
+to filesystem specific code although it is also when swapping out pages that
+are backed by a swap file instead of a swap partition;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flushpage</B>This makes sure there is no IO pending on a page before
+releasing it. See <TT>buffer.c:discard_bh_page()</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>releasepage</B>This tries to flush all the buffers associated with a
+page before freeing the page itself. See <TT>try_to_free_buffers()</TT>.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>direct_IO</B>This function is used when performing direct IO to an inode.
+The <TT>#define</TT> exists so that external modules can determine at
+compile-time if the function is available as it was only introduced in 2.4.21</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>direct_fileIO</B>Used to perform direct IO with a <TT>struct
+file</TT>. Again, the <TT>#define</TT> exists for external modules as this
+API was only introduced in 2.4.22</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>removepage</B>An optional callback that is used when a page is removed
+from the page cache in <TT>remove_page_from_inode_queue()</TT></DD></DL><H3 CLASS="subsection">4.4.3  Creating A Memory Region</H3><P>
+<A NAME="VMA Creation"></A>
+<A NAME="@mainindex410"></A><A NAME="@mainindex411"></A></P><P>The system call <TT>mmap()</TT> is provided for creating new
+memory regions within a process. For the x86, the function calls
+<TT>sys_mmap2()</TT><A NAME="@mainindex412"></A> which calls <TT>do_mmap2()</TT><A NAME="@mainindex413"></A> directly with
+the same parameters. <TT>do_mmap2()</TT> is responsible for acquiring the
+parameters needed by <TT>do_mmap_pgoff()</TT><A NAME="@mainindex414"></A>, which is the principle
+function for creating new areas for all architectures.</P><P><TT>do_mmap2()</TT> first clears the <TT>MAP_DENYWRITE</TT> and
+<TT>MAP_EXECUTABLE</TT> bits from the <TT>flags</TT> parameter as they
+are ignored by Linux, which is confirmed by the <TT>mmap()</TT> manual page. If
+a file is being mapped, <TT>do_mmap2()</TT> will look up the
+<TT>struct file</TT> based on the file descriptor passed as a parameter and
+acquire the <TT>mm_struct</TT>&#X2192;<TT>mmap_sem</TT> semaphore before calling
+<TT>do_mmap_pgoff()</TT>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html012.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.4: Call Graph: <TT>sys_mmap2()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: sys_mmap2"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P><TT>do_mmap_pgoff()</TT> begins by performing some basic sanity checks. It
+first checks the appropriate filesystem or device functions are available if a
+file or device is being mapped. It then ensures the size of the mapping is page
+aligned and that it does not attempt to create a mapping in the kernel portion
+of the address space. It then makes sure the size of the mapping does not
+overflow the range of <TT>pgoff</TT> and finally that the process does not
+have too many mapped regions already.</P><P>This rest of the function is large but broadly speaking it takes the
+following steps:</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+Sanity check the parameters;
+</LI><LI CLASS="li-itemize">Find a free linear address space large enough for the memory mapping. If
+a filesystem or device specific <TT>get_unmapped_area()</TT>
+function is provided, it will be used otherwise
+<TT>arch_get_unmapped_area()</TT> is called;
+</LI><LI CLASS="li-itemize">Calculate the VM flags and check them against the file access
+permissions;
+</LI><LI CLASS="li-itemize">If an old area exists where the mapping is to take place, fix it up
+so that it is suitable for the new mapping;
+</LI><LI CLASS="li-itemize">Allocate a <TT>vm_area_struct</TT> from the slab allocator and 
+fill in its entries;
+</LI><LI CLASS="li-itemize">Link in the new VMA;
+</LI><LI CLASS="li-itemize">Call the filesystem or device specific mmap function;
+</LI><LI CLASS="li-itemize">Update statistics and exit.
+</LI></UL><H3 CLASS="subsection">4.4.4  Finding a Mapped Memory Region</H3><P>
+<A NAME="@mainindex415"></A></P><P>A common operation is to find the VMA a particular address belongs to,
+such as during operations like page faulting, and the function responsible
+for this is <TT>find_vma()</TT><A NAME="@mainindex416"></A>. The function <TT>find_vma()</TT> and
+other API functions affecting memory regions are listed in Table
+<A HREF="#tab: Memory Region VMA API">4.3</A>.</P><P>It first checks the <TT>mmap_cache</TT> field which caches the result of
+the last call to <TT>find_vma()</TT> as it is quite likely the same region
+will be needed a few times in succession. If it is not the desired region,
+the red-black tree stored in the <TT>mm_rb</TT> field is traversed. If
+the desired address is not contained within any VMA, the function will return
+the VMA <EM>closest</EM> to the requested address so it is important callers
+double check to ensure the returned VMA contains the desired address.</P><P>A second function called <TT>find_vma_prev()</TT><A NAME="@mainindex417"></A> is provided which is
+functionally the same as <TT>find_vma()</TT> except that it also returns a
+pointer to the VMA preceding the desired VMA which is required as the list is
+a singly linked list. <TT>find_vma_prev()</TT> is rarely used but notably,
+it is used when two VMAs are being compared to determine if they may be
+merged. It is also used when removing a memory region so that the singly
+linked list may be updated.</P><P>The last function of note for searching VMAs is
+<TT>find_vma_intersection()</TT><A NAME="@mainindex418"></A> which is used to find a VMA which
+overlaps a given address range. The most notable use of this is during a
+call to <TT>do_brk()</TT> when a region is growing up. It is important to
+ensure that the growing region will not overlap an old region.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex419"></A><TT>struct vm_area_struct * find_vma(struct mm_struct * mm, unsigned long addr)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Finds the VMA that covers a given address. If the region does
+not exist, it returns the VMA closest to the requested address</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex420"></A><TT>struct vm_area_struct * find_vma_prev(struct mm_struct * mm, unsigned long
+addr, struct vm_area_struct **pprev)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Same as <TT>find_vma()</TT> except it also also gives
+the VMA pointing to the returned VMA. It is not often used, with
+<TT>sys_mprotect()</TT> being the notable exception, as it is usually
+<TT>find_vma_prepare()</TT> that is required</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex421"></A><TT>struct vm_area_struct * find_vma_prepare(struct mm_struct * mm, unsigned long
+addr, struct vm_area_struct ** pprev, rb_node_t *** rb_link, rb_node_t **
+rb_parent)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Same as <TT>find_vma()</TT> except that it will also the
+preceeding VMA in the linked list as well as the red-black tree nodes needed
+to perform an insertion into the tree</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex422"></A><TT>struct vm_area_struct * find_vma_intersection(struct mm_struct * mm, unsigned long
+start_addr, unsigned long end_addr)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Returns the VMA which intersects a given address range. Useful
+when checking if a linear address region is in use by any VMA</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex423"></A><TT>int vma_merge(struct mm_struct * mm, struct vm_area_struct *
+prev, rb_node_t * rb_parent, unsigned long addr, unsigned long end, unsigned
+long vm_flags)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Attempts to expand the supplied VMA to cover a new address range.
+If the VMA can not be expanded forwards, the next VMA is checked to see if
+it may be expanded backwards to cover the address range instead. Regions
+may be merged if there is no file/device mapping and the permissions match</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex424"></A><TT>unsigned long get_unmapped_area(struct file *file, unsigned
+long addr, unsigned long len, unsigned long pgoff, unsigned long flags)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Returns the address of a free region of memory large enough to
+cover the requested size of memory. Used principally when a new VMA is to
+be created</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex425"></A><TT>void insert_vm_struct(struct mm_struct *, struct vm_area_struct *)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Inserts a new VMA into a linear address space</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 4.3: Memory Region VMA API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Memory Region VMA API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H3 CLASS="subsection">4.4.5  Finding a Free Memory Region</H3><P>When a new area is to be memory mapped, a free region has to be found that
+is large enough to contain the new mapping. The function responsible for
+finding a free area is <TT>get_unmapped_area()</TT><A NAME="@mainindex426"></A>.</P><P>As the call graph in Figure <A HREF="#fig: get_unmapped_area">4.5</A> indicates, there is
+little work involved with finding an unmapped area. The function is passed a
+number of parameters. A <TT>struct file</TT> is passed representing the
+file or device to be mapped as well as <TT>pgoff</TT> which is the offset
+within the file that is been mapped. The requested <TT>address</TT> for
+the mapping is passed as well as its <TT>length</TT>. The last parameter
+is the protection <TT>flags</TT> for the area.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html013.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.5: Call Graph: <TT>get_unmapped_area()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: get_unmapped_area"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>If a device is being mapped, such as a video card, the associated</P><P><TT>f_op</TT>&#X2192;<TT>get_unmapped_area()</TT> is used. This is
+because devices or files may have additional requirements for mapping that
+generic code can not be aware of, such as the address having to be aligned
+to a particular virtual address.</P><P>If there are no special requirements, the architecture specific function</P><P><TT>arch_get_unmapped_area()</TT><A NAME="@mainindex427"></A> is called. Not all
+architectures provide their own function. For those that don't, there is a
+generic version provided in <TT>mm/mmap.c</TT>.</P><H3 CLASS="subsection">4.4.6  Inserting a memory region</H3><P>
+<A NAME="@mainindex428"></A><A NAME="@mainindex429"></A></P><P>The principal function for inserting a new memory region is
+<TT>insert_vm_struct()</TT><A NAME="@mainindex430"></A> whose call graph can be seen in Figure
+<A HREF="#fig: insert_vm_struct">4.6</A>. It is a very simple function which first calls <TT>find_vma_prepare()</TT><A NAME="@mainindex431"></A>
+to find the appropriate VMAs the new region is
+to be inserted between and the correct nodes within the red-black tree. It then
+calls <TT>__vma_link()</TT><A NAME="@mainindex432"></A> to do the work of linking in the new VMA.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html014.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.6: Call Graph: <TT>insert_vm_struct()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: insert_vm_struct"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The function <TT>insert_vm_struct()</TT> is rarely used as it does not
+increase the <TT>map_count</TT> field. Instead, the function commonly
+used is <TT>__insert_vm_struct()</TT> which performs the same tasks
+except that it increments <TT>map_count</TT>.</P><P>Two varieties of linking functions are provided, <TT>vma_link()</TT><A NAME="@mainindex433"></A>
+and <TT>__vma_link()</TT>. <TT>vma_link()</TT> is intended for use when
+no locks are held. It will acquire all the necessary locks, including locking
+the file if the VMA is a file mapping before calling <TT>__vma_link()</TT>
+which places the VMA in the relevant lists.</P><P>It is important to note that many functions do not use the
+<TT>insert_vm_struct()</TT> functions but instead prefer to
+call <TT>find_vma_prepare()</TT> themselves followed by a later
+<TT>vma_link()</TT> to avoid having to traverse the tree multiple times.</P><P>The linking in <TT>__vma_link()</TT> consists of three stages which are
+contained in three separate functions. <TT>__vma_link_list()</TT> inserts
+the VMA into the linear, singly linked list. If it is the first mapping in
+the address space (i.e. prev is NULL), it will become the red-black tree
+root node. The second stage is linking the node into the red-black tree
+with <TT>__vma_link_rb()</TT>. The final stage is fixing up the file
+share mapping with <TT>__vma_link_file()</TT> which basically inserts
+the VMA into the linked list of VMAs via the <TT>vm_pprev_share</TT>
+and <TT>vm_next_share</TT> fields.</P><H3 CLASS="subsection">4.4.7  Merging contiguous regions</H3><P>
+<A NAME="@mainindex434"></A>Merging VMAs</P><P>Linux used to have a function called
+<TT>merge_segments()</TT><A NAME="@mainindex435"></A> [<A HREF="understand031.html#kernel-2-2"><CITE>Hac02</CITE></A>] which was responsible for
+merging adjacent regions of memory together if the file and permissions
+matched. The objective was to remove the number of VMAs required, especially
+as many operations resulted in a number of mappings been created such as
+calls to <TT>sys_mprotect()</TT><A NAME="@mainindex436"></A>. This was an expensive operation as it
+could result in large portions of the mappings been traversed and was later
+removed as applications, especially those with many mappings, spent a long
+time in <TT>merge_segments()</TT>.</P><P>The equivalent function which exists now is called <TT>vma_merge()</TT><A NAME="@mainindex437"></A>
+and it is only used in two places. The first is user is <TT>sys_mmap()</TT>
+which calls it if an anonymous region is being mapped, as anonymous regions
+are frequently mergable. The second time is during <TT>do_brk()</TT> which is
+expanding one region into a newly allocated one where the two regions should
+be merged. Rather than merging two regions, the function <TT>vma_merge()</TT>
+checks if an existing region may be expanded to satisfy the new allocation
+negating the need to create a new region. A region may be expanded if there are
+no file or device mappings and the permissions of the two areas are the same.</P><P>Regions are merged elsewhere, although no function is explicitly called to
+perform the merging. The first is during a call to <TT>sys_mprotect()</TT>
+during the fixup of areas where the two regions will be merged if the two
+sets of permissions are the same after the permissions in the affected region
+change. The second is during a call to <TT>move_vma()</TT><A NAME="@mainindex438"></A> when it is
+likely that similar regions will be located beside each other.</P><H3 CLASS="subsection">4.4.8  Remapping and moving a memory region</H3><P>
+<A NAME="@mainindex439"></A>Moving VMAsRemapping VMAs</P><P><TT>mremap()</TT> is a system call provided to grow or shrink an existing
+memory mapping. This is implemented by the function <TT>sys_mremap()</TT><A NAME="@mainindex440"></A>
+which may move a memory region if it is growing or it would overlap another
+region and <TT>MREMAP_FIXED</TT> is not specified in the flags. The
+call graph is illustrated in Figure <A HREF="#fig: sys_mremap">4.7</A>. </P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html015.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.7: Call Graph: <TT>sys_mremap()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: sys_mremap"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>If a region is to be moved, <TT>do_mremap()</TT> first calls
+<TT>get_unmapped_area()</TT> to find a region large enough to contain the
+new resized mapping and then calls <TT>move_vma()</TT><A NAME="@mainindex441"></A> to move the old
+VMA to the new location. See Figure <A HREF="#fig: move_vma">4.8</A> for the call graph
+to <TT>move_vma()</TT>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html016.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.8: Call Graph: <TT>move_vma()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: move_vma"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>First <TT>move_vma()</TT> checks if the new location may be merged with the
+VMAs adjacent to the new location. If they can not be merged, a new VMA is
+allocated literally one PTE at a time. Next <TT>move_page_tables()</TT><A NAME="@mainindex442"></A>
+is called(see Figure <A HREF="#fig: move_page_tables">4.9</A> for its call graph) which
+copies all the page table entries from the old mapping to the new one. While
+there may be better ways to move the page tables, this method makes error
+recovery trivial as backtracking is relatively straight forward.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html017.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.9: Call Graph: <TT>move_page_tables()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: move_page_tables"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The contents of the pages are not copied. Instead, <TT>zap_page_range()</TT>
+is called to swap out or remove all the pages from the old mapping and the
+normal page fault handling code will swap the pages back in from backing
+storage or from files or will call the device specific <TT>do_nopage()</TT>
+function.</P><H3 CLASS="subsection">4.4.9  Locking a Memory Region</H3><P>
+<A NAME="@mainindex443"></A><A NAME="@mainindex444"></A></P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html018.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.10: Call Graph: <TT>sys_mlock()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: sys_mlock"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Linux can lock pages from an address range into memory via the system call
+<TT>mlock()</TT><A NAME="@mainindex445"></A> which is implemented by <TT>sys_mlock()</TT> whose call
+graph is shown in Figure <A HREF="#fig: sys_mlock">4.10</A>. At a high level, the function
+is simple; it creates a VMA for the address range to be locked, sets the
+<TT>VM_LOCKED</TT> flag on it and forces all the pages to be present with
+<TT>make_pages_present()</TT>. A second system call <TT>mlockall()</TT><A NAME="@mainindex446"></A>
+which maps to <TT>sys_mlockall()</TT> is also provided which is a simple
+extension to do the same work as <TT>sys_mlock()</TT> except for every
+VMA on the calling process. Both functions rely on the core function
+<TT>do_mlock()</TT> to perform the real work of finding the affected VMAs
+and deciding what function is needed to fix up the regions as described later.</P><P>There are some limitations to what memory may be locked. The address range
+must be page aligned as VMAs are page aligned. This is addressed by simply
+rounding the range up to the nearest page aligned range. The second proviso
+is that the process limit <TT>RLIMIT_MLOCK</TT> imposed by the system
+administrator may not be exceeded. The last proviso is that each process may
+only lock half of physical memory at a time. This is a bit non-functional as
+there is nothing to stop a process forking a number of times and each child
+locking a portion but as only root processes are allowed to lock pages, it does
+not make much difference. It is safe to presume that a root process is trusted
+and knows what it is doing. If it does not, the system administrator with the
+resulting broken system probably deserves it and gets to keep both parts of it.</P><H3 CLASS="subsection">4.4.10  Unlocking the region</H3><P>
+<A NAME="@mainindex447"></A>Unlocking VMAs</P><P>The system calls <TT>munlock()</TT> and <TT>munlockall()</TT> provide the
+corollary for the locking functions and map to <TT>sys_munlock()</TT><A NAME="@mainindex448"></A>
+and <TT>sys_munlockall()</TT><A NAME="@mainindex449"></A> respectively. The functions are much simpler
+than the locking functions as they do not have to make numerous checks. They
+both rely on the same <TT>do_mmap()</TT> function to fix up the regions.</P><H3 CLASS="subsection">4.4.11  Fixing up regions after locking</H3><P>When locking or unlocking, VMAs will be affected in one of four ways, each of
+which must be fixed up by <TT>mlock_fixup()</TT><A NAME="@mainindex450"></A>. The locking may affect
+the whole VMA in which case <TT>mlock_fixup_all()</TT><A NAME="@mainindex451"></A> is called. The
+second condition, handled by <TT>mlock_fixup_start()</TT><A NAME="@mainindex452"></A>, is where the
+start of the region is locked, requiring that a new VMA be allocated to map the
+new area. The third condition, handled by <TT>mlock_fixup_end()</TT><A NAME="@mainindex453"></A>,
+is predictably enough where the end of the region is locked. Finally,
+<TT>mlock_fixup_middle()</TT><A NAME="@mainindex454"></A> handles the case where the middle of a
+region is mapped requiring two new VMAs to be allocated.</P><P>It is interesting to note that VMAs created as a result of locking are
+never merged, even when unlocked. It is presumed that processes which lock
+regions will need to lock the same regions over and over again and it is
+not worth the processor power to constantly merge and split regions.</P><H3 CLASS="subsection">4.4.12  Deleting a memory region</H3><P>The function responsible for deleting memory regions, or parts thereof,
+is <TT>do_munmap()</TT><A NAME="@mainindex455"></A>. It is a relatively simple
+operation in comparison to the other memory region related operations and is
+basically divided up into three parts. The first is to fix up the red-black
+tree for the region that is about to be unmapped. The second is to release
+the pages and PTEs related to the region to be unmapped and the third is to
+fix up the regions if a hole has been generated.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html019.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.11: Call Graph: <TT>do_munmap()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: do_munmap"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>To ensure the red-black tree is ordered correctly, all VMAs to be affected by
+the unmap are placed on a linked list called <TT>free</TT> and then deleted
+from the red-black tree with <TT>rb_erase()</TT>. The regions if they still
+exist will be added with their new addresses later during the fixup.</P><P>Next the linked list VMAs on <TT>free</TT> is walked through and checked
+to ensure it is not a partial unmapping. Even if a region is just to be
+partially unmapped, <TT>remove_shared_vm_struct()</TT> is still called
+to remove the shared file mapping. Again, if this is a partial unmapping,
+it will be recreated during fixup. <TT>zap_page_range()</TT> is called to
+remove all the pages associated with the region about to be unmapped before
+<TT>unmap_fixup()</TT><A NAME="@mainindex456"></A> is called to handle partial unmappings.</P><P>Lastly <TT>free_pgtables()</TT><A NAME="@mainindex457"></A> is called to try and free up all the
+page table entries associated with the unmapped region. It is important
+to note that the page table entry freeing is not exhaustive. It will only
+unmap full PGD directories and their entries so for example, if only half a
+PGD was used for the mapping, no page table entries will be freed. This is
+because a finer grained freeing of page table entries would be too expensive
+to free up data structures that are both small and likely to be used again.</P><H3 CLASS="subsection">4.4.13  Deleting all memory regions</H3><P>
+<A NAME="@mainindex458"></A><A NAME="@mainindex459"></A></P><P>During process exit, it is necessary to unmap all VMAs associated with a
+<TT>mm_struct</TT>. The function responsible is <TT>exit_mmap()</TT>. It
+is a very simply function which flushes the CPU cache before walking through
+the linked list of VMAs, unmapping each of them in turn and freeing up
+the associated pages before flushing the TLB and deleting the page table
+entries. It is covered in detail in the Code Commentary.</P><H2 CLASS="section"><A NAME="toc32"></A><A NAME="htoc30">4.5</A>  Exception Handling</H2><P>
+<A NAME="sec: Exception Handling"></A>
+<A NAME="@mainindex460"></A></P><P>A very important part of VM is how kernel address space exceptions that are
+not bugs are caught<SUP><A NAME="text12" HREF="#note12">1</A></SUP>. This section does <EM>not</EM>
+cover the exceptions that are raised with errors such as divide by zero,
+we are only concerned with the exception raised as the result of a page
+fault. There are two situations where a bad reference may occur. The first
+is where a process sends an invalid pointer to the kernel via a system call
+which the kernel must be able to safely trap as the only check made initially
+is that the address is below <TT>PAGE_OFFSET</TT>. The second is where
+the kernel uses <TT>copy_from_user()</TT> or <TT>copy_to_user()</TT>
+to read or write data from userspace.</P><P>At compile time, the linker creates an exception table in
+the <TT>__ex_table</TT><A NAME="@mainindex461"></A> section of the kernel code segment
+which starts at <TT>__start___ex_table</TT> and ends
+at <TT>__stop___ex_table</TT>. Each entry is of type
+<TT>exception_table_entry</TT><A NAME="@mainindex462"></A> which is a pair consisting of an execution
+point and a fixup routine. When an exception occurs that the page fault handler
+cannot manage, it calls <TT>search_exception_table()</TT><A NAME="@mainindex463"></A> to see if a
+fixup routine has been provided for an error at the faulting instruction. If
+module support is compiled, each modules exception table will also be searched.</P><P>If the address of the current exception is found in the table, the
+corresponding location of the fixup code is returned and executed. We will
+see in Section <A HREF="#sec: Copying To/From Userspace">4.7</A> how this is used to trap
+bad reads and writes to userspace.</P><H2 CLASS="section"><A NAME="toc33"></A><A NAME="htoc31">4.6</A>  Page Faulting</H2><P> 
+<A NAME="@mainindex464"></A></P><P>Pages in the process linear address space are not necessarily resident
+in memory. For example, allocations made on behalf of a process are
+not satisfied immediately as the space is just reserved within the
+<TT>vm_area_struct</TT>. Other examples of non-resident pages include the
+page having been swapped out to backing storage or writing a read-only page.</P><P>Linux, like most operating systems, has a <EM>Demand Fetch</EM><A NAME="@mainindex465"></A> policy as
+its fetch policy for dealing with pages that are not resident. This states
+that the page is only fetched from backing storage when the hardware raises
+a page fault exception which the operating system traps and allocates a
+page. The characteristics of backing storage imply that some sort of page
+prefetching policy would result in less page faults [<A HREF="understand031.html#maekawa87"><CITE>MM87</CITE></A>] but Linux
+is fairly primitive in this respect. When a page is paged in from swap space,
+a number of pages after it, up to 2<SUP><I>page</I>_<I>cluster</I></SUP> are read in by
+<TT>swapin_readahead()</TT><A NAME="@mainindex466"></A> and placed in the swap cache. Unfortunately
+there is only a chance that pages likely to be used soon will be adjacent in
+the swap area making it a poor prepaging policy. Linux would likely benefit
+from a prepaging policy that adapts to program behaviour [<A HREF="understand031.html#kapl02"><CITE>KMC02</CITE></A>].</P><P>There are two types of page fault, major and minor faults. Major page
+faults<A NAME="@mainindex467"></A> occur when data has to be read from disk which
+is an expensive operation, else the fault is referred to as a minor<A NAME="@mainindex468"></A>, or soft page fault. Linux maintains statistics on the number of
+these types of page faults with the <TT>task_struct</TT>&#X2192;<TT>maj_flt</TT>
+and <TT>task_struct</TT>&#X2192;<TT>min_flt</TT> fields respectively.</P><P>The page fault handler in Linux is expected to recognise and act on a number
+of different types of page faults listed in Table <A HREF="#tab: Reasons For Page Faulting">4.4</A>
+which will be discussed in detail later in this chapter.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left><B>Exception</B>	</TD><TD VALIGN=top ALIGN=left NOWRAP><B>Type</B>	</TD><TD VALIGN=top ALIGN=left><B>Action</B></TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+Region valid but page not allocated	</TD><TD VALIGN=top ALIGN=left NOWRAP>Minor</TD><TD VALIGN=top ALIGN=left>Allocate a page frame from the physical page allocator</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+Region not valid but is beside an expandable region like the stack</TD><TD VALIGN=top ALIGN=left NOWRAP>Minor</TD><TD VALIGN=top ALIGN=left>Expand <A NAME="@mainindex469"></A><A NAME="@mainindex470"></A> the region and allocate a page</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+Page swapped out but present in swap cache</TD><TD VALIGN=top ALIGN=left NOWRAP>Minor</TD><TD VALIGN=top ALIGN=left>Re-establish the page in the process page tables and drop a reference to the
+swap cache</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+Page swapped out to backing storage</TD><TD VALIGN=top ALIGN=left NOWRAP>Major</TD><TD VALIGN=top ALIGN=left>Find where the page with information stored in the PTE and read it from disk</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+Page write when marked read-only</TD><TD VALIGN=top ALIGN=left NOWRAP>Minor</TD><TD VALIGN=top ALIGN=left>If the page is a COW page, make a copy of it, mark it writable and assign it to
+the process. If it is in fact a bad write, send a <TT>SIGSEGV</TT> signal</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+Region is invalid or process has no permissions to access</TD><TD VALIGN=top ALIGN=left NOWRAP>Error</TD><TD VALIGN=top ALIGN=left>Send a <TT>SEGSEGV</TT> signal to the process</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+Fault occurred in the kernel portion address space</TD><TD VALIGN=top ALIGN=left NOWRAP>Minor</TD><TD VALIGN=top ALIGN=left>If the fault occurred in the <TT>vmalloc</TT> area of the address space, the
+current process page tables are updated against the master page table held by
+<TT>init_mm</TT>. This is the only valid kernel page fault that may occur</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+Fault occurred in the userspace region while in kernel mode</TD><TD VALIGN=top ALIGN=left NOWRAP>Error</TD><TD VALIGN=top ALIGN=left>If a fault occurs, it means a kernel system did not copy from userspace
+properly and caused a page fault. This is a kernel bug which is treated quite
+severely.</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 4.4: Reasons For Page Faulting</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Reasons For Page Faulting"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Each architecture registers an architecture-specific function for the
+handling of page faults. While the name of this function is arbitrary,
+a common choice is <TT>do_page_fault()</TT><A NAME="@mainindex471"></A> whose call graph for
+the x86 is shown in Figure <A HREF="#fig: do_page_fault">4.12</A>. 
+</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html020.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.12: Call Graph: <TT>do_page_fault()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: do_page_fault"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>This function is provided with a wealth of information such as the address
+of the fault, whether the page was simply not found or was a protection
+error, whether it was a read or write fault and whether it is a fault from
+user or kernel space. It is responsible for determining which type of fault
+has occurred and how it should be handled by the architecture-independent
+code. The flow chart, in Figure <A HREF="#fig: do_page_fault Flow Diagram">4.13</A>,
+shows broadly speaking what this function does. In the figure, identifiers
+with a colon after them corresponds to the label as shown in the code.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html021.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.13: <TT>do_page_fault()</TT> Flow
+Diagram</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: do_page_fault Flow Diagram"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P><TT>handle_mm_fault()</TT><A NAME="@mainindex472"></A> is the
+architecture independent top level function for faulting in a page from backing
+storage, performing COW and so on. If it returns 1, it was a minor fault,
+2 was a major fault, 0 sends a <TT>SIGBUS</TT> error and any other value
+invokes the out of memory handler.</P><H3 CLASS="subsection">4.6.1  Handling a Page Fault</H3><P>
+<A NAME="sec: Handling a Page Fault"></A></P><P>Once the exception handler has decided the fault is a valid page
+fault in a valid memory region, the architecture-independent function
+<TT>handle_mm_fault()</TT>, whose call graph is shown in Figure <A HREF="#fig: handle_mm_fault">4.14</A>,
+takes over. It allocates the required page table entries
+if they do not already exist and calls <TT>handle_pte_fault()</TT><A NAME="@mainindex473"></A>.</P><P>Based on the properties of the PTE, one of the handler functions shown
+in Figure <A HREF="#fig: handle_mm_fault">4.14</A> will be used. The first stage
+of the decision is to check if the PTE is marked not present or if it
+has been allocated with which is checked by <TT>pte_present()</TT> and
+<TT>pte_none()</TT>. If no PTE has been allocated (<TT>pte_none()</TT>
+returned true), <TT>do_no_page()</TT><A NAME="@mainindex474"></A> is called which handles
+<EM>Demand Allocation</EM><A NAME="@mainindex475"></A>. Otherwise it is a page that has been swapped
+out to disk and <TT>do_swap_page()</TT><A NAME="@mainindex476"></A> performs <EM>Demand
+Paging</EM><A NAME="@mainindex477"></A>. There is a rare exception where swapped out pages belonging to a
+virtual file are handled by <TT>do_no_page()</TT>. This particular case
+is covered in Section <A HREF="understand015.html#sec: Page Faulting within a Virtual File">12.4</A>. </P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html022.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.14: Call Graph: <TT>handle_mm_fault()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: handle_mm_fault"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The second option is if the page is being written to. If the PTE is write
+protected, then <TT>do_wp_page()</TT><A NAME="@mainindex478"></A> is called as the page is a
+<EM>Copy-On-Write (COW)</EM><A NAME="@mainindex479"></A> page. A COW page is one which is shared
+between multiple processes(usually a parent and child) until a write occurs
+after which a private copy is made for the writing process. A COW page is
+recognised because the VMA for the region is marked writable even though the
+individual PTE is not. If it is not a COW page, the page is simply marked
+dirty as it has been written to.</P><P>The last option is if the page has been read and is present but a fault still
+occurred. This can occur with some architectures that do not have a three level
+page table. In this case, the PTE is simply established and marked young.</P><H3 CLASS="subsection">4.6.2  Demand Allocation</H3><P>
+<A NAME="@mainindex480"></A></P><P>When a process accesses a page for the very first time, the page has to be
+allocated and possibly filled with data by the <TT>do_no_page()</TT><A NAME="@mainindex481"></A>
+function. If the <TT>vm_operations_struct</TT> associated with the parent
+VMA (<TT>vma</TT>&#X2192;<TT>vm_ops</TT>) provides a <TT>nopage()</TT> function,
+it is called. This is of importance to a memory mapped device such as a video
+card which needs to allocate the page and supply data on access or to a mapped
+file which must retrieve its data from backing storage. We will first discuss
+the case where the faulting page is anonymous as this is the simpliest case.</P><H5 CLASS="paragraph">Handling anonymous pages</H5><P>
+<A NAME="@mainindex482"></A></P><P>If <TT>vm_area_struct</TT>&#X2192;<TT>vm_ops</TT> field is not filled
+or a <TT>nopage()</TT> function is not supplied, the function
+<TT>do_anonymous_page()</TT><A NAME="@mainindex483"></A> is called to handle an anonymous
+access. There are only two cases to handle, first time read and first time
+write. As it is an anonymous page, the first read is an easy case as no
+data exists. In this case, the system-wide <TT>empty_zero_page</TT><A NAME="@mainindex484"></A>,
+which is just a page of zeros, is mapped for the PTE and the PTE is write
+protected. The write protection is set so that another page fault will occur
+if the process writes to the page. On the x86, the global zero-filled page
+is zerod out in the function <TT>mem_init()</TT>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html023.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.15: Call Graph: <TT>do_no_page()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: do_no_page"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>If this is the first write to the page <TT>alloc_page()</TT> is called to
+allocate a free page (see Chapter <A HREF="understand009.html#chap: Physical Page Allocation">6</A>) and is zero filled by <TT>clear_user_highpage()</TT><A NAME="@mainindex485"></A>.
+Assuming the page was
+successfully allocated, the <EM>Resident Set Size (RSS)</EM> field in the
+<TT>mm_struct</TT> will be incremented; <TT>flush_page_to_ram()</TT><A NAME="@mainindex486"></A>
+is called as required when a page has been inserted into a userspace process
+by some architectures to ensure cache coherency. The page is then inserted
+on the LRU lists so it may be reclaimed later by the page reclaiming code.
+Finally the page table entries for the process are updated for the new mapping.</P><H5 CLASS="paragraph">Handling file/device backed pages</H5><P>
+<A NAME="@mainindex487"></A></P><P>If backed by a file or device, a <TT>nopage()</TT> function will be provided
+within the VMAs <TT>vm_operations_struct</TT>. In the file-backed case,
+the function <TT>filemap_nopage()</TT><A NAME="@mainindex488"></A> is frequently the <TT>nopage()</TT>
+function for allocating a page and reading a page-sized amount of data
+from disk. Pages backed by a virtual file, such as those provided by
+<EM>shmfs</EM>, will use the function <TT>shmem_nopage()</TT> (See Chapter
+<A HREF="understand015.html#chap: Shared Memory Virtual Filesystem">12</A>). Each device driver provides
+a different <TT>nopage()</TT> whose internals are unimportant to us here as
+long as it returns a valid <TT>struct page</TT> to use.</P><P>On return of the page, a check is made to ensure a page was successfully
+allocated and appropriate errors returned if not. A check is then made to see
+if an early COW break should take place. An early COW break will take place
+if the fault is a write to the page and the <TT>VM_SHARED</TT> flag is
+not included in the managing VMA. An early break is a case of allocating a
+new page and copying the data across before reducing the reference count to
+the page returned by the <TT>nopage()</TT> function.</P><P>In either case, a check is then made with <TT>pte_none()</TT> to ensure there
+is not a PTE already in the page table that is about to be used. It is possible
+with SMP that two faults would occur for the same page at close to the same
+time and as the spinlocks are not held for the full duration of the fault,
+this check has to be made at the last instant. If there has been no race,
+the PTE is assigned, statistics updated and the architecture hooks for cache
+coherency called.</P><H3 CLASS="subsection">4.6.3  Demand Paging</H3><P>
+<A NAME="@mainindex489"></A></P><P>When a page is swapped out to backing storage, the function
+<TT>do_swap_page()</TT><A NAME="@mainindex490"></A> is responsible for reading the page back in,
+with the exception of virtual files which are covered in Section 
+<A HREF="understand015.html#chap: Shared Memory Virtual Filesystem">12</A>. The information needed to
+find it is stored within the PTE itself. The information within the PTE is
+enough to find the page in swap. As pages may be shared between multiple
+processes, they can not always be swapped out immediately. Instead, when a
+page is swapped out, it is placed within the swap cache.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html024.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.16: Call Graph: <TT>do_swap_page()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: do_swap_page"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>A shared page can not be swapped out immediately because there is no way
+of mapping a <TT>struct page</TT> to the PTEs of each process it is
+shared between. Searching the page tables of all processes is simply far
+too expensive. It is worth noting that the late 2.5.x kernels and 2.4.x
+with a custom patch have what is called <EM>Reverse Mapping (RMAP)</EM><A NAME="@mainindex491"></A>
+which is discussed at the end of the chapter.</P><P>With the swap cache existing, it is possible that when a fault occurs it
+still exists in the swap cache. If it is, the reference count to the page
+is simply increased and it is placed within the process page tables again
+and registers as a minor page fault.</P><P>If the page exists only on disk <TT>swapin_readahead()</TT><A NAME="@mainindex492"></A> is called
+which reads in the requested page and a number of pages after it. The number
+of pages read in is determined by the variable <TT>page_cluster</TT><A NAME="@mainindex493"></A>
+defined in <TT>mm/swap.c</TT>. On low memory machines with less than
+16MiB of RAM, it is initialised as 2 or 3 otherwise. The number of pages
+read in is 2<SUP><I>page</I>_<I>cluster</I></SUP> unless a bad or empty swap entry
+is encountered. This works on the premise that a seek is the most expensive
+operation in time so once the seek has completed, the succeeding pages should
+also be read in.</P><H3 CLASS="subsection">4.6.4  Copy On Write (COW) Pages</H3><P>
+<A NAME="@mainindex494"></A></P><P>Once upon time, the full parent address space was duplicated for a child
+when a process forked. This was an extremely expensive operation as it is
+possible a significant percentage of the process would have to be swapped
+in from backing storage. To avoid this considerable overhead, a technique
+called <EM>Copy-On-Write (COW)</EM> is employed.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html025.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 4.17: Call Graph: <TT>do_wp_page()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: do_wp_page"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>During fork, the PTEs of the two processes are made read-only so that when a
+write occurs there will be a page fault. Linux recognises a COW page because
+even though the PTE is write protected, the controlling VMA shows the region
+is writable. It uses the function <TT>do_wp_page()</TT><A NAME="@mainindex495"></A> to handle
+it by making a copy of the page and assigning it to the writing process.
+If necessary, a new swap slot will be reserved for the page. With this
+method, only the page table entries have to be copied during a fork.</P><H2 CLASS="section"><A NAME="toc34"></A><A NAME="htoc32">4.7</A>  Copying To/From Userspace</H2><P>
+<A NAME="sec: Copying To/From Userspace"></A>
+<A NAME="@mainindex496"></A>
+<A NAME="@mainindex497"></A>
+<A NAME="@mainindex498"></A></P><P>It is not safe to access memory in the process address space directly as
+there is no way to quickly check if the page addressed is resident or not.
+Linux relies on the MMU to raise exceptions when the address is invalid
+and have the Page Fault Exception handler<A NAME="@mainindex499"></A>
+catch the exception and fix it up. In the x86 case, assembler is provided
+by the <TT>__copy_user()</TT> to trap exceptions where the address is
+totally useless. The location of the fixup code is found when the function
+<TT>search_exception_table()</TT> is called. Linux provides an ample API
+(mainly macros) for copying data to and from the user address space safely
+as shown in Table <A HREF="#tab: Accessing Process Address Space API">4.5</A>.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex500"></A><TT>unsigned long copy_from_user(void *to, const void *from, unsigned long n)</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Copies n bytes from the user address(<TT>from</TT>) to the
+kernel address space(<TT>to</TT>)</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex501"></A><TT>unsigned long copy_to_user(void *to, const void *from, unsigned long n)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Copies n bytes from the kernel address(<TT>from</TT>) to
+the user address space(<TT>to</TT>)</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex502"></A><TT>void copy_user_page(void *to, void *from, unsigned long address)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This copies data to an anonymous or COW page in userspace. Ports
+are responsible for avoiding D-cache alises. It can do this by using a kernel
+virtual address that would use the same cache lines as the virtual address.</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex503"></A><TT>void clear_user_page(void *page, unsigned long address)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Similar to <TT>copy_user_page()</TT> except it is for zeroing a
+page</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex504"></A><TT>void get_user(void *to, void *from)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Copies an integer value from userspace (<TT>from</TT>) to kernel
+space (<TT>to</TT>)</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex505"></A><TT>void put_user(void *from, void *to)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Copies an integer value from kernel space (<TT>from</TT>) to
+userspace (<TT>to</TT>)</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex506"></A><TT>long strncpy_from_user(char *dst, const char *src, long count)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Copies a null terminated string of at most <TT>count</TT> bytes
+long from userspace (<TT>src</TT>) to kernel space (<TT>dst</TT>)</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex507"></A><TT>long strlen_user(const char *s, long n)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Returns the length, upper bound by <TT>n</TT>, of the userspace
+string including the terminating NULL</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex508"></A><TT>int access_ok(int type, unsigned long addr, unsigned long size)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> Returns non-zero if the userspace block of memory is valid and
+zero otherwise</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 4.5: Accessing Process Address Space API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Accessing Process Address Space API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>All the macros map on to assembler functions which all follow similar
+patterns of implementation so for illustration purposes, we'll just trace
+how <TT>copy_from_user()</TT> is implemented on the x86.</P><P>If the size of the copy is known at compile time,
+<TT>copy_from_user()</TT> calls <TT>__constant_copy_from_user()</TT>
+else <TT>__generic_copy_from_user()</TT> is used. If the size is
+known, there are different assembler optimisations to copy data in 1, 2 or
+4 byte strides otherwise the distinction between the two copy functions is
+not important.</P><P>The generic copy function eventually calls the function
+<TT>__copy_user_zeroing()</TT> in &lt;<TT>asm-i386/uaccess.h</TT>&gt;
+which has three important parts. The first part is the assembler for the
+actual copying of <TT>size</TT> number of bytes from userspace. If any
+page is not resident, a page fault will occur and if the address is valid,
+it will get swapped in as normal. The second part is &#X201C;fixup&#X201D; code and the
+third part is the <TT>__ex_table</TT> mapping the instructions from the
+first part to the fixup code in the second part.</P><P>These pairings, as described in Section <A HREF="#sec: Exception Handling">4.5</A>,
+copy the location of the copy instructions and the location of the fixup
+code the kernel exception handle table by the linker. If an invalid address
+is read, the function <TT>do_page_fault()</TT> will fall through, call
+<TT>search_exception_table()</TT> and find the EIP where the faulty read
+took place and jump to the fixup code which copies zeros into the remaining
+kernel space, fixes up registers and returns. In this manner, the kernel can
+safely access userspace with no expensive checks and letting the MMU hardware
+handle the exceptions.</P><P>All the other functions that access userspace follow a similar pattern.</P><H2 CLASS="section"><A NAME="toc35"></A><A NAME="htoc33">4.8</A>  What's New in 2.6</H2><P>
+<A NAME="new: Process Address Space"></A></P><H5 CLASS="paragraph">Linear Address Space</H5><P> The linear address space remains essentially
+the same as 2.4 with no modifications that cannot be easily recognised. The
+main change is the addition of a new page usable from userspace that has
+been entered into the fixed address virtual mappings. On the x86, this page
+is located at <TT>0xFFFFF000</TT> and called the <EM>vsyscall
+page</EM><A NAME="@mainindex509"></A>. Code is located at this page which provides the optimal method for
+entering kernel-space from userspace. A userspace program now should use
+<TT>call 0xFFFFF000</TT> instead of the traditional <TT>int 0x80</TT>
+when entering kernel space.</P><H5 CLASS="paragraph"><TT>struct mm_struct</TT></H5><P> This struct has
+not changed significantly. The first change is the addition
+of a <TT>free_area_cache</TT> field which is initialised as
+<TT>TASK_UNMAPPED_BASE</TT>. This field is used to remember where the
+first hole is in the linear address space to improve search times. A small
+number of fields have been added at the end of the struct which are related
+to core dumping and beyond the scope of this book.</P><H5 CLASS="paragraph"><TT>struct vm_area_struct</TT></H5><P> This struct also
+has not changed significantly. The main differences is that the
+<TT>vm_next_share</TT> and <TT>vm_pprev_share</TT> has
+been replaced with a proper linked list with a new field called simply
+<TT>shared</TT>. The <TT>vm_raend</TT> has been removed altogether
+as file readahead is implemented very differently in 2.6. Readahead is
+mainly managed by a <TT>struct file_ra_state</TT> struct stored in
+<TT>struct file</TT>&#X2192;<TT>f_ra</TT>. How readahead is implemented
+is described in a lot of detail in <TT>mm/readahead.c</TT>.</P><H5 CLASS="paragraph"><TT>struct address_space</TT></H5><P> The first change is relatively
+minor. The <TT>gfp_mask</TT> field has been replaced with a <TT>flags</TT>
+field where the first <TT>__GFP_BITS_SHIFT</TT> bits are used as the
+<TT>gfp_mask</TT> and accessed with <TT>mapping_gfp_mask()</TT><A NAME="@mainindex510"></A>. The
+remaining bits are used to store the status of asynchronous IO. The two
+flags that may be set are <TT>AS_EIO</TT><A NAME="@mainindex511"></A> to indicate an IO error
+and <TT>AS_ENOSPC</TT><A NAME="@mainindex512"></A> to indicate the filesystem ran out of space
+during an asynchronous write.</P><P>This struct has a number of significant additions, mainly related to the page
+cache and file readahead. As the fields are quite unique, we'll introduce
+them in detail:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>page_tree</B> This is a radix tree of all pages in the page cache for this
+mapping indexed by the block the data is located on the physical disk. In 2.4,
+searching the page cache involved traversing a linked list, in 2.6, it is a
+radix tree lookup which considerably reduces search times. The radix tree is
+implemented in <TT>lib/radix-tree.c</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>page_lock</B> Spinlock protecting <TT>page_tree</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>io_pages</B> When dirty pages are to be written out, they are added to
+this list before <TT>do_writepages()</TT> is called. As explained in the
+comment above <TT>mpage_writepages()</TT> in <TT>fs/mpage.c</TT>, pages
+to be written out are placed on this list to avoid deadlocking by locking
+already locked by IO;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>dirtied_when</B> This field records, in jiffies, the first time an inode
+was dirtied. This field determines where the inode is located on the
+<TT>super_block</TT>&#X2192;<TT>s_dirty</TT> list. This prevents a frequently
+dirtied inode remaining at the top of the list and starving writeout on other
+inodes;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>backing_dev_info</B> This field records readahead related information. The
+struct is declared in <TT>include/linux/backing-dev.h</TT> with comments
+explaining the fields;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>private_list</B> This is a private list available
+to the <TT>address_space</TT>. If the helper functions
+<TT>mark_buffer_dirty_inode()</TT> and <TT>sync_mapping_buffers()</TT>
+are used, this list links <TT>buffer_head</TT>s via the
+<TT>buffer_head</TT>&#X2192;<TT>b_assoc_buffers</TT> field;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>private_lock</B> This spinlock is available for the
+<TT>address_space</TT>. The use of this lock is very convoluted
+but some of the uses are explained in the long ChangeLog for 2.5.17
+(<EM>http://lwn.net/2002/0523/a/2.5.17.php3</EM>). but it is mainly related to
+protecting lists in other mappings which share buffers in this mapping. The
+lock would not protect this <TT>private_list</TT>, but it would protect
+the <TT>private_list</TT> of another <TT>address_space</TT> sharing
+buffers with this mapping;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>assoc_mapping</B> This is the <TT>address_space</TT> which backs
+buffers contained in this mappings <TT>private_list</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>truncate_count</B> is incremented when a region is being truncated by
+the function <TT>invalidate_mmap_range()</TT>. The counter is examined
+during page fault by <TT>do_no_page()</TT> to ensure that a page is not
+faulted in that was just invalidated.</DD></DL><H5 CLASS="paragraph"><TT>struct address_space_operations</TT></H5><P> Most of the changes
+to this struct initially look quite simple but are actually quite involved. The
+changed fields are:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>writepage</B> The <TT>writepage()</TT> callback has been changed to take an
+additional parameter <TT>struct writeback_control</TT>. This struct is
+responsible for recording information about the writeback such as if it is
+congested or not, if the writer is the page allocator for direct reclaim or
+<B>kupdated</B> and contains a handle to the backing
+<TT>backing_dev_info</TT> to control readahead;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>writepages</B> Moves all pages from <TT>dirty_pages</TT> to
+<TT>io_pages</TT> before writing them all out;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>set_page_dirty</B> is an <TT>address_space</TT> specific
+method of dirtying a page. This is mainly used by the backing storage
+<TT>address_space_operations</TT> and for anonymous shared pages where
+there are no buffers associated with the page to be dirtied;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>readpages</B> Used when reading in pages so that readahead can be accurately
+controlled;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>bmap</B> This has been changed to deal with disk sectors rather than
+unsigned longs for devices larger than 2<SUP>32</SUP> bytes.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>invalidatepage</B> This is a renaming change. <TT>block_flushpage()</TT>
+and the callback <TT>flushpage()</TT> has been renamed to
+<TT>block_invalidatepage()</TT> and <TT>invalidatepage()</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>direct_IO</B> This has been changed to use the new IO mechanisms in 2.6.
+The new mechanisms are beyond the scope of this book;</DD></DL><H5 CLASS="paragraph">Memory Regions</H5><P> The operation of <TT>mmap()</TT> has two important
+changes. The first is that it is possible for security modules to register
+a callback. This callback is called <TT>security_file_mmap()</TT> which
+looks up a <TT>security_ops</TT> struct for the relevant function. By
+default, this will be a NULL operation.</P><P>The second is that there is much stricter address space accounting code
+in place. <TT>vm_area_struct</TT>s which are to be accounted will
+have the <TT>VM_ACCOUNT</TT><A NAME="@mainindex513"></A> flag set, which will be all userspace
+mappings. When userspace regions are created or destroyed, the functions
+<TT>vm_acct_memory()</TT> and <TT>vm_unacct_memory()</TT> update the
+variable <TT>vm_committed_space</TT>. This gives the kernel a much better
+view of how much memory has been committed to userspace.</P><H5 CLASS="paragraph">4GiB/4GiB User/Kernel Split</H5><P> One limitation that exists
+for the 2.4.x kernels is that the kernel has only 1GiB of virtual
+address space available which is visible to all processes. At time
+of writing, a patch has been developed by Ingo Molnar<SUP><A NAME="text13" HREF="#note13">2</A></SUP> which allows the kernel to optionally have
+it's own full 4GiB address space. The patches are available from
+<EM>http://redhat.com/ mingo/4g-patches/</EM> and are included in the -mm
+test trees but it is unclear if it will be merged into the mainstream or not.</P><P>This feature is intended for 32 bit systems that have very large amounts
+(&gt; 16GiB) of RAM. The traditional 3/1 split adequately supports up to
+1GiB of RAM. After that, high-memory support allows larger amounts to be
+supported by temporarily mapping high-memory pages but with more RAM, this
+forms a significant bottleneck. For example, as the amount of physical RAM
+approached the 60GiB range, almost the entire of low memory is consumed
+by <TT>mem_map</TT>. By giving the kernel it's own 4GiB virtual address
+space, it is much easier to support the memory but the serious penalty is
+that there is a per-syscall TLB flush which heavily impacts performance.</P><P>With the patch, there is only a small 16MiB region of memory shared
+between userspace and kernelspace which is used to store the GDT, IDT,
+TSS, LDT, vsyscall page and the kernel stack. The code for doing the actual
+switch between the pagetables is then contained in the trampoline code for
+entering/existing kernelspace. There are a few changes made to the core core
+such as the removal of direct pointers for accessing userspace buffers but,
+by and large, the core kernel is unaffected by this patch.</P><H5 CLASS="paragraph">Non-Linear VMA Population</H5><P>In 2.4, a VMA backed by a file is populated in a linear fashion. This
+can be optionally changed in 2.6 with the introduction of the
+<TT>MAP_POPULATE</TT><A NAME="@mainindex514"></A> flag to <TT>mmap()</TT> and the
+new system call <TT>remap_file_pages()</TT><A NAME="@mainindex515"></A>, implemented by
+<TT>sys_remap_file_pages()</TT>. This system call allows arbitrary pages
+in an existing VMA to be remapped to an arbitrary location on the backing
+file by manipulating the page tables.</P><P>On page-out, the non-linear address for the file is encoded within the
+PTE so that it can be installed again correctly on page fault. How it
+is encoded is architecture specific so two macros are defined called
+<TT>pgoff_to_pte()</TT> and <TT>pte_to_pgoff()</TT> for the task.</P><P>This feature is largely of benefit to applications with a large number
+of mappings such as database servers and virtualising applications such
+as emulators. It was introduced for a number of reasons. First, VMAs are
+per-process and can have considerable space requirements, especially
+for applications with a large number of mappings. Second, the search
+<TT>get_unmapped_area()</TT> uses for finding a free area in the virtual
+address space is a linear search which is very expensive for large numbers
+of mappings. Third, non-linear mappings will prefault most of the pages
+into memory where as normal mappings may cause a major fault for each page
+although can be avoided by using the new flag <TT>MAP_POPULATE</TT>
+flag with <TT>mmap()</TT> or my using <TT>mlock()</TT>. The last reason is
+to avoid sparse mappings which, at worst case, would require one VMA for
+every file page mapped.</P><P>However, this feature is not without some serious drawbacks. The first
+is that the system calls <TT>truncate()</TT> and <TT>mincore()</TT> are
+broken with respect to non-linear mappings. Both system calls depend depend
+on <TT>vm_area_struct</TT>&#X2192;<TT>vm_pgoff</TT> which is meaningless for
+non-linear mappings. If a file mapped by a non-linear mapping is truncated,
+the pages that exists within the VMA will still remain. It has been proposed
+that the proper solution is to leave the pages in memory but make them
+anonymous but at the time of writing, no solution has been implemented.</P><P>The second major drawback is TLB invalidations. Each remapped page
+will require that the MMU be told the remapping took place with
+<TT>flush_icache_page()</TT> but the more important penalty is with the
+call to <TT>flush_tlb_page()</TT>. Some processors are able to invalidate
+just the TLB entries related to the page but other processors implement this
+by flushing the entire TLB. If re-mappings are frequent, the performance will
+degrade due to increased TLB misses and the overhead of constantly entering
+kernel space. In some ways, these penalties are the worst as the impact is
+heavily processor dependant.</P><P>It is currently unclear what the future of this feature, if it remains,
+will be. At the time of writing, there is still on-going arguments on how
+the issues with the feature will be fixed but it is likely that non-linear
+mappings are going to be treated very differently to normal mappings with
+respect to pageout, truncation and the reverse mapping of pages. As the main
+user of this feature is likely to be databases, this special treatment is
+not likely to be a problem.</P><H5 CLASS="paragraph">Page Faulting</H5><P> The changes to the page faulting routines are
+more cosmetic than anything else other than the necessary changes to support
+reverse mapping and PTEs in high memory. The main cosmetic change is that the
+page faulting routines return self explanatory compile time definitions rather
+than magic numbers. The possible return values for <TT>handle_mm_fault()</TT>
+are <TT>VM_FAULT_MINOR</TT>, <TT>VM_FAULT_MAJOR</TT>,
+<TT>VM_FAULT_SIGBUS</TT> and <TT>VM_FAULT_OOM</TT>.
+
+	</P><HR CLASS="footnoterule"><DL CLASS="thefootnotes"><DT CLASS="dt-thefootnotes">
+<A NAME="note12" HREF="#text12">1</A></DT><DD CLASS="dd-thefootnotes">Many thanks go to Ingo Oeser for clearing
+up the details of how this is implemented.
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note13" HREF="#text13">2</A></DT><DD CLASS="dd-thefootnotes">See
+<EM>http://lwn.net/Articles/39283/</EM> for the first announcement
+of the patch.
+</DD></DL>
+<HR>
+[ <A HREF="understand006.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand008.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

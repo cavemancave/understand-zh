@@ -1,0 +1,1571 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Slab Allocator</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand024.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand026.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc308">Appendix H</A>  Slab Allocator</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc118"></A><A NAME="htoc309">H.1</A>  Cache Manipulation</H2><P>
+<A NAME="c_sec: Cache Creation"></A></P><H3 CLASS="subsection"><A NAME="htoc310">H.1.1</A>  Cache Creation</H3><H4 CLASS="subsubsection"><A NAME="htoc311">H.1.1.1</A>  Function: kmem_cache_create</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_create"></A> <A NAME="@codeindex220"></A></P><P>The call graph for this function is shown in <A HREF="understand011.html#fig: kmem_cache_create">8.3</A>. This
+function is responsible for the creation of a new cache and will be dealt
+with in chunks due to its size. The chunks roughly are;</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+Perform basic sanity checks for bad usage
+</LI><LI CLASS="li-itemize">Perform debugging checks if <TT>CONFIG_SLAB_DEBUG</TT> is set
+</LI><LI CLASS="li-itemize">Allocate a <TT>kmem_cache_t</TT> from the <TT>cache_cache</TT> 
+slab cache
+</LI><LI CLASS="li-itemize">Align the object size to the word size
+</LI><LI CLASS="li-itemize">Calculate how many objects will fit on a slab
+</LI><LI CLASS="li-itemize">Align the slab size to the hardware cache
+</LI><LI CLASS="li-itemize">Calculate colour offsets
+</LI><LI CLASS="li-itemize">Initialise remaining fields in cache descriptor
+</LI><LI CLASS="li-itemize">Add the new cache to the cache chain
+</LI></UL><PRE CLASS="verbatim">621 kmem_cache_t *
+622 kmem_cache_create (const char *name, size_t size, 
+623     size_t offset, unsigned long flags, 
+        void (*ctor)(void*, kmem_cache_t *, unsigned long),
+624     void (*dtor)(void*, kmem_cache_t *, unsigned long))
+625 {
+626     const char *func_nm = KERN_ERR "kmem_create: ";
+627     size_t left_over, align, slab_size;
+628     kmem_cache_t *cachep = NULL;
+629 
+633     if ((!name) ||
+634         ((strlen(name) &gt;= CACHE_NAMELEN - 1)) ||
+635         in_interrupt() ||
+636         (size &lt; BYTES_PER_WORD) ||
+637         (size &gt; (1&lt;&lt;MAX_OBJ_ORDER)*PAGE_SIZE) ||
+638         (dtor &amp;&amp; !ctor) ||
+639         (offset &lt; 0 || offset &gt; size))
+640             BUG();
+641 
+</PRE><P>Perform basic sanity checks for bad usage</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>622</B>The parameters of the function are
+<DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>name</B> 	The human readable name of the cache
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>size</B> 	The size of an object
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>offset</B>	This is used to specify a specific alignment for objects in the
+cache but it usually left as 0
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B>	Static cache flags
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>ctor</B>	A constructor function to call for each object during slab
+creation
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>dtor</B>	The corresponding destructor function. It is expected the
+destructor function leaves an object in an initialised state</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>633-640</B>	These are all serious usage bugs that prevent the cache even
+attempting to create</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>634</B>If the human readable name is greater than the maximum size for
+a cache name (<TT>CACHE_NAMELEN</TT>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>635</B>An interrupt handler cannot create a cache as access to
+interrupt-safe spinlocks and semaphores are needed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>636</B>The object size must be at least a word in size. The slab allocator
+is not suitable for objects whose size is measured in individual bytes</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>637</B>The largest possible slab that can be created is
+2<SUP><I>MAX</I>_<I>OBJ</I>_<I>ORDER</I></SUP> number of pages which provides 32 pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>638</B>A destructor cannot be used if no constructor is available</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>639</B>The offset cannot be before the slab or beyond the boundary of the
+first page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>640</B>Call <TT>BUG()</TT> to exit
+</DD></DL><PRE CLASS="verbatim">642 #if DEBUG
+643     if ((flags &amp; SLAB_DEBUG_INITIAL) &amp;&amp; !ctor) {
+645         printk("%sNo con, but init state check 
+                requested - %s\n", func_nm, name);
+646         flags &amp;= ~SLAB_DEBUG_INITIAL;
+647     }
+648 
+649     if ((flags &amp; SLAB_POISON) &amp;&amp; ctor) {
+651         printk("%sPoisoning requested, but con given - %s\n",
+                                                  func_nm, name);
+652         flags &amp;= ~SLAB_POISON;
+653     }
+654 #if FORCED_DEBUG
+655     if ((size &lt; (PAGE_SIZE&gt;&gt;3)) &amp;&amp; 
+        !(flags &amp; SLAB_MUST_HWCACHE_ALIGN))
+660         flags |= SLAB_RED_ZONE;
+661     if (!ctor)
+662         flags |= SLAB_POISON;
+663 #endif
+664 #endif
+670     BUG_ON(flags &amp; ~CREATE_MASK);
+</PRE><P>This block performs debugging checks if <TT>CONFIG_SLAB_DEBUG</TT> is set</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>643-646</B>The flag <TT>SLAB_DEBUG_INITIAL</TT> requests that
+the constructor check the objects to make sure they are in an initialised
+state. For this, a constructor must exist. If it does not, the flag
+is cleared</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>649-653</B>A slab can be poisoned with a known pattern to make sure
+an object wasn't used before it was allocated but a constructor would ruin
+this pattern falsely reporting a bug. If a constructor exists, remove the
+<TT>SLAB_POISON</TT> flag if set</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>655-660</B>Only small objects will be red zoned for debugging. Red zoning
+large objects would cause severe fragmentation</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>661-662</B>If there is no constructor, set the poison bit</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>670</B>The <TT>CREATE_MASK</TT> is set with all the allowable
+flags <TT>kmem_cache_create()</TT> (See Section <A HREF="#func: kmem_cache_create">H.1.1.1</A>) can
+be called with. This prevents callers using debugging flags when they are
+not available and <TT>BUG()</TT>s it instead</DD></DL><PRE CLASS="verbatim">673     cachep = 
+           (kmem_cache_t *) kmem_cache_alloc(&amp;cache_cache,
+                         SLAB_KERNEL);
+674     if (!cachep)
+675         goto opps;
+676     memset(cachep, 0, sizeof(kmem_cache_t));
+</PRE><P>Allocate a <TT>kmem_cache_t</TT> from the <TT>cache_cache</TT>
+slab cache.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>673</B>Allocate a cache descriptor object from the
+<TT>cache_cache</TT> with <TT>kmem_cache_alloc()</TT> 
+(See Section <A HREF="#func: kmem_cache_alloc">H.3.2.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>674-675</B>If out of memory goto <TT>opps</TT> which handles the oom
+situation</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>676</B>Zero fill the object to prevent surprises with uninitialised data</DD></DL><PRE CLASS="verbatim">682     if (size &amp; (BYTES_PER_WORD-1)) {
+683         size += (BYTES_PER_WORD-1);
+684         size &amp;= ~(BYTES_PER_WORD-1);
+685         printk("%sForcing size word alignment 
+               - %s\n", func_nm, name);
+686     }
+687
+688 #if DEBUG
+689     if (flags &amp; SLAB_RED_ZONE) {
+694         flags &amp;= ~SLAB_HWCACHE_ALIGN;
+695         size += 2*BYTES_PER_WORD;
+696     }
+697 #endif
+698     align = BYTES_PER_WORD;
+699     if (flags &amp; SLAB_HWCACHE_ALIGN)
+700         align = L1_CACHE_BYTES;
+701
+703     if (size &gt;= (PAGE_SIZE&gt;&gt;3))
+708         flags |= CFLGS_OFF_SLAB;
+709 
+710     if (flags &amp; SLAB_HWCACHE_ALIGN) {
+714         while (size &lt; align/2)
+715             align /= 2;
+716         size = (size+align-1)&amp;(~(align-1));
+717     }
+</PRE><P>Align the object size to some word-sized boundary.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>682</B>If the size is not aligned to the size of a word then...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>683-684</B>Increase the object by the size of a word then mask out
+the lower bits, this will effectively round the object size up to the next
+word boundary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>685</B>Print out an informational message for debugging purposes</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>688-697</B>If debugging is enabled then the alignments have to change
+slightly</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>694</B>Do not bother trying to align things to the hardware cache if the
+slab will be red zoned. The red zoning of the object is going to offset it
+by moving the object one word away from the cache boundary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>695</B>The size of the object increases by two <TT>BYTES_PER_WORD</TT>
+to store the red zone mark at either end of the object</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>698</B>Initialise the alignment to be to a word boundary. This will change
+if the caller has requested a CPU cache alignment</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>699-700</B>If requested, align the objects to the L1 CPU cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>703</B>If the objects are large, store the slab descriptors off-slab. This
+will allow better packing of objects into the slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>710</B>If hardware cache alignment is requested, the size of the objects
+must be adjusted to align themselves to the hardware cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>714-715</B>Try and pack objects into one cache line if they fit while
+still keeping the alignment. This is important to arches (e.g. Alpha or
+Pentium 4) with large L1 cache bytes. <TT>align</TT> will be adjusted to be
+the smallest that will give hardware cache alignment. For machines with large
+L1 cache lines, two or more small objects may fit into each line. For example,
+two objects from the size-32 cache will fit on one cache line from a Pentium 4</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>716</B>Round the cache size up to the hardware cache alignment</DD></DL><PRE CLASS="verbatim">724     do {
+725         unsigned int break_flag = 0;
+726 cal_wastage:
+727         kmem_cache_estimate(cachep-&gt;gfporder, 
+                    size, flags,
+728                     &amp;left_over, 
+                    &amp;cachep-&gt;num);
+729         if (break_flag)
+730             break;
+731         if (cachep-&gt;gfporder &gt;= MAX_GFP_ORDER)
+732             break;
+733         if (!cachep-&gt;num)
+734             goto next;
+735         if (flags &amp; CFLGS_OFF_SLAB &amp;&amp; 
+            cachep-&gt;num &gt; offslab_limit) {
+737             cachep-&gt;gfporder--;
+738             break_flag++;
+739             goto cal_wastage;
+740         }
+741 
+746         if (cachep-&gt;gfporder &gt;= slab_break_gfp_order)
+747             break;
+748 
+749         if ((left_over*8) &lt;= (PAGE_SIZE&lt;&lt;cachep-&gt;gfporder))
+750             break;  
+751 next:
+752         cachep-&gt;gfporder++;
+753     } while (1);
+754
+755     if (!cachep-&gt;num) {
+756         printk("kmem_cache_create: couldn't 
+                create cache %s.\n", name);
+757         kmem_cache_free(&amp;cache_cache, cachep);
+758         cachep = NULL;
+759         goto opps;
+760     }
+</PRE><P>Calculate how many objects will fit on a slab and adjust the slab size as
+necessary</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>727-728</B><TT>kmem_cache_estimate()</TT> (see Section <A HREF="#func: kmem_cache_estimate">H.1.2.1</A>)
+calculates the number of objects that can fit on a
+slab at the current gfp order and what the amount of leftover bytes will be</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>729-730</B>The <TT>break_flag</TT> is set if the number of objects
+fitting on the slab exceeds the number that can be kept when offslab slab
+descriptors are used</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>731-732</B>The order number of pages used must not exceed
+<TT>MAX_GFP_ORDER</TT> (5)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>733-734</B>If even one object didn't fill, goto next: which will increase
+the <TT>gfporder</TT> used for the cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>735</B>If the slab descriptor is kept off-cache but the number of objects
+exceeds the number that can be tracked with bufctl's off-slab then ...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>737</B>Reduce the order number of pages used</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>738</B>Set the <TT>break_flag</TT> so the loop will exit</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>739</B>Calculate the new wastage figures</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>746-747</B>The <TT>slab_break_gfp_order</TT> is the order to not
+exceed unless 0 objects fit on the slab. This check ensures the order is
+not exceeded</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>749-759</B>This is a rough check for internal fragmentation. If the wastage
+as a fraction of the total size of the cache is less than one eight, it is
+acceptable</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>752</B>If the fragmentation is too high, increase the gfp order and
+recalculate the number of objects that can be stored and the wastage</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>755</B>If after adjustments, objects still do not fit in the cache, it
+cannot be created</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>757-758</B>Free the cache descriptor and set the pointer to NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>758</B>Goto <TT>opps</TT> which simply returns the NULL pointer</DD></DL><PRE CLASS="verbatim">761     slab_size = L1_CACHE_ALIGN(
+              cachep-&gt;num*sizeof(kmem_bufctl_t) + 
+              sizeof(slab_t));
+762 
+767     if (flags &amp; CFLGS_OFF_SLAB &amp;&amp; left_over &gt;= slab_size) {
+768         flags &amp;= ~CFLGS_OFF_SLAB;
+769         left_over -= slab_size;
+770     }
+</PRE><P>Align the slab size to the hardware cache</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>761</B><TT>slab_size</TT> is the total size of the slab descriptor <EM>not</EM> the
+size of the slab itself. It is the size <TT>slab_t</TT> struct and the
+<TT>number of objects * size of the bufctl</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>767-769</B>If there is enough left over space for the slab descriptor
+and it was specified to place the descriptor off-slab, remove the flag and
+update the amount of <TT>left_over</TT> bytes there is. This will impact
+the cache colouring but with the large objects associated with off-slab
+descriptors, this is not a problem</DD></DL><PRE CLASS="verbatim">773     offset += (align-1);
+774     offset &amp;= ~(align-1);
+775     if (!offset)
+776         offset = L1_CACHE_BYTES;
+777     cachep-&gt;colour_off = offset;
+778     cachep-&gt;colour = left_over/offset;
+</PRE><P>Calculate colour offsets.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>773-774</B><TT>offset</TT> is the offset within the page the caller
+requested. This will make sure the offset requested is at the correct alignment
+for cache usage</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>775-776</B>If somehow the offset is 0, then set it to be aligned for the
+CPU cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>777</B>This is the offset to use to keep objects on different cache lines.
+Each slab created will be given a different colour offset</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>778</B>This is the number of different offsets that can be used
+</DD></DL><PRE CLASS="verbatim">781     if (!cachep-&gt;gfporder &amp;&amp; !(flags &amp; CFLGS_OFF_SLAB))
+782         flags |= CFLGS_OPTIMIZE;
+783 
+784     cachep-&gt;flags = flags;
+785     cachep-&gt;gfpflags = 0;
+786     if (flags &amp; SLAB_CACHE_DMA)
+787         cachep-&gt;gfpflags |= GFP_DMA;
+788     spin_lock_init(&amp;cachep-&gt;spinlock);
+789     cachep-&gt;objsize = size;
+790     INIT_LIST_HEAD(&amp;cachep-&gt;slabs_full);
+791     INIT_LIST_HEAD(&amp;cachep-&gt;slabs_partial);
+792     INIT_LIST_HEAD(&amp;cachep-&gt;slabs_free);
+793 
+794     if (flags &amp; CFLGS_OFF_SLAB)
+795         cachep-&gt;slabp_cache =
+               kmem_find_general_cachep(slab_size,0);
+796     cachep-&gt;ctor = ctor;
+797     cachep-&gt;dtor = dtor;
+799     strcpy(cachep-&gt;name, name);
+800 
+801 #ifdef CONFIG_SMP
+802     if (g_cpucache_up)
+803         enable_cpucache(cachep);
+804 #endif
+</PRE><P>Initialise remaining fields in cache descriptor</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>781-782</B>For caches with slabs of only 1 page, the
+<TT>CFLGS_OPTIMIZE</TT> flag is set. In reality it makes no difference
+as the flag is unused</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>784</B>Set the cache static flags</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>785</B>Zero out the gfpflags. Defunct operation as <TT>memset()</TT>
+after the cache descriptor was allocated would do this</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>786-787</B>If the slab is for DMA use, set the <TT>GFP_DMA</TT>
+flag so the buddy allocator will use <TT>ZONE_DMA</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>788</B>Initialise the spinlock for access the cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>789</B>Copy in the object size, which now takes hardware cache alignment if
+necessary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>790-792</B>Initialise the slab lists</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>794-795</B>If the descriptor is kept off-slab, allocate a slab manager and
+place it for use in <TT>slabp_cache</TT>. See Section <A HREF="#func: kmem_find_general_cachep">H.2.1.2</A> </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>796-797</B>Set the pointers to the constructor and destructor functions</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>799</B>Copy in the human readable name</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>802-803</B>If per-cpu caches are enabled, create a set for this cache. See
+Section <A HREF="understand011.html#Sec: Per-CPU Object Cache">8.5</A>
+</DD></DL><PRE CLASS="verbatim">806     down(&amp;cache_chain_sem);
+807     {
+808         struct list_head *p;
+809 
+810         list_for_each(p, &amp;cache_chain) {
+811             kmem_cache_t *pc = list_entry(p, 
+                    kmem_cache_t, next);
+812 
+814             if (!strcmp(pc-&gt;name, name))
+815                 BUG();
+816         }
+817     }
+818 
+822     list_add(&amp;cachep-&gt;next, &amp;cache_chain);
+823     up(&amp;cache_chain_sem);
+824 opps:
+825     return cachep;
+826 }
+</PRE><P>Add the new cache to the cache chain</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>806</B>Acquire the semaphore used to synchronise access to the cache chain</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>810-816</B>Check every cache on the cache chain and make sure there is
+no other cache with the same name. If there is, it means two caches of the
+same type are been created which is a serious bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>811</B>Get the cache from the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>814-815</B>Compare the names and if they match, <TT>BUG()</TT>. It is
+worth noting that the new cache is not deleted, but this error is the result
+of sloppy programming during development and not a normal scenario</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>822</B>Link the cache into the chain. </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>823</B>Release the cache chain semaphore.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>825</B>Return the new cache pointer
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc312">H.1.2</A>  Calculating the Number of Objects on a Slab</H3><P>
+<A NAME="c_sec: Calculating the Number of Objects on a Slab"></A></P><H4 CLASS="subsubsection"><A NAME="htoc313">H.1.2.1</A>  Function: kmem_cache_estimate</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_estimate"></A> <A NAME="@codeindex221"></A></P><P>During cache creation, it is determined how many objects can be stored in
+a slab and how much waste-age there will be. The following function calculates
+how many objects may be stored, taking into account if the slab and bufctl's
+must be stored on-slab.</P><PRE CLASS="verbatim">388 static void kmem_cache_estimate (unsigned long gfporder, 
+             size_t size,
+389          int flags, size_t *left_over, unsigned int *num)
+390 {
+391     int i;
+392     size_t wastage = PAGE_SIZE&lt;&lt;gfporder;
+393     size_t extra = 0;
+394     size_t base = 0;
+395 
+396     if (!(flags &amp; CFLGS_OFF_SLAB)) {
+397         base = sizeof(slab_t);
+398         extra = sizeof(kmem_bufctl_t);
+399     }
+400     i = 0;
+401     while (i*size + L1_CACHE_ALIGN(base+i*extra) &lt;= wastage)
+402         i++;
+403     if (i &gt; 0)
+404         i--;
+405 
+406     if (i &gt; SLAB_LIMIT)
+407         i = SLAB_LIMIT;
+408 
+409     *num = i;
+410     wastage -= i*size;
+411     wastage -= L1_CACHE_ALIGN(base+i*extra);
+412     *left_over = wastage;
+413 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>388</B>The parameters of the function are as follows<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>gfporder</B> The 2<SUP><I>gfporder</I></SUP> number of pages to allocate for each slab
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>size</B> 	The size of each object
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B>	The cache flags
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>left_over</B> The number of bytes left over in the slab. Returned to caller
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>num</B>	The number of objects that will fit in a slab. Returned to caller
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>392</B><TT>wastage</TT> is decremented through the function. It starts with
+the maximum possible amount of wastage.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>393</B><TT>extra</TT> is the number of bytes needed to store
+<TT>kmem_bufctl_t</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>394</B><TT>base</TT> is where usable memory in the slab starts</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>396</B>If the slab descriptor is kept on cache, the base begins at the
+end of the <TT>slab_t</TT> struct and the number of bytes needed to
+store the bufctl is the size of <TT>kmem_bufctl_t</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>400</B><TT>i</TT> becomes the number of objects the slab can hold</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>401-402</B>This counts up the number of objects that the cache can store.
+	<TT>i*size</TT> is the the size of the object
+	itself. <TT>L1_CACHE_ALIGN(base+i*extra)</TT> is slightly
+	trickier. This is calculating the amount of memory needed to
+	store the <TT>kmem_bufctl_t</TT> needed for every object in the
+	slab. As it is at the beginning of the slab, it is L1 cache aligned
+	so that the first object in the slab will be aligned to hardware
+	cache. <TT>i*extra</TT> will calculate the amount of space needed
+	to hold a <TT>kmem_bufctl_t</TT> for this object. As wast-age
+	starts out as the size of the slab, its use is overloaded here.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>403-404</B>Because the previous loop counts until the slab overflows, the
+	number of objects that can be stored is <TT>i-1</TT>.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>406-407</B><TT>SLAB_LIMIT</TT> is the absolute largest number of
+	objects a slab can store. Is is defined as 0xffffFFFE as this the
+	largest number <TT>kmem_bufctl_t()</TT>, which is an unsigned
+	integer, can hold</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>409</B><TT>num</TT> is now the number of objects a slab can hold</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>410</B>Take away the space taken up by all the objects from wastage</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>411</B>Take away the space taken up by the <TT>kmem_bufctl_t</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>412</B>Wast-age has now been calculated as the left over space in the slab
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc314">H.1.3</A>  Cache Shrinking</H3><P>
+<A NAME="c_sec: Cache Shrinking"></A></P><P>The call graph for <TT>kmem_cache_shrink()</TT> is shown in Figure
+<A HREF="understand011.html#fig: kmem_cache_shrink">8.5</A>. Two varieties of shrink functions are provided. <TT>kmem_cache_shrink()</TT>
+removes all slabs from
+<TT>slabs_free</TT> and returns the number of pages freed as a
+result. <TT>__kmem_cache_shrink()</TT> frees all slabs from slabs_free and
+then verifies that slabs_partial and <TT>slabs_full</TT> are empty. This
+is important during cache destruction when it doesn't matter how many pages
+are freed, just that the cache is empty.</P><H4 CLASS="subsubsection"><A NAME="htoc315">H.1.3.1</A>  Function: kmem_cache_shrink</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_shrink"></A> <A NAME="@codeindex222"></A></P><P>This function performs basic debugging checks and then acquires the cache
+descriptor lock before freeing slabs. At one time, it also used to call
+<TT>drain_cpu_caches()</TT> to free up objects on the per-cpu cache. It is
+curious that this was removed as it is possible slabs could not be freed
+due to an object been allocation on a per-cpu cache but not in use.</P><PRE CLASS="verbatim">966 int kmem_cache_shrink(kmem_cache_t *cachep)
+967 {
+968     int ret;
+969 
+970     if (!cachep || in_interrupt() || 
+        !is_chained_kmem_cache(cachep))
+971         BUG();
+972 
+973     spin_lock_irq(&amp;cachep-&gt;spinlock);
+974     ret = __kmem_cache_shrink_locked(cachep);
+975     spin_unlock_irq(&amp;cachep-&gt;spinlock);
+976 
+977     return ret &lt;&lt; cachep-&gt;gfporder;
+978 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>966</B>The parameter is the cache been shrunk</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>970</B>Check that
+<UL CLASS="itemize"><LI CLASS="li-itemize">
+The cache pointer is not NULL
+</LI><LI CLASS="li-itemize">That an interrupt is not the caller
+</LI><LI CLASS="li-itemize">That the cache is on the cache chain and not a bad pointer
+</LI></UL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>973</B>Acquire the cache descriptor lock and disable interrupts</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>974</B>Shrink the cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>975</B>Release the cache lock and enable interrupts</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>976</B>This returns the number of pages freed but does not take into
+account the objects freed by draining the CPU.
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc316">H.1.3.2</A>  Function: __kmem_cache_shrink</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: __kmem_cache_shrink"></A> <A NAME="@codeindex223"></A></P><P>This function is identical to <TT>kmem_cache_shrink()</TT> except it returns
+if the cache is empty or not. This is important during cache destruction
+when it is not important how much memory was freed, just that it is safe to
+delete the cache and not leak memory.</P><PRE CLASS="verbatim">945 static int __kmem_cache_shrink(kmem_cache_t *cachep)
+946 {
+947     int ret;
+948 
+949     drain_cpu_caches(cachep);
+950 
+951     spin_lock_irq(&amp;cachep-&gt;spinlock);
+952     __kmem_cache_shrink_locked(cachep);
+953     ret = !list_empty(&amp;cachep-&gt;slabs_full) ||
+954         !list_empty(&amp;cachep-&gt;slabs_partial);
+955     spin_unlock_irq(&amp;cachep-&gt;spinlock);
+956     return ret;
+957 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>949</B>Remove all objects from the per-CPU objects cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>951</B>Acquire the cache descriptor lock and disable interrupts</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>952</B>Free all slabs in the <TT>slabs_free</TT> list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>954-954</B>Check the slabs_partial and <TT>slabs_full</TT> lists
+are empty</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>955</B>Release the cache descriptor lock and re-enable interrupts</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>956</B>Return if the cache has all its slabs free or not
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc317">H.1.3.3</A>  Function: __kmem_cache_shrink_locked</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: __kmem_cache_shrink_locked"></A> <A NAME="@codeindex224"></A></P><P>This does the dirty work of freeing slabs. It will keep destroying them until
+the growing flag gets set, indicating the cache is in use or until there is no
+more slabs in <TT>slabs_free</TT>.</P><PRE CLASS="verbatim">917 static int __kmem_cache_shrink_locked(kmem_cache_t *cachep)
+918 {
+919     slab_t *slabp;
+920     int ret = 0;
+921 
+923     while (!cachep-&gt;growing) {
+924         struct list_head *p;
+925 
+926         p = cachep-&gt;slabs_free.prev;
+927         if (p == &amp;cachep-&gt;slabs_free)
+928             break;
+929 
+930         slabp = list_entry(cachep-&gt;slabs_free.prev, 
+                       slab_t, list);
+931 #if DEBUG
+932         if (slabp-&gt;inuse)
+933             BUG();
+934 #endif
+935         list_del(&amp;slabp-&gt;list);
+936 
+937         spin_unlock_irq(&amp;cachep-&gt;spinlock);
+938         kmem_slab_destroy(cachep, slabp);
+939         ret++;
+940         spin_lock_irq(&amp;cachep-&gt;spinlock);
+941     }
+942     return ret;
+943 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>923</B>While the cache is not growing, free slabs</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>926-930</B>Get the last slab on the <TT>slabs_free</TT> list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>932-933</B>If debugging is available, make sure it is not in use. If it is
+not in use, it should not be on the <TT>slabs_free</TT> list in the first place</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>935</B>Remove the slab from the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>937</B>Re-enable interrupts. This function is called with interrupts
+disabled and this is to free the interrupt as quickly as possible.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>938</B>Delete the slab with <TT>kmem_slab_destroy()</TT>
+(See Section <A HREF="#func: kmem_slab_destroy">H.2.3.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>939</B>Record the number of slabs freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>940</B>Acquire the cache descriptor lock and disable interrupts
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc318">H.1.4</A>  Cache Destroying</H3><P>
+<A NAME="sec: Cache Destroying"></A></P><P>When a module is unloaded, it is responsible for destroying any cache is has
+created as during module loading, it is ensured there is not two caches of
+the same name. Core kernel code often does not destroy its caches as their
+existence persists for the life of the system. The steps taken to destroy
+a cache are</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+Delete the cache from the cache chain
+</LI><LI CLASS="li-itemize">Shrink the cache to delete all slabs (see Section <A HREF="understand011.html#Sec: Cache Shrinking">8.1.8</A>) </LI><LI CLASS="li-itemize">Free any per CPU caches (<TT>kfree()</TT>)</LI><LI CLASS="li-itemize">Delete the cache descriptor from the <TT>cache_cache</TT> (see Section:
+<A HREF="understand011.html#Sec: Object Freeing">8.3.3</A>) </LI></UL><H4 CLASS="subsubsection"><A NAME="htoc319">H.1.4.1</A>  Function: kmem_cache_destroy</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_destroy"></A> <A NAME="@codeindex225"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand011.html#fig: kmem_cache_destroy">8.7</A>.</P><PRE CLASS="verbatim"> 997 int kmem_cache_destroy (kmem_cache_t * cachep)
+ 998 {
+ 999     if (!cachep || in_interrupt() || cachep-&gt;growing)
+ 1000        BUG();
+ 1001 
+1002     /* Find the cache in the chain of caches. */
+1003     down(&amp;cache_chain_sem);
+1004     /* the chain is never empty, cache_cache is never destroyed */
+1005     if (clock_searchp == cachep)
+1006         clock_searchp = list_entry(cachep-&gt;next.next,
+1007                         kmem_cache_t, next);
+1008     list_del(&amp;cachep-&gt;next);
+1009     up(&amp;cache_chain_sem);
+1010 
+1011     if (__kmem_cache_shrink(cachep)) {
+1012         printk(KERN_ERR 
+                "kmem_cache_destroy: Can't free all objects %p\n",
+1013            cachep);
+1014         down(&amp;cache_chain_sem);
+1015         list_add(&amp;cachep-&gt;next,&amp;cache_chain);
+1016         up(&amp;cache_chain_sem);
+1017         return 1;
+1018     }
+1019 #ifdef CONFIG_SMP
+1020     {
+1021         int i;
+1022         for (i = 0; i &lt; NR_CPUS; i++)
+1023             kfree(cachep-&gt;cpudata[i]);
+1024     }
+1025 #endif
+1026     kmem_cache_free(&amp;cache_cache, cachep);
+1027 
+1028     return 0;
+1029 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>999-1000</B>Sanity check. Make sure the <TT>cachep</TT> is not null,
+that an interrupt is not trying to do this and that the cache has not been
+marked as growing, indicating it is in use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1003</B>Acquire the semaphore for accessing the cache chain</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1005-1007</B>Acquire the list entry from the cache chain</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1008</B>Delete this cache from the cache chain</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1009</B>Release the cache chain semaphore</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1011</B>Shrink the cache to free all slabs with
+<TT>__kmem_cache_shrink()</TT> (See Section <A HREF="#func: __kmem_cache_shrink">H.1.3.2</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1012-1017</B>The shrink function returns true if there is still slabs
+in the cache. If there is, the cache cannot be destroyed so it is added back
+into the cache chain and the error reported</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1022-1023</B>If SMP is enabled, the per-cpu data structures are deleted
+with <TT>kfree()</TT> (See Section <A HREF="#func: kfree">H.4.3.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1026</B>Delete the cache descriptor from the <TT>cache_cache</TT> with
+<TT>kmem_cache_free()</TT> (See Section <A HREF="#func: kmem_cache_free">H.3.3.1</A>)</DD></DL><H3 CLASS="subsection"><A NAME="htoc320">H.1.5</A>  Cache Reaping</H3><P>
+<A NAME="c_sec: Cache Reaping"></A></P><H4 CLASS="subsubsection"><A NAME="htoc321">H.1.5.1</A>  Function: kmem_cache_reap</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_reap"></A> <A NAME="@codeindex226"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand011.html#fig: kmem_cache_reap">8.4</A>.
+Because of the size of this function, it will be broken up into three separate
+sections. The first is simple function preamble. The second is the selection
+of a cache to reap and the third is the freeing of the slabs. The basic tasks
+were described in Section <A HREF="understand011.html#Sec: Cache Reaping">8.1.7</A>. </P><PRE CLASS="verbatim">
+1738 int kmem_cache_reap (int gfp_mask)
+1739 {
+1740     slab_t *slabp;
+1741     kmem_cache_t *searchp;
+1742     kmem_cache_t *best_cachep;
+1743     unsigned int best_pages;
+1744     unsigned int best_len;
+1745     unsigned int scan;
+1746     int ret = 0;
+1747 
+1748     if (gfp_mask &amp; __GFP_WAIT)
+1749         down(&amp;cache_chain_sem);
+1750     else
+1751         if (down_trylock(&amp;cache_chain_sem))
+1752             return 0;
+1753 
+1754     scan = REAP_SCANLEN;
+1755     best_len = 0;
+1756     best_pages = 0;
+1757     best_cachep = NULL;
+1758     searchp = clock_searchp;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1738</B>The only parameter is the GFP flag. The only check made is against
+the <TT>__GFP_WAIT</TT> flag. As the only caller, <B>kswapd</B>,
+can sleep, this parameter is virtually worthless</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1748-1749</B>Can the caller sleep? If yes, then acquire the semaphore</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1751-1752</B>Else, try and acquire the semaphore and if not available,
+return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1754</B><TT>REAP_SCANLEN</TT> (10) is the number of caches to examine. </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1758</B>Set <TT>searchp</TT> to be the last cache that was examined at
+the last reap</DD></DL><PRE CLASS="verbatim">1759     do {
+1760         unsigned int pages;
+1761         struct list_head* p;
+1762         unsigned int full_free;
+1763 
+1765         if (searchp-&gt;flags &amp; SLAB_NO_REAP)
+1766             goto next;
+1767         spin_lock_irq(&amp;searchp-&gt;spinlock);
+1768         if (searchp-&gt;growing)
+1769             goto next_unlock;
+1770         if (searchp-&gt;dflags &amp; DFLGS_GROWN) {
+1771             searchp-&gt;dflags &amp;= ~DFLGS_GROWN;
+1772             goto next_unlock;
+1773         }
+1774 #ifdef CONFIG_SMP
+1775         {
+1776             cpucache_t *cc = cc_data(searchp);
+1777             if (cc &amp;&amp; cc-&gt;avail) {
+1778                 __free_block(searchp, cc_entry(cc),
+                          cc-&gt;avail);
+1779                 cc-&gt;avail = 0;
+1780             }
+1781         }
+1782 #endif
+1783 
+1784         full_free = 0;
+1785         p = searchp-&gt;slabs_free.next;
+1786         while (p != &amp;searchp-&gt;slabs_free) {
+1787             slabp = list_entry(p, slab_t, list);
+1788 #if DEBUG
+1789             if (slabp-&gt;inuse)
+1790                 BUG();
+1791 #endif
+1792             full_free++;
+1793             p = p-&gt;next;
+1794         }
+1795 
+1801         pages = full_free * (1&lt;&lt;searchp-&gt;gfporder);
+1802         if (searchp-&gt;ctor)
+1803             pages = (pages*4+1)/5;
+1804         if (searchp-&gt;gfporder)
+1805             pages = (pages*4+1)/5;
+1806         if (pages &gt; best_pages) {
+1807             best_cachep = searchp;
+1808             best_len = full_free;
+1809             best_pages = pages;
+1810             if (pages &gt;= REAP_PERFECT) {
+1811                 clock_searchp =
+                      list_entry(searchp-&gt;next.next,
+1812                      kmem_cache_t,next);
+1813                 goto perfect;
+1814             }
+1815         }
+1816 next_unlock:
+1817         spin_unlock_irq(&amp;searchp-&gt;spinlock);
+1818 next:
+1819         searchp =
+               list_entry(searchp-&gt;next.next,kmem_cache_t,next);
+1820     } while (--scan &amp;&amp; searchp != clock_searchp);
+</PRE><P>This block examines <TT>REAP_SCANLEN</TT> number of caches to select one
+to free</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1767</B>Acquire an interrupt safe lock to the cache descriptor
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1768-1769</B>If the cache is growing, skip it
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1770-1773</B>If the cache has grown recently, skip it and clear the flag
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1775-1781</B>Free any per CPU objects to the global pool
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1786-1794</B>Count the number of slabs in the <TT>slabs_free</TT> list
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1801</B>Calculate the number of pages all the slabs hold
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1802-1803</B>If the objects have constructors, reduce the page count by one
+fifth to make it less likely to be selected for reaping
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1804-1805</B>If the slabs consist of more than one page, reduce the page
+count by one fifth. This is because high order pages are hard to acquire
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1806</B>If this is the best candidate found for reaping so far, check if
+it is perfect for reaping
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1807-1809</B>Record the new maximums
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1808</B><TT>best_len</TT> is recorded so that it is easy to know how many slabs is
+half of the slabs in the free list
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1810</B>If this cache is perfect for reaping then 
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1811</B>Update <TT>clock_searchp</TT>
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1812</B>Goto perfect where half the slabs will be freed
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1816</B>This label is reached if it was found the cache was growing after
+acquiring the lock
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1817</B>Release the cache descriptor lock
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1818</B>Move to the next entry in the cache chain
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1820</B>Scan while <TT>REAP_SCANLEN</TT> has not been reached and we 
+have not cycled around the whole cache chain
+</DD></DL><PRE CLASS="verbatim">1822     clock_searchp = searchp;
+1823 
+1824     if (!best_cachep)
+1826         goto out;
+1827 
+1828     spin_lock_irq(&amp;best_cachep-&gt;spinlock);
+1829 perfect:
+1830     /* free only 50% of the free slabs */
+1831     best_len = (best_len + 1)/2;
+1832     for (scan = 0; scan &lt; best_len; scan++) {
+1833         struct list_head *p;
+1834 
+1835         if (best_cachep-&gt;growing)
+1836             break;
+1837         p = best_cachep-&gt;slabs_free.prev;
+1838         if (p == &amp;best_cachep-&gt;slabs_free)
+1839             break;
+1840         slabp = list_entry(p,slab_t,list);
+1841 #if DEBUG
+1842         if (slabp-&gt;inuse)
+1843             BUG();
+1844 #endif
+1845         list_del(&amp;slabp-&gt;list);
+1846         STATS_INC_REAPED(best_cachep);
+1847 
+1848         /* Safe to drop the lock. The slab is no longer 
+1849          * lined to the cache.
+1850          */
+1851         spin_unlock_irq(&amp;best_cachep-&gt;spinlock);
+1852         kmem_slab_destroy(best_cachep, slabp);
+1853         spin_lock_irq(&amp;best_cachep-&gt;spinlock);
+1854     }
+1855     spin_unlock_irq(&amp;best_cachep-&gt;spinlock);
+1856     ret = scan * (1 &lt;&lt; best_cachep-&gt;gfporder);
+1857 out:
+1858     up(&amp;cache_chain_sem);
+1859     return ret;
+1860 }
+</PRE><P>This block will free half of the slabs from the selected cache</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1822</B>Update <TT>clock_searchp</TT> for the next cache reap</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1824-1826</B>If a cache was not found, goto out to free the cache chain
+and exit</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1828</B>Acquire the cache chain spinlock and disable interrupts. The
+<TT>cachep</TT> descriptor has to be held by an interrupt safe lock as some
+caches may be used from interrupt context. The slab allocator has no way to
+differentiate between interrupt safe and unsafe caches</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1831</B>Adjust <TT>best_len</TT> to be the number of slabs to free</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1832-1854</B>Free <TT>best_len</TT> number of slabs</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1835-1847</B>If the cache is growing, exit</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1837</B>Get a slab from the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1838-1839</B>If there is no slabs left in the list, exit</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1840</B>Get the slab pointer</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1842-1843</B>If debugging is enabled, make sure there is no active objects
+in the slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1845</B>Remove the slab from the <TT>slabs_free</TT> list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1846</B>Update statistics if enabled</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1851</B>Free the cache descriptor and enable interrupts</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1852</B>Destroy the slab. See Section <A HREF="understand011.html#Sec: Slab Destroying">8.2.8</A> </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1851</B>Re-acquire the cache descriptor spinlock and disable interrupts</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1855</B>Free the cache descriptor and enable interrupts</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1856</B><TT>ret</TT> is the number of pages that was freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1858-1859</B>Free the cache semaphore and return the number of pages
+freed </DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc119"></A><A NAME="htoc322">H.2</A>  Slabs</H2><P>
+<A NAME="c_sec: Slabs"></A></P><H3 CLASS="subsection"><A NAME="htoc323">H.2.1</A>  Storing the Slab Descriptor</H3><P>
+<A NAME="c_sec: Storing the Slab Descriptor"></A></P><H4 CLASS="subsubsection"><A NAME="htoc324">H.2.1.1</A>  Function: kmem_cache_slabmgmt</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_slabmgmt"></A> <A NAME="@codeindex227"></A></P><P>This function will either allocate allocate space to keep the slab descriptor
+off cache or reserve enough space at the beginning of the slab for the
+descriptor and the <TT>bufctl</TT>s.</P><PRE CLASS="verbatim">1032 static inline slab_t * kmem_cache_slabmgmt (
+                 kmem_cache_t *cachep,
+1033             void *objp, 
+                 int colour_off, 
+                 int local_flags)
+1034 {
+1035     slab_t *slabp;
+1036     
+1037     if (OFF_SLAB(cachep)) {
+1039         slabp = kmem_cache_alloc(cachep-&gt;slabp_cache,
+                          local_flags);
+1040         if (!slabp)
+1041             return NULL;
+1042     } else {
+1047         slabp = objp+colour_off;
+1048         colour_off += L1_CACHE_ALIGN(cachep-&gt;num *
+1049                 sizeof(kmem_bufctl_t) + 
+                     sizeof(slab_t));
+1050     }
+1051     slabp-&gt;inuse = 0;
+1052     slabp-&gt;colouroff = colour_off;
+1053     slabp-&gt;s_mem = objp+colour_off;
+1054 
+1055     return slabp;
+1056 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1032</B> The parameters of the function are<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cachep</B> The cache the slab is to be allocated to
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>objp</B> When the function is called, this points to the beginning of the slab
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>colour_off</B> The colour offset for this slab
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>local_flags</B> These are the flags for the cache
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1037-1042</B> If the slab descriptor is kept off cache....</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1039</B> Allocate memory from the sizes cache. During cache creation,
+<TT>slabp_cache</TT> is set to the appropriate size cache to allocate from.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1040</B> If the allocation failed, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1042-1050</B> Reserve space at the beginning of the slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1047</B> The address of the slab will be the beginning of the slab
+(<TT>objp</TT>) plus the colour offset</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1048</B> <TT>colour_off</TT> is calculated to be the offset where the first
+object will be placed. The address is L1 cache aligned. <TT>cachep-&gt;num *
+sizeof(kmem_bufctl_t)</TT> is the amount of space needed to hold the bufctls for
+each object in the slab and <TT>sizeof(slab_t)</TT> is the size of the slab
+descriptor. This effectively has reserved the space at the beginning of the
+slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1051</B>The number of objects in use on the slab is 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1052</B>The <TT>colouroff</TT> is updated for placement of the new object</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1053</B>The address of the first object is calculated as the address of
+the beginning of the slab plus the offset</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc325">H.2.1.2</A>  Function: kmem_find_general_cachep</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_find_general_cachep"></A> <A NAME="@codeindex228"></A></P><P>If the slab descriptor is to be kept off-slab, this function, called during
+cache creation will find the appropriate sizes cache to use and will be
+stored within the cache descriptor in the field <TT>slabp_cache</TT>.</P><PRE CLASS="verbatim">1620 kmem_cache_t * kmem_find_general_cachep (size_t size, 
+                          int gfpflags)
+1621 {
+1622     cache_sizes_t *csizep = cache_sizes;
+1623 
+1628     for ( ; csizep-&gt;cs_size; csizep++) {
+1629         if (size &gt; csizep-&gt;cs_size)
+1630             continue;
+1631         break;
+1632     }
+1633     return (gfpflags &amp; GFP_DMA) ? csizep-&gt;cs_dmacachep :
+                       csizep-&gt;cs_cachep;
+1634 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1620</B> <TT>size</TT> is the size of the slab descriptor.
+<TT>gfpflags</TT> is always 0 as DMA memory is not needed for a slab
+descriptor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1628-1632</B> Starting with the smallest size, keep increasing the size
+until a cache is found with buffers large enough to store the slab descriptor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1633</B> Return either a normal or DMA sized cache depending on the
+<TT>gfpflags</TT> passed in. In reality, only the <TT>cs_cachep</TT>
+is ever passed back</DD></DL><H3 CLASS="subsection"><A NAME="htoc326">H.2.2</A>  Slab Creation</H3><P>
+<A NAME="c_sec: Slab Creation"></A></P><H4 CLASS="subsubsection"><A NAME="htoc327">H.2.2.1</A>  Function: kmem_cache_grow</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_grow"></A> <A NAME="@codeindex229"></A></P><P>The call graph for this function is shown in <A HREF="understand011.html#fig: kmem_cache_grow">8.11</A>. The
+basic tasks for this function are;</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+Perform basic sanity checks to guard against bad usage
+</LI><LI CLASS="li-itemize">Calculate colour offset for objects in this slab
+</LI><LI CLASS="li-itemize">Allocate memory for slab and acquire a slab descriptor
+</LI><LI CLASS="li-itemize">Link the pages used for the slab to the slab and cache descriptors
+</LI><LI CLASS="li-itemize">Initialise objects in the slab
+</LI><LI CLASS="li-itemize">Add the slab to the cache
+</LI></UL><PRE CLASS="verbatim">1105 static int kmem_cache_grow (kmem_cache_t * cachep, int flags)
+1106 {
+1107     slab_t  *slabp;
+1108     struct page     *page;
+1109     void        *objp;
+1110     size_t       offset;
+1111     unsigned int     i, local_flags;
+1112     unsigned long    ctor_flags;
+1113     unsigned long    save_flags;
+</PRE><P>Basic declarations. The parameters of the function are</P><DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cachep</B> 	The cache to allocate a new slab to
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B>	The flags for a slab creation
+</DD></DL><PRE CLASS="verbatim">1118     if (flags &amp; ~(SLAB_DMA|SLAB_LEVEL_MASK|SLAB_NO_GROW))
+1119         BUG();
+1120     if (flags &amp; SLAB_NO_GROW)
+1121         return 0;
+1122 
+1129     if (in_interrupt() &amp;&amp; 
+             (flags &amp; SLAB_LEVEL_MASK) != SLAB_ATOMIC)
+1130         BUG();
+1131 
+1132     ctor_flags = SLAB_CTOR_CONSTRUCTOR;
+1133     local_flags = (flags &amp; SLAB_LEVEL_MASK);
+1134     if (local_flags == SLAB_ATOMIC)
+1139         ctor_flags |= SLAB_CTOR_ATOMIC;
+</PRE><P>Perform basic sanity checks to guard against bad usage. The checks are made
+here rather than <TT>kmem_cache_alloc()</TT> to protect the speed-critical
+path. There is no point checking the flags every time an object needs to
+be allocated.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1118-1119</B>Make sure only allowable flags are used for allocation</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1120-1121</B>Do not grow the cache if this is set. In reality, it is never
+set</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1129-1130</B>If this called within interrupt context, make
+sure the <TT>ATOMIC</TT> flag is set so we don't sleep when
+<TT>kmem_getpages()</TT>(See Section <A HREF="#func: kmem_getpages">H.7.0.3</A>) is called</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1132</B>This flag tells the constructor it is to init the object</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1133</B>The local_flags are just those relevant to the page allocator</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1134-1139</B>If the <TT>SLAB_ATOMIC</TT> flag is set, the constructor
+needs to know about it in case it wants to make new allocations</DD></DL><PRE CLASS="verbatim">1142     spin_lock_irqsave(&amp;cachep-&gt;spinlock, save_flags);
+1143 
+1145     offset = cachep-&gt;colour_next;
+1146     cachep-&gt;colour_next++;
+1147     if (cachep-&gt;colour_next &gt;= cachep-&gt;colour)
+1148         cachep-&gt;colour_next = 0;
+1149     offset *= cachep-&gt;colour_off;
+1150     cachep-&gt;dflags |= DFLGS_GROWN;
+1151 
+1152     cachep-&gt;growing++;
+1153     spin_unlock_irqrestore(&amp;cachep-&gt;spinlock, save_flags);
+</PRE><P>Calculate colour offset for objects in this slab</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1142</B>Acquire an interrupt safe lock for accessing the cache descriptor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1145</B>Get the offset for objects in this slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1146</B>Move to the next colour offset</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1147-1148</B>If <TT>colour</TT> has been reached, there is no more offsets
+available, so reset <TT>colour_next</TT> to 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1149</B><TT>colour_off</TT> is the size of each offset, so <TT>offset
+* colour_off</TT> will give how many bytes to offset the objects to</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1150</B>Mark the cache that it is growing so that
+<TT>kmem_cache_reap()</TT> (See Section <A HREF="#func: kmem_cache_reap">H.1.5.1</A>) will ignore
+this cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1152</B>Increase the count for callers growing this cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1153</B>Free the spinlock and re-enable interrupts
+</DD></DL><PRE CLASS="verbatim">1165     if (!(objp = kmem_getpages(cachep, flags)))
+1166         goto failed;
+1167 
+1169     if (!(slabp = kmem_cache_slabmgmt(cachep, 
+                           objp, offset,
+                           local_flags)))
+1160         goto opps1;
+</PRE><P>Allocate memory for slab and acquire a slab descriptor</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1165-1166</B>Allocate pages from the page allocator for the slab with
+<TT>kmem_getpages()</TT> (See Section <A HREF="#func: kmem_getpages">H.7.0.3</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1169</B>Acquire a slab descriptor with <TT>kmem_cache_slabmgmt()</TT>
+(See Section <A HREF="#func: kmem_cache_slabmgmt">H.2.1.1</A>)</DD></DL><PRE CLASS="verbatim">1173     i = 1 &lt;&lt; cachep-&gt;gfporder;
+1174     page = virt_to_page(objp);
+1175     do {
+1176         SET_PAGE_CACHE(page, cachep);
+1177         SET_PAGE_SLAB(page, slabp);
+1178         PageSetSlab(page);
+1179         page++;
+1180     } while (--i);
+</PRE><P>Link the pages for the slab used to the slab and cache descriptors</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1173</B><TT>i</TT> is the number of pages used for the slab. Each page has
+to be linked to the slab and cache descriptors.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1174</B><TT>objp</TT> is a pointer to the beginning of the slab. The
+macro <TT>virt_to_page()</TT> will give the <TT>struct page</TT>
+for that address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1175-1180</B>Link each pages list field to the slab and cache descriptors</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1176</B><TT>SET_PAGE_CACHE()</TT><A NAME="@codeindex230"></A> links the page to the cache
+descriptor using the <TT>page</TT>&#X2192;<TT>list.next</TT> field</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1178</B><TT>SET_PAGE_SLAB()</TT><A NAME="@codeindex231"></A> links the page to the slab
+descriptor using the <TT>page</TT>&#X2192;<TT>list.prev</TT> field</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1178</B>Set the <TT>PG_slab</TT> page flag. The full set of
+<TT>PG_</TT> flags is listed in Table <A HREF="understand005.html#tab: Page Status Flags">2.1</A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1179</B>Move to the next page for this slab to be linked</DD></DL><PRE CLASS="verbatim">1182     kmem_cache_init_objs(cachep, slabp, ctor_flags);
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1182</B>Initialise all objects (See Section <A HREF="#func: kmem_cache_init_objs">H.3.1.1</A>)</DD></DL><PRE CLASS="verbatim">1184     spin_lock_irqsave(&amp;cachep-&gt;spinlock, save_flags);
+1185     cachep-&gt;growing--;
+1186 
+1188     list_add_tail(&amp;slabp-&gt;list, &amp;cachep-&gt;slabs_free);
+1189     STATS_INC_GROWN(cachep);
+1190     cachep-&gt;failures = 0;
+1191 
+1192     spin_unlock_irqrestore(&amp;cachep-&gt;spinlock, save_flags);
+1193     return 1;
+</PRE><P>Add the slab to the cache</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1184</B>Acquire the cache descriptor spinlock in an interrupt safe fashion</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1185</B>Decrease the growing count</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1188</B>Add the slab to the end of the <TT>slabs_free</TT> list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1189</B>If <TT>STATS</TT> is set, increase the
+<TT>cachep</TT>&#X2192;<TT>grown</TT> field <TT>STATS_INC_GROWN()</TT><A NAME="@codeindex232"></A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1190</B>Set failures to 0. This field is never used elsewhere</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1192</B>Unlock the spinlock in an interrupt safe fashion</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1193</B>Return success
+</DD></DL><PRE CLASS="verbatim">1194 opps1:
+1195     kmem_freepages(cachep, objp);
+1196 failed:
+1197     spin_lock_irqsave(&amp;cachep-&gt;spinlock, save_flags);
+1198     cachep-&gt;growing--;
+1199     spin_unlock_irqrestore(&amp;cachep-&gt;spinlock, save_flags);
+1300     return 0;
+1301 }
+</PRE><P>Error handling</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1194-1195</B><TT>opps1</TT> is reached if the pages for the slab were
+allocated. They must be freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1197</B>Acquire the spinlock for accessing the cache descriptor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1198</B>Reduce the growing count</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1199</B>Release the spinlock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1300</B>Return failure</DD></DL><H3 CLASS="subsection"><A NAME="htoc328">H.2.3</A>  Slab Destroying</H3><P>
+<A NAME="c_sec: Slab Destroying"></A></P><H4 CLASS="subsubsection"><A NAME="htoc329">H.2.3.1</A>  Function: kmem_slab_destroy</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_slab_destroy"></A> <A NAME="@codeindex233"></A></P><P>The call graph for this function is shown at Figure 
+<A HREF="understand011.html#fig: kmem_slab_destroy">8.13</A>. For reability, the debugging sections has
+been omitted from this function but they are almost identical to the debugging
+section during object allocation. See Section <A HREF="#func: kmem_cache_init_objs">H.3.1.1</A>
+for how the markers and poison pattern are checked.</P><PRE CLASS="verbatim">555 static void kmem_slab_destroy (kmem_cache_t *cachep, slab_t *slabp)
+556 {
+557     if (cachep-&gt;dtor
+561     ) {
+562         int i;
+563         for (i = 0; i &lt; cachep-&gt;num; i++) {
+564             void* objp = slabp-&gt;s_mem+cachep-&gt;objsize*i;
+
+565-574 DEBUG: Check red zone markers
+
+575             if (cachep-&gt;dtor)
+576                 (cachep-&gt;dtor)(objp, cachep, 0);
+
+577-584 DEBUG: Check poison pattern
+
+585         }
+586     }
+587 
+588     kmem_freepages(cachep, slabp-&gt;s_mem-slabp-&gt;colouroff);
+589     if (OFF_SLAB(cachep))
+590         kmem_cache_free(cachep-&gt;slabp_cache, slabp);
+591 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>557-586</B>If a destructor is available, call it for each object in the
+slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>563-585</B>Cycle through each object in the slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>564</B>Calculate the address of the object to destroy</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>575-576</B>Call the destructor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>588</B>Free the pages been used for the slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>589</B>If the slab descriptor is been kept off-slab, then free the memory
+been used for it
+</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc120"></A><A NAME="htoc330">H.3</A>  Objects</H2><P>
+<A NAME="c_sec: Objects"></A></P><P>This section will cover how objects are managed. At this point, most
+of the real hard work has been completed by either the cache or slab managers.</P><H3 CLASS="subsection"><A NAME="htoc331">H.3.1</A>  Initialising Objects in a Slab</H3><P>
+<A NAME="c_sec: Initialising Objects in a Slab"></A></P><H4 CLASS="subsubsection"><A NAME="htoc332">H.3.1.1</A>  Function: kmem_cache_init_objs</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_init_objs"></A> <A NAME="@codeindex234"></A></P><P>The vast part of this function is involved with debugging so we will start
+with the function without the debugging and explain that in detail before
+handling the debugging part. The two sections that are debugging are marked
+in the code excerpt below as Part 1 and Part 2.</P><PRE CLASS="verbatim">1058 static inline void kmem_cache_init_objs (kmem_cache_t * cachep,
+1059             slab_t * slabp, unsigned long ctor_flags)
+1060 {
+1061     int i;
+1062 
+1063     for (i = 0; i &lt; cachep-&gt;num; i++) {
+1064         void* objp = slabp-&gt;s_mem+cachep-&gt;objsize*i;
+
+1065-1072        /* Debugging Part 1 */
+
+1079         if (cachep-&gt;ctor)
+1080             cachep-&gt;ctor(objp, cachep, ctor_flags);
+
+1081-1094        /* Debugging Part 2 */
+
+1095         slab_bufctl(slabp)[i] = i+1;
+1096     }
+1097     slab_bufctl(slabp)[i-1] = BUFCTL_END;
+1098     slabp-&gt;free = 0;
+1099 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1058</B>The parameters of the function are<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cachep</B>The cache the objects are been initialised for
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>slabp</B>The slab the objects are in
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>ctor_flags</B>Flags the constructor needs whether this is an atomic
+allocation or not</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1063</B>Initialise <TT>cache</TT>&#X2192;<TT>num</TT> number of objects</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1064</B>The base address for objects in the slab is <TT>s_mem</TT>. The
+address of the object to allocate is then <TT>i * (size of a single
+object)</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1079-1080</B>If a constructor is available, call it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1095</B>The macro <TT>slab_bufctl()</TT> casts <TT>slabp</TT> to
+a <TT>slab_t</TT> slab descriptor and adds one to it. This brings
+the pointer to the end of the slab descriptor and then casts it back to
+a <TT>kmem_bufctl_t</TT> effectively giving the beginning of the
+bufctl array.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1098</B>The index of the first free object is 0 in the <TT>bufctl</TT>
+array</DD></DL><P>That covers the core of initialising objects. Next the first debugging part
+will be covered</P><PRE CLASS="verbatim">1065 #if DEBUG
+1066         if (cachep-&gt;flags &amp; SLAB_RED_ZONE) {
+1067             *((unsigned long*)(objp)) = RED_MAGIC1;
+1068             *((unsigned long*)(objp + cachep-&gt;objsize -
+1069                     BYTES_PER_WORD)) = RED_MAGIC1;
+1070             objp += BYTES_PER_WORD;
+1071         }
+1072 #endif
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1066</B>If the cache is to be red zones then place a marker at either
+end of the object</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1067</B>Place the marker at the beginning of the object</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1068</B>Place the marker at the end of the object. Remember that the
+size of the object takes into account the size of the red markers when red
+zoning is enabled</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1070</B>Increase the objp pointer by the size of the marker for the
+benefit of the constructor which is called after this debugging block
+</DD></DL><PRE CLASS="verbatim">1081 #if DEBUG
+1082         if (cachep-&gt;flags &amp; SLAB_RED_ZONE)
+1083             objp -= BYTES_PER_WORD;
+1084         if (cachep-&gt;flags &amp; SLAB_POISON)
+1086             kmem_poison_obj(cachep, objp);
+1087         if (cachep-&gt;flags &amp; SLAB_RED_ZONE) {
+1088             if (*((unsigned long*)(objp)) != RED_MAGIC1)
+1089                 BUG();
+1090             if (*((unsigned long*)(objp + cachep-&gt;objsize -
+1091                     BYTES_PER_WORD)) != RED_MAGIC1)
+1092                 BUG();
+1093         }
+1094 #endif
+</PRE><P>This is the debugging block that takes place after the constructor, if it
+exists, has been called.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1082-1083</B>The <TT>objp</TT> pointer was increased by the size of
+the red marker in the previous debugging block so move it back again</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1084-1086</B>If there was no constructor, poison the object with a known
+pattern that can be examined later to trap uninitialised writes</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1088</B>Check to make sure the red marker at the beginning of the object
+was preserved to trap writes before the object</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1090-1091</B>Check to make sure writes didn't take place past the end
+of the object</DD></DL><H3 CLASS="subsection"><A NAME="htoc333">H.3.2</A>  Object Allocation</H3><P>
+<A NAME="c_sec: Object Allocation"></A></P><H4 CLASS="subsubsection"><A NAME="htoc334">H.3.2.1</A>  Function: kmem_cache_alloc</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_alloc"></A> <A NAME="@codeindex235"></A></P><P>The call graph for this function is shown in Figure
+<A HREF="understand011.html#fig: kmem_cache_alloc">8.14</A>. This trivial function simply calls <TT>__kmem_cache_alloc()</TT>.</P><PRE CLASS="verbatim">1529 void * kmem_cache_alloc (kmem_cache_t *cachep, int flags)
+1531 {
+1532     return __kmem_cache_alloc(cachep, flags);
+1533 }
+</PRE><H4 CLASS="subsubsection"><A NAME="htoc335">H.3.2.2</A>  Function: __kmem_cache_alloc (UP Case)</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: __kmem_cache_alloc"></A> <A NAME="@codeindex236"></A></P><P>This will take the parts of the function specific to the UP case. The SMP case
+will be dealt with in the next section. </P><PRE CLASS="verbatim">1338 static inline void * __kmem_cache_alloc (kmem_cache_t *cachep, 
+                                              int flags)
+1339 {
+1340     unsigned long save_flags;
+1341     void* objp;
+1342 
+1343     kmem_cache_alloc_head(cachep, flags);
+1344 try_again:
+1345     local_irq_save(save_flags);
+
+1367     objp = kmem_cache_alloc_one(cachep);
+
+1369     local_irq_restore(save_flags);
+1370     return objp;
+1371 alloc_new_slab:
+
+1376     local_irq_restore(save_flags);
+1377     if (kmem_cache_grow(cachep, flags))
+1381         goto try_again;
+1382     return NULL;
+1383 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1338</B>The parameters are the cache to allocate from and allocation
+specific flags</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1343</B>This function makes sure the appropriate combination of DMA flags
+are in use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1345</B>Disable interrupts and save the flags. This function is used by
+interrupts so this is the only way to provide synchronisation in the UP case</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1367</B><TT>kmem_cache_alloc_one()</TT> (see Section <A HREF="#func: kmem_cache_alloc_one">H.3.2.5</A>)
+allocates an object from one of the lists and returns
+it. If no objects are free, this macro (note it isn't a function) will goto
+alloc_new_slab at the end of this function</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1369-1370</B>Restore interrupts and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1376</B>At this label, no objects were free in <TT>slabs_partial</TT>
+and <TT>slabs_free</TT> is empty so a new slab is needed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1377</B>Allocate a new slab (see Section <A HREF="understand011.html#Sec: Slab Creation">8.2.2</A>) </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1379</B>A new slab is available so try again</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1382</B>No slabs could be allocated so return failure
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc336">H.3.2.3</A>  Function: __kmem_cache_alloc (SMP Case)</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: __kmem_cache_alloc SMP"></A> <A NAME="@codeindex237"></A></P><P>This is what the function looks like in the SMP case</P><PRE CLASS="verbatim">1338 static inline void * __kmem_cache_alloc (kmem_cache_t *cachep, 
+                                              int flags)
+1339 {
+1340     unsigned long save_flags;
+1341     void* objp;
+1342 
+1343     kmem_cache_alloc_head(cachep, flags);
+1344 try_again:
+1345     local_irq_save(save_flags);
+1347     {
+1348         cpucache_t *cc = cc_data(cachep);
+1349 
+1350         if (cc) {
+1351             if (cc-&gt;avail) {
+1352                 STATS_INC_ALLOCHIT(cachep);
+1353                 objp = cc_entry(cc)[--cc-&gt;avail];
+1354             } else {
+1355                 STATS_INC_ALLOCMISS(cachep);
+1356                 objp =
+                  kmem_cache_alloc_batch(cachep,cc,flags);
+1357                 if (!objp)
+1358                   goto alloc_new_slab_nolock;
+1359             }
+1360         } else {
+1361             spin_lock(&amp;cachep-&gt;spinlock);
+1362             objp = kmem_cache_alloc_one(cachep);
+1363             spin_unlock(&amp;cachep-&gt;spinlock);
+1364         }
+1365     }
+1366     local_irq_restore(save_flags);
+1370     return objp;
+1371 alloc_new_slab:
+1373     spin_unlock(&amp;cachep-&gt;spinlock);
+1374 alloc_new_slab_nolock:
+1375     local_irq_restore(save_flags);
+1377     if (kmem_cache_grow(cachep, flags))
+1381         goto try_again;
+1382     return NULL;
+1383 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1338-1347</B>Same as UP case</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1349</B>Obtain the per CPU data for this cpu</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1350-1360</B>If a per CPU cache is available then ....</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1351</B>If there is an object available then ....</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1352</B>Update statistics for this cache if enabled</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1353</B>Get an object and update the <TT>avail</TT> figure</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1354</B>Else an object is not available so ....</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1355</B>Update statistics for this cache if enabled</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1356</B>Allocate <TT>batchcount</TT> number of objects, place all but one
+of them in the per CPU cache and return the last one to objp</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1357-1358</B>The allocation failed, so goto
+<TT>alloc_new_slab_nolock</TT> to grow the cache and allocate a new slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1360-1364</B>If a per CPU cache is not available, take out the cache
+spinlock and allocate one object in the same way the UP case does. This is
+the case during the initialisation for the <TT>cache_cache</TT> for example</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1363</B>Object was successfully assigned, release cache spinlock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1366-1370</B>Re-enable interrupts and return the allocated object</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1371-1372</B>If <TT>kmem_cache_alloc_one()</TT> failed to allocate an
+object, it will goto here with the spinlock still held so it must be released</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1375-1383</B>Same as the UP case
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc337">H.3.2.4</A>  Function: kmem_cache_alloc_head</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_alloc_head"></A> <A NAME="@codeindex238"></A></P><P>This simple function ensures the right combination of slab and GFP flags are
+used for allocation from a slab. If a cache is for DMA use, this function will
+make sure the caller does not accidently request normal memory and vice versa</P><PRE CLASS="verbatim">1231 static inline void kmem_cache_alloc_head(kmem_cache_t *cachep, 
+                                              int flags)
+1232 {
+1233     if (flags &amp; SLAB_DMA) {
+1234         if (!(cachep-&gt;gfpflags &amp; GFP_DMA))
+1235             BUG();
+1236     } else {
+1237         if (cachep-&gt;gfpflags &amp; GFP_DMA)
+1238             BUG();
+1239     }
+1240 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1231</B>The parameters are the cache we are allocating from and the flags
+requested for the allocation</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1233</B>If the caller has requested memory for DMA use and ....</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1234</B>The cache is not using DMA memory then <TT>BUG()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1237</B>Else if the caller has not requested DMA memory and this cache is
+for DMA use, <TT>BUG()</TT>
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc338">H.3.2.5</A>  Function: kmem_cache_alloc_one</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_alloc_one"></A> <A NAME="@codeindex239"></A></P><P>This is a preprocessor macro. It may seem strange to not make this an
+inline function but it is a preprocessor macro for a goto optimisation in
+<TT>__kmem_cache_alloc()</TT> (see Section <A HREF="#func: __kmem_cache_alloc">H.3.2.2</A>) </P><PRE CLASS="verbatim">1283 #define kmem_cache_alloc_one(cachep)              \
+1284 ({                                                \ 
+1285     struct list_head * slabs_partial, * entry;    \
+1286     slab_t *slabp;                                \
+1287                                                   \
+1288     slabs_partial = &amp;(cachep)-&gt;slabs_partial;     \
+1289     entry = slabs_partial-&gt;next;                  \
+1290     if (unlikely(entry == slabs_partial)) {       \
+1291         struct list_head * slabs_free;            \
+1292         slabs_free = &amp;(cachep)-&gt;slabs_free;       \
+1293         entry = slabs_free-&gt;next;                 \
+1294         if (unlikely(entry == slabs_free))        \
+1295             goto alloc_new_slab;                  \
+1296         list_del(entry);                          \
+1297         list_add(entry, slabs_partial);           \
+1298     }                                             \
+1299                                                   \
+1300     slabp = list_entry(entry, slab_t, list);      \
+1301     kmem_cache_alloc_one_tail(cachep, slabp);     \
+1302 })
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1288-1289</B>Get the first slab from the <TT>slabs_partial</TT> list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1290-1298</B>If a slab is not available from this list, execute this block</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1291-1293</B>Get the first slab from the <TT>slabs_free</TT> list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1294-1295</B>If there is no slabs on slabs_free,
+then goto <TT>alloc_new_slab()</TT>. This goto label is in
+<TT>__kmem_cache_alloc()</TT> and it is will grow the cache by one slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1296-1297</B>Else remove the slab from the free list and place it on
+the <TT>slabs_partial</TT> list because an object is about to be removed
+from it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1300</B>Obtain the slab from the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1301</B>Allocate one object from the slab
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc339">H.3.2.6</A>  Function: kmem_cache_alloc_one_tail</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_alloc_one_tail"></A> <A NAME="@codeindex240"></A></P><P>This function is responsible for the allocation of one object from a slab.
+Much of it is debugging code.</P><PRE CLASS="verbatim">1242 static inline void * kmem_cache_alloc_one_tail (
+                             kmem_cache_t *cachep,
+1243                         slab_t *slabp)
+1244 {
+1245     void *objp;
+1246 
+1247     STATS_INC_ALLOCED(cachep);
+1248     STATS_INC_ACTIVE(cachep);
+1249     STATS_SET_HIGH(cachep);
+1250 
+1252     slabp-&gt;inuse++;
+1253     objp = slabp-&gt;s_mem + slabp-&gt;free*cachep-&gt;objsize;
+1254     slabp-&gt;free=slab_bufctl(slabp)[slabp-&gt;free];
+1255 
+1256     if (unlikely(slabp-&gt;free == BUFCTL_END)) {
+1257         list_del(&amp;slabp-&gt;list);
+1258         list_add(&amp;slabp-&gt;list, &amp;cachep-&gt;slabs_full);
+1259     }
+1260 #if DEBUG
+1261     if (cachep-&gt;flags &amp; SLAB_POISON)
+1262         if (kmem_check_poison_obj(cachep, objp))
+1263             BUG();
+1264     if (cachep-&gt;flags &amp; SLAB_RED_ZONE) {
+1266         if (xchg((unsigned long *)objp, RED_MAGIC2) !=
+1267                           RED_MAGIC1)
+1268             BUG();
+1269         if (xchg((unsigned long *)(objp+cachep-&gt;objsize -
+1270             BYTES_PER_WORD), RED_MAGIC2) != RED_MAGIC1)
+1271             BUG();
+1272         objp += BYTES_PER_WORD;
+1273     }
+1274 #endif
+1275     return objp;
+1276 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1230</B>The parameters are the cache and slab been allocated from</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1247-1249</B>If stats are enabled, this will set three statistics.
+<TT>ALLOCED</TT> is the total number of objects that have been
+allocated. <TT>ACTIVE</TT> is the number of active objects in the cache.
+<TT>HIGH</TT> is the maximum number of objects that were active as a
+single time</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1252</B><TT>inuse</TT> is the number of objects active on this slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1253</B>Get a pointer to a free object. <TT>s_mem</TT> is a pointer to
+the first object on the slab. <TT>free</TT> is an index of a free object in
+the slab. <TT>index * object size</TT> gives an offset within the slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1254</B>This updates the free pointer to be an index of the next free
+object</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1256-1259</B>If the slab is full, remove it from the
+<TT>slabs_partial</TT> list and place it on the <TT>slabs_full</TT>.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1260-1274</B>Debugging code</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1275</B>Without debugging, the object is returned to the caller</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1261-1263</B>If the object was poisoned with a known pattern, check it
+to guard against uninitialised access</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1266-1267</B>If red zoning was enabled, check the marker at the beginning
+of the object and confirm it is safe. Change the red marker to check for
+writes before the object later</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1269-1271</B>Check the marker at the end of the object and change it to
+check for writes after the object later</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1272</B>Update the object pointer to point to after the red marker</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1275</B>Return the object
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc340">H.3.2.7</A>  Function: kmem_cache_alloc_batch</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_alloc_batch"></A> <A NAME="@codeindex241"></A></P><P>This function allocate a batch of objects to a CPU cache of
+objects. It is only used in the SMP case. In many ways it is very
+similar <TT>kmem_cache_alloc_one()</TT>(See Section <A HREF="#func: kmem_cache_alloc_one">H.3.2.5</A>).</P><PRE CLASS="verbatim">1305 void* kmem_cache_alloc_batch(kmem_cache_t* cachep, 
+                  cpucache_t* cc, int flags)
+1306 {
+1307     int batchcount = cachep-&gt;batchcount;
+1308 
+1309     spin_lock(&amp;cachep-&gt;spinlock);
+1310     while (batchcount--) {
+1311         struct list_head * slabs_partial, * entry;
+1312         slab_t *slabp;
+1313         /* Get slab alloc is to come from. */
+1314         slabs_partial = &amp;(cachep)-&gt;slabs_partial;
+1315         entry = slabs_partial-&gt;next;
+1316         if (unlikely(entry == slabs_partial)) {
+1317             struct list_head * slabs_free;
+1318             slabs_free = &amp;(cachep)-&gt;slabs_free;
+1319             entry = slabs_free-&gt;next;
+1320             if (unlikely(entry == slabs_free))
+1321                 break;
+1322             list_del(entry);
+1323             list_add(entry, slabs_partial);
+1324         }
+1325 
+1326         slabp = list_entry(entry, slab_t, list);
+1327         cc_entry(cc)[cc-&gt;avail++] =
+1328                kmem_cache_alloc_one_tail(cachep, slabp);
+1329     }
+1330     spin_unlock(&amp;cachep-&gt;spinlock);
+1331 
+1332     if (cc-&gt;avail)
+1333         return cc_entry(cc)[--cc-&gt;avail];
+1334     return NULL;
+1335 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1305</B>The parameters are the cache to allocate from, the per CPU cache
+to fill and allocation flags</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1307</B><TT>batchcount</TT> is the number of objects to allocate</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1309</B>Obtain the spinlock for access to the cache descriptor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1310-1329</B>Loop <TT>batchcount times</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1311-1324</B>This is example the same as <TT>kmem_cache_alloc_one()</TT>(See Section <A HREF="#func: kmem_cache_alloc_one">H.3.2.5</A>).
+It selects a slab from either
+<TT>slabs_partial</TT> or <TT>slabs_free</TT> to allocate from. If
+none are available, break out of the loop</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1326-1327</B>Call <TT>kmem_cache_alloc_one_tail()</TT>
+(See Section <A HREF="#func: kmem_cache_alloc_one_tail">H.3.2.6</A>) and place it in the per CPU cache </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1330</B>Release the cache descriptor lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1332-1333</B>Take one of the objects allocated in this batch and return it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1334</B>If no object was allocated, return.
+<TT>__kmem_cache_alloc()</TT> (See Section <A HREF="#func: __kmem_cache_alloc">H.3.2.2</A>) will grow the cache by one slab and try again</DD></DL><H3 CLASS="subsection"><A NAME="htoc341">H.3.3</A>  Object Freeing</H3><P>
+<A NAME="c_sec: Object Freeing"></A></P><H4 CLASS="subsubsection"><A NAME="htoc342">H.3.3.1</A>  Function: kmem_cache_free</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_free"></A> <A NAME="@codeindex242"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand011.html#fig: kmem_cache_free">8.15</A>. </P><PRE CLASS="verbatim">1576 void kmem_cache_free (kmem_cache_t *cachep, void *objp)
+1577 {
+1578     unsigned long flags;
+1579 #if DEBUG
+1580     CHECK_PAGE(virt_to_page(objp));
+1581     if (cachep != GET_PAGE_CACHE(virt_to_page(objp)))
+1582         BUG();
+1583 #endif
+1584 
+1585     local_irq_save(flags);
+1586     __kmem_cache_free(cachep, objp);
+1587     local_irq_restore(flags);
+1588 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1576</B>The parameter is the cache the object is been freed from and the
+object itself</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1579-1583</B>If debugging is enabled, the page will first be checked
+with <TT>CHECK_PAGE()</TT><A NAME="@codeindex243"></A> to make sure it is a slab page. Secondly the
+page list will be examined to make sure it belongs to this cache (See Figure
+<A HREF="understand011.html#fig: Page to Cache and Slab Relationship">8.8</A>) </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1585</B>Interrupts are disabled to protect the path</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1586</B><TT>__kmem_cache_free()</TT> 
+(See Section <A HREF="#func: __kmem_cache_free (UP)">H.3.3.2</A>) will free the object to the per-CPU 
+cache for the SMP case and to the global pool in the normal case</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1587</B>Re-enable interrupts
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc343">H.3.3.2</A>  Function: __kmem_cache_free (UP Case)</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: __kmem_cache_free (UP)"></A> <A NAME="@codeindex244"></A></P><P>This covers what the function looks like in the UP case. Clearly, it simply
+releases the object to the slab. </P><PRE CLASS="verbatim">1493 static inline void __kmem_cache_free (kmem_cache_t *cachep, 
+                                           void* objp)
+1494 {
+1517     kmem_cache_free_one(cachep, objp);
+1519 }
+</PRE><H4 CLASS="subsubsection"><A NAME="htoc344">H.3.3.3</A>  Function: __kmem_cache_free (SMP Case)</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: __kmem_cache_free (SMP)"></A> <A NAME="@codeindex245"></A></P><P>This case is slightly more interesting. In this case, the object is released
+to the per-cpu cache if it is available.</P><PRE CLASS="verbatim">1493 static inline void __kmem_cache_free (kmem_cache_t *cachep, 
+                                          void* objp)
+1494 {
+1496     cpucache_t *cc = cc_data(cachep);
+1497 
+1498     CHECK_PAGE(virt_to_page(objp));
+1499     if (cc) {
+1500         int batchcount;
+1501         if (cc-&gt;avail &lt; cc-&gt;limit) {
+1502             STATS_INC_FREEHIT(cachep);
+1503             cc_entry(cc)[cc-&gt;avail++] = objp;
+1504             return;
+1505         }
+1506         STATS_INC_FREEMISS(cachep);
+1507         batchcount = cachep-&gt;batchcount;
+1508         cc-&gt;avail -= batchcount;
+1509         free_block(cachep,
+1510             &amp;cc_entry(cc)[cc-&gt;avail],batchcount);
+1511         cc_entry(cc)[cc-&gt;avail++] = objp;
+1512         return;
+1513     } else {
+1514         free_block(cachep, &amp;objp, 1);
+1515     }
+1519 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1496</B>Get the data for this per CPU cache (See Section <A HREF="understand011.html#Sec: Describing the Per-CPU Object Cache">8.5.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1498</B>Make sure the page is a slab page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1499-1513</B>If a per-CPU cache is available, try to use it. This is not
+always available. During cache destruction for instance, the per CPU caches
+are already gone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1501-1505</B>If the number of available in the per CPU cache is below
+limit, then add the object to the free list and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1506</B>Update statistics if enabled</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1507</B>The pool has overflowed so batchcount number of objects is going
+to be freed to the global pool</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1508</B>Update the number of available (<TT>avail</TT>) objects</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1509-1510</B>Free a block of objects to the global cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1511</B>Free the requested object and place it on the per CPU pool</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1513</B>If the per-CPU cache is not available, then free this object to
+the global pool
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc345">H.3.3.4</A>  Function: kmem_cache_free_one</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_free_one"></A> <A NAME="@codeindex246"></A></P><PRE CLASS="verbatim">1414 static inline void kmem_cache_free_one(kmem_cache_t *cachep, 
+                                            void *objp)
+1415 {
+1416     slab_t* slabp;
+1417 
+1418     CHECK_PAGE(virt_to_page(objp));
+1425     slabp = GET_PAGE_SLAB(virt_to_page(objp));
+1426 
+1427 #if DEBUG
+1428     if (cachep-&gt;flags &amp; SLAB_DEBUG_INITIAL)
+1433         cachep-&gt;ctor(objp, cachep,
+            SLAB_CTOR_CONSTRUCTOR|SLAB_CTOR_VERIFY);
+1434 
+1435     if (cachep-&gt;flags &amp; SLAB_RED_ZONE) {
+1436         objp -= BYTES_PER_WORD;
+1437         if (xchg((unsigned long *)objp, RED_MAGIC1) !=
+                             RED_MAGIC2)
+1438             BUG();
+1440         if (xchg((unsigned long *)(objp+cachep-&gt;objsize -
+1441                 BYTES_PER_WORD), RED_MAGIC1) !=
+                              RED_MAGIC2)
+1443             BUG();
+1444     }
+1445     if (cachep-&gt;flags &amp; SLAB_POISON)
+1446         kmem_poison_obj(cachep, objp);
+1447     if (kmem_extra_free_checks(cachep, slabp, objp))
+1448         return;
+1449 #endif
+1450     {
+1451         unsigned int objnr = (objp-slabp-&gt;s_mem)/cachep-&gt;objsize;
+1452 
+1453         slab_bufctl(slabp)[objnr] = slabp-&gt;free;
+1454         slabp-&gt;free = objnr;
+1455     }
+1456     STATS_DEC_ACTIVE(cachep);
+1457     
+1459     {
+1460         int inuse = slabp-&gt;inuse;
+1461         if (unlikely(!--slabp-&gt;inuse)) {
+1462             /* Was partial or full, now empty. */
+1463             list_del(&amp;slabp-&gt;list);
+1464             list_add(&amp;slabp-&gt;list, &amp;cachep-&gt;slabs_free);
+1465         } else if (unlikely(inuse == cachep-&gt;num)) {
+1466             /* Was full. */
+1467             list_del(&amp;slabp-&gt;list);
+1468             list_add(&amp;slabp-&gt;list, &amp;cachep-&gt;slabs_partial);
+1469         }
+1470     }
+1471 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1418</B>Make sure the page is a slab page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1425</B>Get the slab descriptor for the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1427-1449</B>Debugging material. Discussed at end of section</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1451</B>Calculate the index for the object been freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1454</B>As this object is now free, update the bufctl to reflect that</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1456</B>If statistics are enabled, disable the number of active objects in
+the slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1461-1464</B>If <TT>inuse</TT> reaches 0, the slab is free and is moved to
+the <TT>slabs_free</TT> list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1465-1468</B>If the number in use equals the number of objects in a slab,
+it is full so move it to the <TT>slabs_full</TT> list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1471</B>End of function</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1428-1433</B>If <TT>SLAB_DEBUG_INITIAL</TT> is set, the constructor
+is called to verify the object is in an initialised state</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1435-1444</B>Verify the red marks at either end of the object are still
+there. This will check for writes beyond the boundaries of the object and for
+double frees</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1445-1446</B>Poison the freed object with a known pattern</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1447-1448</B>This function will confirm the object is a part of this
+slab and cache. It will then check the free list (<TT>bufctl</TT>) to make
+sure this is not a double free</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc346">H.3.3.5</A>  Function: free_block</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: free_block"></A> <A NAME="@codeindex247"></A></P><P>This function is only used in the SMP case when the per CPU cache gets too
+full. It is used to free a batch of objects in bulk</P><PRE CLASS="verbatim">1481 static void free_block (kmem_cache_t* cachep, void** objpp, 
+                             int len)
+1482 {
+1483     spin_lock(&amp;cachep-&gt;spinlock);
+1484     __free_block(cachep, objpp, len);
+1485     spin_unlock(&amp;cachep-&gt;spinlock);
+1486 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1481</B>The parameters are;<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cachep</B> The cache that objects are been freed from
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>objpp</B> Pointer to the first object to free
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>len</B> The number of objects to free
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1483</B>Acquire a lock to the cache descriptor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1486</B><TT>__free_block()</TT>(See Section <A HREF="#func: __free_block">H.3.3.6</A>) performs the
+actual task of freeing up each of the pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1487</B>Release the lock</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc347">H.3.3.6</A>  Function: __free_block</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: __free_block"></A> <A NAME="@codeindex248"></A></P><P>This function is responsible for freeing each of the objects in
+the per-CPU array <TT>objpp</TT>.</P><PRE CLASS="verbatim">1474 static inline void __free_block (kmem_cache_t* cachep,
+1475                 void** objpp, int len)
+1476 {
+1477     for ( ; len &gt; 0; len--, objpp++)
+1478         kmem_cache_free_one(cachep, *objpp);
+1479 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1474</B>The parameters are the <TT>cachep</TT> the objects belong to,
+the list of objects(<TT>objpp</TT>) and the number of objects to free
+(<TT>len</TT>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1477</B>Loop <TT>len</TT> number of times</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1478</B>Free an object from the array</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc121"></A><A NAME="htoc348">H.4</A>  Sizes Cache</H2><P>
+<A NAME="c_sec: Sizes Cache"></A></P><H3 CLASS="subsection"><A NAME="htoc349">H.4.1</A>  Initialising the Sizes Cache</H3><H4 CLASS="subsubsection"><A NAME="htoc350">H.4.1.1</A>  Function: kmem_cache_sizes_init</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_sizes_init"></A> <A NAME="@codeindex249"></A></P><P>This function is responsible for creating pairs of caches for small memory
+buffers suitable for either normal or DMA memory.</P><PRE CLASS="verbatim">436 void __init kmem_cache_sizes_init(void)
+437 {
+438     cache_sizes_t *sizes = cache_sizes;
+439     char name[20];
+440
+444     if (num_physpages &gt; (32 &lt;&lt; 20) &gt;&gt; PAGE_SHIFT)
+445         slab_break_gfp_order = BREAK_GFP_ORDER_HI;
+446     do {
+452         snprintf(name, sizeof(name), "size-%Zd",
+                 sizes-&gt;cs_size);
+453         if (!(sizes-&gt;cs_cachep =
+454             kmem_cache_create(name, sizes-&gt;cs_size,
+455                       0, SLAB_HWCACHE_ALIGN, NULL, NULL))) {
+456             BUG();
+457         }
+458 
+460         if (!(OFF_SLAB(sizes-&gt;cs_cachep))) {
+461             offslab_limit = sizes-&gt;cs_size-sizeof(slab_t);
+462             offslab_limit /= 2;
+463         }
+464         snprintf(name, sizeof(name), "size-%Zd(DMA)",
+                         sizes-&gt;cs_size);
+465         sizes-&gt;cs_dmacachep = kmem_cache_create(name, 
+                  sizes-&gt;cs_size, 0,
+466                   SLAB_CACHE_DMA|SLAB_HWCACHE_ALIGN, 
+                  NULL, NULL);
+467         if (!sizes-&gt;cs_dmacachep)
+468             BUG();
+469         sizes++;
+470     } while (sizes-&gt;cs_size);
+471 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>438</B>Get a pointer to the <TT>cache_sizes</TT> array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>439</B>The human readable name of the cache . Should be sized
+<TT>CACHE_NAMELEN</TT><A NAME="@codeindex250"></A> which is defined to be 20 bytes long</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>444-445</B><TT>slab_break_gfp_order</TT><A NAME="@codeindex251"></A> determines how
+many pages a slab may use unless 0 objects fit into the slab. It is
+statically initialised to <TT>BREAK_GFP_ORDER_LO</TT><A NAME="@codeindex252"></A> (1). This
+check sees if more than 32MiB of memory is available and if it is, allow
+<TT>BREAK_GFP_ORDER_HI</TT><A NAME="@codeindex253"></A> number of pages to be used because
+internal fragmentation is more acceptable when more memory is available.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>446-470</B>Create two caches for each size of memory allocation needed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>452</B>Store the human readable cache name in <TT>name</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>453-454</B>Create the cache, aligned to the L1 cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>460-463</B>Calculate the off-slab bufctl limit which determines the number
+of objects that can be stored in a cache when the slab descriptor is kept
+off-cache.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>464</B>The human readable name for the cache for DMA use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>465-466</B>Create the cache, aligned to the L1 cache and suitable for
+DMA user</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>467</B>if the cache failed to allocate, it is a bug. If memory is
+unavailable this early, the machine will not boot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>469</B>Move to the next element in the <TT>cache_sizes</TT> array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>470</B>The array is terminated with a 0 as the last element
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc351">H.4.2</A>  <TT>kmalloc()</TT></H3><H4 CLASS="subsubsection"><A NAME="htoc352">H.4.2.1</A>  Function: kmalloc</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmalloc"></A> <A NAME="@codeindex254"></A></P><P>Ths call graph for this function is shown in Figure <A HREF="understand011.html#fig: kmalloc">8.16</A>. </P><PRE CLASS="verbatim">1555 void * kmalloc (size_t size, int flags)
+1556 {
+1557     cache_sizes_t *csizep = cache_sizes;
+1558 
+1559     for (; csizep-&gt;cs_size; csizep++) {
+1560         if (size &gt; csizep-&gt;cs_size)
+1561             continue;
+1562         return __kmem_cache_alloc(flags &amp; GFP_DMA ?
+1563              csizep-&gt;cs_dmacachep : 
+                  csizep-&gt;cs_cachep, flags);
+1564     }
+1565     return NULL;
+1566 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1557</B><TT>cache_sizes</TT> is the array of caches for each size
+(See Section <A HREF="understand011.html#Sec: Sizes Cache">8.4</A>) </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1559-1564</B>Starting
+with the smallest cache, examine the size of each
+cache until one large enough to satisfy the request is found</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1562</B>If the allocation is for use with DMA, allocate an object from
+<TT>cs_dmacachep</TT> else use the <TT>cs_cachep</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1565</B>If a sizes cache of sufficient size was not available or an object
+could not be allocated, return failure
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc353">H.4.3</A>  <TT>kfree()</TT></H3><H4 CLASS="subsubsection"><A NAME="htoc354">H.4.3.1</A>  Function: kfree</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kfree"></A> <A NAME="@codeindex255"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand011.html#fig: kfree">8.17</A>. It is
+worth noting that the work this function does is almost identical to the
+function <TT>kmem_cache_free()</TT> with debugging enabled (See Section
+<A HREF="#func: kmem_cache_free">H.3.3.1</A>). </P><PRE CLASS="verbatim">1597 void kfree (const void *objp)
+1598 {
+1599     kmem_cache_t *c;
+1600     unsigned long flags;
+1601 
+1602     if (!objp)
+1603         return;
+1604     local_irq_save(flags);
+1605     CHECK_PAGE(virt_to_page(objp));
+1606     c = GET_PAGE_CACHE(virt_to_page(objp));
+1607     __kmem_cache_free(c, (void*)objp);
+1608     local_irq_restore(flags);
+1609 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1602</B>Return if the pointer is NULL. This is possible if a caller
+used <TT>kmalloc()</TT> and had a catch-all failure routine which called
+<TT>kfree()</TT> immediately</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1604</B>Disable interrupts</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1605</B>Make sure the page this object is in is a slab page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1606</B>Get the cache this pointer belongs to (See Section <A HREF="understand011.html#Sec: Slabs">8.2</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1607</B>Free the memory object</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1608</B>Re-enable interrupts
+</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc122"></A><A NAME="htoc355">H.5</A>  Per-CPU Object Cache</H2><P>
+<A NAME="c_sec: Per-CPU Object Cache"></A></P><P>The structure of the Per-CPU object cache and how objects are added or removed
+from them is covered in detail in Sections <A HREF="understand011.html#Sec: Describing the Per-CPU Object Cache">8.5.1</A> and <A HREF="understand011.html#Sec: Adding/Removing Objects from the Per-CPU Cache">8.5.2</A>.</P><H3 CLASS="subsection"><A NAME="htoc356">H.5.1</A>  Enabling Per-CPU Caches</H3><H4 CLASS="subsubsection"><A NAME="htoc357">H.5.1.1</A>  Function: enable_all_cpucaches</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: enable_all_cpucaches"></A> <A NAME="@codeindex256"></A></P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html081.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure H.1: Call Graph: <TT>enable_all_cpucaches()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: enable_all_cpucaches"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>This function locks the cache chain and enables the cpucache for every cache.
+This is important after the <TT>cache_cache</TT> and sizes cache have
+been enabled.</P><PRE CLASS="verbatim">1714 static void enable_all_cpucaches (void)
+1715 {
+1716     struct list_head* p;
+1717 
+1718     down(&amp;cache_chain_sem);
+1719 
+1720     p = &amp;cache_cache.next;
+1721     do {
+1722         kmem_cache_t* cachep = list_entry(p, kmem_cache_t, next);
+1723 
+1724         enable_cpucache(cachep);
+1725         p = cachep-&gt;next.next;
+1726     } while (p != &amp;cache_cache.next);
+1727 
+1728     up(&amp;cache_chain_sem);
+1729 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1718</B>Obtain the semaphore to the cache chain</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1719</B>Get the first cache on the chain</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1721-1726</B>Cycle through the whole chain</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1722</B>Get a cache from the chain. This code will skip the first cache
+on the chain but <TT>cache_cache</TT> doesn't need a cpucache as it is so
+rarely used</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1724</B>Enable the cpucache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1725</B>Move to the next cache on the chain</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1726</B>Release the cache chain semaphore
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc358">H.5.1.2</A>  Function: enable_cpucache</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: enable_cpucache"></A> <A NAME="@codeindex257"></A></P><P>This function calculates what the size of a cpucache should be
+based on the size of the objects the cache contains before calling
+<TT>kmem_tune_cpucache()</TT> which does the actual allocation.</P><PRE CLASS="verbatim">1693 static void enable_cpucache (kmem_cache_t *cachep)
+1694 {
+1695     int err;
+1696     int limit;
+1697 
+1699     if (cachep-&gt;objsize &gt; PAGE_SIZE)
+1700         return;
+1701     if (cachep-&gt;objsize &gt; 1024)
+1702         limit = 60;
+1703     else if (cachep-&gt;objsize &gt; 256)
+1704         limit = 124;
+1705     else
+1706         limit = 252;
+1707 
+1708     err = kmem_tune_cpucache(cachep, limit, limit/2);
+1709     if (err)
+1710         printk(KERN_ERR 
+            "enable_cpucache failed for %s, error %d.\n",
+1711                     cachep-&gt;name, -err);
+1712 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1699-1700</B>If an object is larger than a page, do not create a per-CPU
+cache as they are too expensive</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1701-1702</B>If an object is larger than 1KiB, keep the cpu cache below
+3MiB in size. The limit is set to 124 objects to take the size of the cpucache
+descriptors into account</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1703-1704</B>For smaller objects, just make sure the cache doesn't go
+above 3MiB in size</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1708</B>Allocate the memory for the cpucache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1710-1711</B>Print out an error message if the allocation failed
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc359">H.5.1.3</A>  Function: kmem_tune_cpucache</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_tune_cpucache"></A> <A NAME="@codeindex258"></A></P><P>This function is responsible for allocating memory for the cpucaches. For
+each CPU on the system, kmalloc gives a block of memory large
+enough for one cpu cache and fills a <TT>ccupdate_struct_t</TT>
+struct. The function <TT>smp_call_function_all_cpus()</TT> then calls
+<TT>do_ccupdate_local()</TT> which swaps the new information with the old
+information in the cache descriptor.</P><PRE CLASS="verbatim">1639 static int kmem_tune_cpucache (kmem_cache_t* cachep, 
+                    int limit, int batchcount)
+1640 {
+1641     ccupdate_struct_t new;
+1642     int i;
+1643 
+1644     /*
+1645      * These are admin-provided, so we are more graceful.
+1646      */
+1647     if (limit &lt; 0)
+1648         return -EINVAL;
+1649     if (batchcount &lt; 0)
+1650         return -EINVAL;
+1651     if (batchcount &gt; limit)
+1652         return -EINVAL;
+1653     if (limit != 0 &amp;&amp; !batchcount)
+1654         return -EINVAL;
+1655 
+1656     memset(&amp;new.new,0,sizeof(new.new));
+1657     if (limit) {
+1658         for (i = 0; i&lt; smp_num_cpus; i++) {
+1659             cpucache_t* ccnew;
+1660 
+1661             ccnew = kmalloc(sizeof(void*)*limit+
+1662                     sizeof(cpucache_t), 
+                         GFP_KERNEL);
+1663             if (!ccnew)
+1664                 goto oom;
+1665             ccnew-&gt;limit = limit;
+1666             ccnew-&gt;avail = 0;
+1667             new.new[cpu_logical_map(i)] = ccnew;
+1668         }
+1669     }
+1670     new.cachep = cachep;
+1671     spin_lock_irq(&amp;cachep-&gt;spinlock);
+1672     cachep-&gt;batchcount = batchcount;
+1673     spin_unlock_irq(&amp;cachep-&gt;spinlock);
+1674 
+1675     smp_call_function_all_cpus(do_ccupdate_local, (void *)&amp;new);
+1676 
+1677     for (i = 0; i &lt; smp_num_cpus; i++) {
+1678         cpucache_t* ccold = new.new[cpu_logical_map(i)];
+1679         if (!ccold)
+1680             continue;
+1681         local_irq_disable();
+1682         free_block(cachep, cc_entry(ccold), ccold-&gt;avail);
+1683         local_irq_enable();
+1684         kfree(ccold);
+1685     }
+1686     return 0;
+1687 oom:
+1688     for (i--; i &gt;= 0; i--)
+1689         kfree(new.new[cpu_logical_map(i)]);
+1690     return -ENOMEM;
+1691 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1639</B>The parameters of the function are<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cachep</B> The cache this cpucache is been allocated for
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>limit</B> The total number of objects that can exist in the cpucache
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>batchcount</B> The number of objects to allocate in one batch when the
+<TT>cpucache</TT> is empty
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1647</B>The number of objects in the cache cannot be negative</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1649</B>A negative number of objects cannot be allocated in batch</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1651</B>A batch of objects greater than the limit cannot be allocated</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1653</B>A batchcount must be provided if the limit is positive</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1656</B>Zero fill the update struct</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1657</B>If a limit is provided, allocate memory for the cpucache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1658-1668</B>For every CPU, allocate a cpucache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1661</B>The amount of memory needed is <TT>limit</TT> number of pointers
+and the size of the cpucache descriptor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1663</B>If out of memory, clean up and exit</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1665-1666</B>Fill in the fields for the cpucache descriptor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1667</B>Fill in the information for <TT>ccupdate_update_t</TT> struct</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1670</B>Tell the <TT>ccupdate_update_t</TT> struct what cache is
+been updated</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1671-1673</B>Acquire an interrupt safe lock to the cache descriptor and
+set its batchcount</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1675</B>Get each CPU to update its cpucache information for itself. This
+swaps the old cpucaches in the cache descriptor with the new ones in
+<TT>new</TT> using <TT>do_ccupdate_local()</TT> 
+(See Section <A HREF="#func: do_ccupdate_local">H.5.2.2</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1677-1685</B>After <TT>smp_call_function_all_cpus()</TT> 
+(See Section <A HREF="#func: smp_call_function_all_cpus">H.5.2.1</A>), the old cpucaches are in 
+<TT>new</TT>. This block of code cycles through them all, frees any objects 
+in them and deletes the old cpucache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1686</B>Return success</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1688</B>In the event there is no memory, delete all cpucaches that have
+been allocated up until this point and return failure
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc360">H.5.2</A>  Updating Per-CPU Information</H3><H4 CLASS="subsubsection"><A NAME="htoc361">H.5.2.1</A>  Function: smp_call_function_all_cpus</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: smp_call_function_all_cpus"></A> <A NAME="@codeindex259"></A></P><P>This calls the function <TT>func()</TT> for all CPU's. In the context of
+the slab allocator, the function is <TT>do_ccupdate_local()</TT> and the
+argument is <TT>ccupdate_struct_t</TT>.</P><PRE CLASS="verbatim">859 static void smp_call_function_all_cpus(void (*func) (void *arg), 
+                       void *arg)
+860 {
+861     local_irq_disable();
+862     func(arg);
+863     local_irq_enable();
+864 
+865     if (smp_call_function(func, arg, 1, 1))
+866         BUG();
+867 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>861-863</B>Disable interrupts locally and call the function for this CPU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>865</B>For all other CPU's, call the function.
+<TT>smp_call_function()</TT> is an architecture specific function and will
+not be discussed further here</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc362">H.5.2.2</A>  Function: do_ccupdate_local</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: do_ccupdate_local"></A> <A NAME="@codeindex260"></A></P><P>This function swaps the cpucache information in the cache descriptor with the
+information in <TT>info</TT> for this CPU.</P><PRE CLASS="verbatim">874 static void do_ccupdate_local(void *info)
+875 {
+876     ccupdate_struct_t *new = (ccupdate_struct_t *)info;
+877     cpucache_t *old = cc_data(new-&gt;cachep);
+878     
+879     cc_data(new-&gt;cachep) = new-&gt;new[smp_processor_id()];
+880     new-&gt;new[smp_processor_id()] = old;
+881 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>876</B><TT>info</TT> is a pointer to the <TT>ccupdate_struct_t</TT>
+which is then passed to <TT>smp_call_function_all_cpus()</TT>(See Section <A HREF="#func: smp_call_function_all_cpus">H.5.2.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>877</B>Part of the <TT>ccupdate_struct_t</TT> is a pointer
+to the cache this cpucache belongs to. <TT>cc_data()</TT> returns the
+<TT>cpucache_t</TT> for this processor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>879</B>Place the new cpucache in cache descriptor. <TT>cc_data()</TT>
+returns the pointer to the cpucache for this CPU.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>880</B>Replace the pointer in new with the old cpucache so it can
+be deleted later by the caller of <TT>smp_call_function_call_cpus()</TT>,
+<TT>kmem_tune_cpucache()</TT> for example</DD></DL><H3 CLASS="subsection"><A NAME="htoc363">H.5.3</A>  Draining a Per-CPU Cache</H3><P>This function is called to drain all objects in a per-cpu cache. It is called
+when a cache needs to be shrunk for the freeing up of slabs. A slab would not
+be freeable if an object was in the per-cpu cache even though it is not in use.</P><H4 CLASS="subsubsection"><A NAME="htoc364">H.5.3.1</A>  Function: drain_cpu_caches</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: drain_cpu_caches"></A> <A NAME="@codeindex261"></A></P><PRE CLASS="verbatim">885 static void drain_cpu_caches(kmem_cache_t *cachep)
+886 {
+887     ccupdate_struct_t new;
+888     int i;
+889 
+890     memset(&amp;new.new,0,sizeof(new.new));
+891 
+892     new.cachep = cachep;
+893 
+894     down(&amp;cache_chain_sem);
+895     smp_call_function_all_cpus(do_ccupdate_local, (void *)&amp;new);
+896 
+897     for (i = 0; i &lt; smp_num_cpus; i++) {
+898         cpucache_t* ccold = new.new[cpu_logical_map(i)];
+899         if (!ccold || (ccold-&gt;avail == 0))
+900             continue;
+901         local_irq_disable();
+902         free_block(cachep, cc_entry(ccold), ccold-&gt;avail);
+903         local_irq_enable();
+904         ccold-&gt;avail = 0;
+905     }
+906     smp_call_function_all_cpus(do_ccupdate_local, (void *)&amp;new);
+907     up(&amp;cache_chain_sem);
+908 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>890</B>Blank the update structure as it is going to be clearing all data</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>892</B>Set <TT>new.cachep</TT> to cachep so that
+<TT>smp_call_function_all_cpus()</TT> knows what cache it is affecting</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>894</B>Acquire the cache descriptor semaphore</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>895</B><TT>do_ccupdate_local()</TT>(See Section <A HREF="#func: do_ccupdate_local">H.5.2.2</A>)
+swaps the <TT>cpucache_t</TT> information in the cache descriptor with
+the ones in <TT>new</TT> so they can be altered here</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>897-905</B>For each CPU in the system ....</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>898</B>Get the cpucache descriptor for this CPU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>899</B>If the structure does not exist for some reason or there is no
+objects available in it, move to the next CPU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>901</B>Disable interrupts on this processor. It is possible an allocation
+from an interrupt handler elsewhere would try to access the per CPU cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>902</B>Free the block of objects with <TT>free_block()</TT> 
+(See Section <A HREF="#func: free_block">H.3.3.5</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>903</B>Re-enable interrupts</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>904</B>Show that no objects are available</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>906</B>The information for each CPU has been updated so call
+<TT>do_ccupdate_local()</TT> (See Section <A HREF="#func: do_ccupdate_local">H.5.2.2</A>) for each
+CPU to put the information back into the cache descriptor</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>907</B>Release the semaphore for the cache chain</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc123"></A><A NAME="htoc365">H.6</A>  Slab Allocator Initialisation</H2><P>
+<A NAME="c_sec: Slab Allocator Initialisation"></A></P><H4 CLASS="subsubsection"><A NAME="htoc366">H.6.0.2</A>  Function: kmem_cache_init</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_cache_init"></A> <A NAME="@codeindex262"></A></P><P>This function will</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+Initialise the cache chain linked list
+</LI><LI CLASS="li-itemize">Initialise a mutex for accessing the cache chain
+</LI><LI CLASS="li-itemize">Calculate the <TT>cache_cache</TT> colour
+</LI></UL><PRE CLASS="verbatim">416 void __init kmem_cache_init(void)
+417 {
+418     size_t left_over;
+419 
+420     init_MUTEX(&amp;cache_chain_sem);
+421     INIT_LIST_HEAD(&amp;cache_chain);
+422 
+423     kmem_cache_estimate(0, cache_cache.objsize, 0,
+424             &amp;left_over, &amp;cache_cache.num);
+425     if (!cache_cache.num)
+426         BUG();
+427 
+428     cache_cache.colour = left_over/cache_cache.colour_off;
+429     cache_cache.colour_next = 0;
+430 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>420</B>Initialise the semaphore for access the cache chain</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>421</B>Initialise the cache chain linked list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>423</B><TT>kmem_cache_estimate()</TT>(See Section <A HREF="#func: kmem_cache_estimate">H.1.2.1</A>)
+calculates the number of objects and amount of bytes wasted</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>425</B>If even one <TT>kmem_cache_t</TT> cannot be stored in a page,
+there is something seriously wrong</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>428</B><TT>colour</TT> is the number of different cache lines that can
+be used while still keeping L1 cache alignment</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>429</B><TT>colour_next</TT> indicates which line to use next. Start at 0
+</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc124"></A><A NAME="htoc367">H.7</A>  Interfacing with the Buddy Allocator</H2><P>
+<A NAME="c_sec: Interfacing with the Buddy Allocator"></A></P><H4 CLASS="subsubsection"><A NAME="htoc368">H.7.0.3</A>  Function: kmem_getpages</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_getpages"></A> <A NAME="@codeindex263"></A></P><P>This allocates pages for the slab allocator</P><PRE CLASS="verbatim">486 static inline void * kmem_getpages (kmem_cache_t *cachep, 
+                                        unsigned long flags)
+487 {
+488     void    *addr;
+495     flags |= cachep-&gt;gfpflags;
+496     addr = (void*) __get_free_pages(flags, cachep-&gt;gfporder);
+503     return addr;
+504 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>495</B>Whatever flags were requested for the allocation, append the
+cache flags to it. The only flag it may append is <TT>ZONE_DMA</TT>
+if the cache requires DMA memory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>496</B>Allocate from the buddy allocator with
+<TT>__get_free_pages()</TT> (See Section <A HREF="understand023.html#func: __get_free_pages">F.2.3</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>503</B>Return the pages or NULL if it failed
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc369">H.7.0.4</A>  Function: kmem_freepages</H4><P> <EM>Source: mm/slab.c</EM> <A NAME="func: kmem_freepages"></A> <A NAME="@codeindex264"></A></P><P>This frees pages for the slab allocator. Before it calls the buddy allocator
+API, it will remove the <TT>PG_slab</TT> bit from the page flags.</P><PRE CLASS="verbatim">507 static inline void kmem_freepages (kmem_cache_t *cachep, void *addr)
+508 {
+509     unsigned long i = (1&lt;&lt;cachep-&gt;gfporder);
+510     struct page *page = virt_to_page(addr);
+511 
+517     while (i--) {
+518         PageClearSlab(page);
+519         page++;
+520     }
+521     free_pages((unsigned long)addr, cachep-&gt;gfporder);
+522 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>509</B>Retrieve the order used for the original allocation</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>510</B>Get the struct page for the address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>517-520</B>Clear the <TT>PG_slab</TT> bit on each page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>521</B>Free the pages to the buddy allocator with <TT>free_pages()</TT>
+(See Section <A HREF="understand023.html#func: free_pages">F.4.1</A>)</DD></DL><P>	</P><HR>
+[ <A HREF="understand024.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand026.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

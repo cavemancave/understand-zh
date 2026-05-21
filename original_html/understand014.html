@@ -1,0 +1,521 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Swap Management</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand013.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand015.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc77">Chapter 11</A>  Swap Management</H1><P>
+<A NAME="chap: Swap Management"></A>
+<A NAME="@mainindex899"></A></P><P>Just as Linux uses free memory for purposes such as buffering data from disk,
+there eventually is a need to free up private or anonymous pages used by
+a process. These pages, unlike those backed by a file on disk, cannot be
+simply discarded to be read in later. Instead they have to be carefully
+copied to <EM>backing storage</EM><A NAME="@mainindex900"></A>, sometimes called
+the <EM>swap area</EM><A NAME="@mainindex901"></A>. This chapter details how Linux uses
+and manages its backing storage.</P><P>Strictly speaking, Linux does not swap as &#X201C;swapping&#X201D;<A NAME="@mainindex902"></A> refers
+to coping an entire process address space to disk and &#X201C;paging&#X201D;<A NAME="@mainindex903"></A>
+to copying out individual pages. Linux actually implements paging as modern
+hardware supports it, but traditionally has called it swapping in discussions
+and documentation. To be consistent with the Linux usage of the word, we
+too will refer to it as swapping.</P><P>There are two principle reasons that the existence of swap space is desirable.
+First, it expands the amount of memory a process may use. Virtual memory
+and swap space allows a large process to run even if the process is only
+partially resident. As &#X201C;old&#X201D; pages may be swapped out, the amount of memory
+addressed may easily exceed RAM as demand paging will ensure the pages are
+reloaded if necessary.</P><P>The casual reader<SUP><A NAME="text15" HREF="#note15">1</A></SUP> may think
+that with a sufficient amount of memory, swap is unnecessary but this brings
+us to the second reason. A significant number of the pages referenced by
+a process early in its life may only be used for initialisation and then
+never used again. It is better to swap out those pages and create more disk
+buffers than leave them resident and unused.</P><P>It is important to note that swap is not without its drawbacks and the
+most important one is the most obvious one; Disk is slow, very very slow.
+If processes are frequently addressing a large amount of memory, no amount of
+swap or expensive high-performance disks will make it run within a reasonable
+time, only more RAM will help. This is why it is very important that the
+correct page be swapped out as discussed in Chapter <A HREF="understand013.html#chap: Page Frame Reclamation">10</A>,
+but also that related pages be stored close together in the
+swap space so they are likely to be swapped in at the same time while reading
+ahead. We will start with how Linux describes a swap area.</P><P>This chapter begins with describing the structures Linux maintains about each
+active swap area in the system and how the swap area information is organised
+on disk. We then cover how Linux remembers how to find pages in the swap
+after they have been paged out and how swap slots are allocated. After that
+the <EM>Swap Cache</EM> is discussed which is important for shared pages.
+At that point, there is enough information to begin understanding how swap
+areas are activated and deactivated, how pages are paged in and paged out and
+finally how the swap area is read and written to.</P><H2 CLASS="section"><A NAME="toc73"></A><A NAME="htoc78">11.1</A>  Describing the Swap Area</H2><P>
+<A NAME="@mainindex904"></A></P><P>Each active swap area, be it a file or partition, has a struct
+<TT>swap_info_struct</TT><A NAME="@mainindex905"></A> describing the area. All the structs
+in the running system are stored in a statically declared array called
+<TT>swap_info</TT><A NAME="@mainindex906"></A> which holds <TT>MAX_SWAPFILES</TT><A NAME="@mainindex907"></A>, which is
+statically defined as 32, entries. This means that at most 32 swap areas can
+exist on a running system. The <TT>swap_info_struct</TT> is declared
+as follows in &lt;<TT>linux/swap.h</TT>&gt;:</P><PRE CLASS="verbatim"> 64 struct swap_info_struct {
+ 65     unsigned int flags;
+ 66     kdev_t swap_device;
+ 67     spinlock_t sdev_lock;
+ 68     struct dentry * swap_file;
+ 69     struct vfsmount *swap_vfsmnt;
+ 70     unsigned short * swap_map;
+ 71     unsigned int lowest_bit;
+ 72     unsigned int highest_bit;
+ 73     unsigned int cluster_next;
+ 74     unsigned int cluster_nr;
+ 75     int prio;
+ 76     int pages;
+ 77     unsigned long max;
+ 78     int next;
+ 79 };
+</PRE><P>Here is a small description of each of the fields in this quite sizable struct.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B> This is a bit field with two possible
+values. <TT>SWP_USED</TT><A NAME="@mainindex908"></A> is set if the swap area is currently
+active. <TT>SWP_WRITEOK</TT><A NAME="@mainindex909"></A> is defined as 3, the two lowest
+significant bits, <EM>including</EM> the <TT>SWP_USED</TT> bit. The
+flags is set to <TT>SWP_WRITEOK</TT> when Linux is ready to write to
+the area as it must be active to be written to;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>swap_device</B> The device corresponding to the partition used for
+this swap area is stored here. If the swap area is a file, this is NULL;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>sdev_lock</B> As with many structs in Linux, this one has to be
+protected too. <TT>sdev_lock</TT> is a spinlock protecting the
+struct, principally the <TT>swap_map</TT>. It is locked and unlocked
+with <TT>swap_device_lock()</TT> and <TT>swap_device_unlock()</TT>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>swap_file</B> This is the <TT>dentry</TT> for the actual special file
+that is mounted as a swap area. This could be the <TT>dentry</TT>
+for a file in the <TT>/dev/</TT> directory for example in the case
+a partition is mounted. This field is needed to identify the correct
+<TT>swap_info_struct</TT> when deactiating a swap area;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vfs_mount</B> This is the <TT>vfs_mount</TT> object corresponding to
+where the device or file for this swap area is stored;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>swap_map</B> This is a large array with one entry for every swap entry,
+or page sized slot in the area. An entry is a reference count of the number
+of users of this page slot. The swap cache counts as one user and every
+PTE that has been paged out to the slot counts as a user. If it is equal
+to <TT>SWAP_MAP_MAX</TT><A NAME="@mainindex910"></A>, the slot is allocated permanently. If
+equal to <TT>SWAP_MAP_BAD</TT><A NAME="@mainindex911"></A>, the slot will never be used;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>lowest_bit</B> This is the lowest possible free slot available in
+the swap area and is used to start from when linearly scanning to reduce
+the search space. It is known that there are definitely no free slots
+below this mark;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>highest_bit</B> This is the highest possible free slot available in this
+swap area. Similar to <TT>lowest_bit</TT>, there are definitely no
+free slots above this mark;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>cluster_next</B> This is the offset of the next cluster of blocks to
+use. The swap area tries to have pages allocated in cluster blocks to
+increase the chance related pages will be stored together;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>cluster_nr</B> This the number of pages left to allocate in this
+cluster;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>prio</B> Each swap area has a priority which is stored in this
+field. Areas are arranged in order of priority and determine how likely
+the area is to be used. By default the priorities are arranged in order
+of activation but the system administrator may also specify it using
+the <TT>-p</TT> flag when using <B>swapon</B>;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pages</B> As some slots on the swap file may be unusable, this field
+stores the number of usable pages in the swap area. This differs from
+<TT>max</TT> in that slots marked <TT>SWAP_MAP_BAD</TT> are
+not counted;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>max</B> This is the total number of slots in this swap area;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>next</B> This is the index in the <TT>swap_info</TT> array of the
+next swap area in the system.</DD></DL><P>The areas, though stored in an array, are also kept in a pseudo list called
+<TT>swap_list</TT><A NAME="@mainindex912"></A> which is a very simple type declared as follows in
+&lt;<TT>linux/swap.h</TT>&gt;:</P><PRE CLASS="verbatim">153 struct swap_list_t {
+154     int head;    /* head of priority-ordered swapfile list */
+155     int next;    /* swapfile to be used next */
+156 };
+</PRE><P>The field <TT>swap_list_t</TT>&#X2192;<TT>head</TT> is the swap area of the
+highest priority swap area in use and <TT>swap_list_t</TT>&#X2192;<TT>next</TT>
+is the next swap area that should be used. This is so areas may be arranged
+in order of priority when searching for a suitable area but still looked up
+quickly in the array when necessary.</P><P>Each swap area is divided up into a number of page sized slots on disk which
+means that each slot is 4096 bytes on the x86 for example. The first slot is
+always reserved as it contains information about the swap area that should
+not be overwritten. The first 1 KiB of the swap area is used to store a disk
+label for the partition that can be picked up by userspace tools. The remaining
+space is used for information about the swap area which is filled when the swap
+area is created with the system program <B>mkswap</B><A NAME="@mainindex913"></A>. The information
+is used to fill in a <TT>union</TT> <TT>swap_header</TT><A NAME="@mainindex914"></A> which
+is declared as follows in &lt;<TT>linux/swap.h</TT>&gt;:</P><PRE CLASS="verbatim"> 25 union swap_header {
+ 26     struct 
+ 27     {
+ 28         char reserved[PAGE_SIZE - 10];
+ 29         char magic[10];
+ 30     } magic;
+ 31     struct 
+ 32     {
+ 33         char     bootbits[1024];
+ 34         unsigned int version;
+ 35         unsigned int last_page;
+ 36         unsigned int nr_badpages;
+ 37         unsigned int padding[125];
+ 38         unsigned int badpages[1];
+ 39     } info;
+ 40 };
+</PRE><P>A description of each of the fields follows</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>magic</B> The <TT>magic</TT> part of the union is used just for
+identifying the &#X201C;magic&#X201D; string. The string exists to make sure there is no
+chance a partition that is not a swap area will be used and to decide what
+version of swap area is is. If the string is &#X201C;SWAP-SPACE&#X201D;, it is version 1 of
+the swap file format. If it is &#X201C;SWAPSPACE2&#X201D;, it is version 2. The large
+reserved array is just so that the magic string will be read from the end of
+the page;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>bootbits</B> This is the reserved area containing information about the
+partition such as the disk label;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>version</B> This is the version of the swap area layout;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>last_page</B> This is the last usable page in the area;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>nr_badpages</B> The known number of bad pages that exist in the swap area
+are stored in this field;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>padding</B> A disk section is usually about 512 bytes in size. The three
+fields <TT>version</TT>, <TT>last_page</TT> and <TT>nr_badpages</TT>
+make up 12 bytes and the <TT>padding</TT> fills up the remaining 500
+bytes to cover one sector;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>badpages</B> The remainder of the page is used to store the indices of up
+to <TT>MAX_SWAP_BADPAGES</TT><A NAME="@mainindex915"></A> number of bad page slots. These slots
+are filled in by the <B>mkswap</B> system program if the <TT>-c</TT>
+switch is specified to check the area.</DD></DL><P><TT>MAX_SWAP_BADPAGES</TT> is a compile time constant which varies if the
+struct changes but it is 637 entries in its current form as given by the simple
+equation;</P><PRE>
+MAX_SWAP_BADPAGES = (PAGE_SIZE - 1024 - 512 - 10) / sizeof(long)
+</PRE><P>Where 1024 is the size of the bootblock, 512 is the size of the padding and
+10 is the size of the magic string identifing the format of the swap file.</P><H2 CLASS="section"><A NAME="toc74"></A><A NAME="htoc79">11.2</A>  Mapping Page Table Entries to Swap Entries</H2><P>
+<A NAME="sec: Mapping Page Table Entries to Swap Entries"></A>
+<A NAME="@mainindex916"></A>
+<A NAME="@mainindex917"></A></P><P>When a page is swapped out, Linux uses the corresponding PTE to store enough
+information to locate the page on disk again. Obviously a PTE is not large
+enough in itself to store precisely where on disk the page is located, but it
+is more than enough to store an index into the <TT>swap_info</TT><A NAME="@mainindex918"></A> array
+and an offset within the <TT>swap_map</TT> and this is precisely what
+Linux does.</P><P>Each PTE, regardless of architecture, is large enough to store
+a <TT>swp_entry_t</TT><A NAME="@mainindex919"></A> which is declared as follows in
+&lt;<TT>linux/shmem_fs.h</TT>&gt;</P><PRE CLASS="verbatim"> 16 typedef struct {
+ 17     unsigned long val;
+ 18 } swp_entry_t;
+</PRE><P>Two macros are provided for the translation of PTEs to swap entries
+and vice versa. They are <TT>pte_to_swp_entry()</TT><A NAME="@mainindex920"></A> and
+<TT>swp_entry_to_pte()</TT><A NAME="@mainindex921"></A> respectively. </P><P>Each architecture has to be able to determine if a PTE is present or swapped
+out. For illustration, we will show how this is implemented on the x86. In
+the <TT>swp_entry_t</TT>, two bits are always kept free. On the x86,
+Bit 0 is reserved for the <TT>_PAGE_PRESENT</TT> flag and Bit 7 is
+reserved for <TT>_PAGE_PROTNONE</TT>. The requirement for both bits is
+explained in Section <A HREF="understand006.html#sec: Describing a Page Table Entry">3.2</A>. Bits 1-6 are
+for the <EM>type</EM> which is the index within the <TT>swap_info</TT>
+array and are returned by the <TT>SWP_TYPE()</TT><A NAME="@mainindex922"></A> macro.</P><P>Bits 8-31 are used are to store the <EM>offset</EM> within the
+<TT>swap_map</TT> from the <TT>swp_entry_t</TT>. On the x86, this
+means 24 bits are available, &#X201C;limiting&#X201D; the size of the swap area to 64GiB.
+The macro <TT>SWP_OFFSET()</TT><A NAME="@mainindex923"></A> is used to extract the offset.</P><P>To encode a type and offset into a <TT>swp_entry_t</TT>, the macro
+<TT>SWP_ENTRY()</TT><A NAME="@mainindex924"></A> is available which simply performs the relevant bit
+shifting operations. The relationship between all these macros is illustrated
+in Figure <A HREF="#fig: Storing Swap Entry Information in swp_entry_t">11.1</A>. </P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html065.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 11.1: Storing Swap Entry Information in <TT>swp_entry_t</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Storing Swap Entry Information in swp_entry_t"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>It should be noted that the six bits for &#X201C;type&#X201D; should allow up
+to 64 swap areas to exist in a 32 bit architecture instead of the
+<TT>MAX_SWAPFILES</TT> restriction of 32. The restriction is due to
+the consumption of the vmalloc address space. If a swap area is the maximum
+possible size then 32MiB is required for the <TT>swap_map</TT> (2<SUP>24</SUP>
+* <I>sizeof</I>(<I>short</I>)); remember that each page uses one short
+for the reference count. For just <TT>MAX_SWAPFILES</TT> maximum number
+of swap areas to exist, 1GiB of virtual malloc space is required which is
+simply impossible because of the user/kernel linear address space split.</P><P>This would imply supporting 64 swap areas is not worth the additional
+complexity but there are cases where a large number of swap areas would be
+desirable even if the overall swap available does not increase. Some modern
+machines<SUP><A NAME="text16" HREF="#note16">2</A></SUP> have many separate disks which between them can create a large
+number of separate block devices. In this case, it is desirable to create
+a large number of small swap areas which are evenly distributed across all
+disks. This would allow a high degree of parallelism in the page swapping
+behaviour which is important for swap intensive applications.</P><H2 CLASS="section"><A NAME="toc75"></A><A NAME="htoc80">11.3</A>  Allocating a swap slot</H2><P>
+<A NAME="sec: Allocating a swap slot"></A></P><P>All page sized slots are tracked by the array
+<TT>swap_info_struct</TT>&#X2192;<TT>swap_map</TT> which is of type
+<TT>unsigned short</TT>. Each entry is a reference count of the number
+of users of the slot which happens in the case of a shared page and is 0
+when free. If the entry is <TT>SWAP_MAP_MAX</TT>, the page is permanently
+reserved for that slot. It is unlikely, if not impossible, for this condition
+to occur but it exists to ensure the reference count does not overflow. If
+the entry is <TT>SWAP_MAP_BAD</TT>, the slot is unusable.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html066.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 11.2: Call Graph: <TT>get_swap_page()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: get_swap_page"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The task of finding and allocating a swap entry is divided
+into two major tasks. The first performed by the high
+level function <TT>get_swap_page()</TT><A NAME="@mainindex925"></A>. Starting with
+<TT>swap_list</TT>&#X2192;<TT>next</TT>, it searches swap areas for a suitable slot.
+Once a slot has been found, it records what the next swap area to be used
+will be and returns the allocated entry.</P><P>The task of searching the map is the responsibility of
+<TT>scan_swap_map()</TT><A NAME="@mainindex926"></A>. In principle, it is very simple as it linearly
+scan the array for a free slot and return. Predictably, the implementation
+is a bit more thorough.</P><P>Linux attempts to organise pages into <EM>clusters</EM>
+on disk of size <TT>SWAPFILE_CLUSTER</TT><A NAME="@mainindex927"></A>. It allocates
+<TT>SWAPFILE_CLUSTER</TT> number of pages sequentially in swap
+keeping count of the number of sequentially allocated pages in
+<TT>swap_info_struct</TT>&#X2192;<TT>cluster_nr</TT> and records the current
+offset in <TT>swap_info_struct</TT>&#X2192;<TT>cluster_next</TT>. Once a
+sequential block has been allocated, it searches for a block of free entries
+of size <TT>SWAPFILE_CLUSTER</TT>. If a block large enough can be found,
+it will be used as another cluster sized sequence.</P><P>If no free clusters large enough can be found in
+the swap area, a simple first-free search starting from
+<TT>swap_info_struct</TT>&#X2192;<TT>lowest_bit</TT> is performed. The aim is
+to have pages swapped out at the same time close together on the premise that
+pages swapped out together are related. This premise, which seems strange at
+first glance, is quite solid when it is considered that the page replacement
+algorithm will use swap space most when linearly scanning the process address
+space swapping out pages. Without scanning for large free blocks and using
+them, it is likely that the scanning would degenerate to first-free searches
+and never improve. With it, processes exiting are likely to free up large
+blocks of slots.</P><H2 CLASS="section"><A NAME="toc76"></A><A NAME="htoc81">11.4</A>  Swap Cache</H2><P>
+<A NAME="sec: Swap Cache"></A>
+<A NAME="@mainindex928"></A></P><P>Pages that are shared between many processes can not be easily swapped out
+because, as mentioned, there is no quick way to map a <TT>struct page</TT>
+to every PTE that references it. This leads to the race condition where a page
+is present for one PTE and swapped out for another gets updated without being
+synced to disk thereby losing the update.</P><P>To address this problem, shared pages that have a reserved slot in backing
+storage are considered to be part of the <EM>swap cache</EM>. The
+swap cache is purely conceptual as it is simply a specialisation of the
+page cache. The first principal difference between pages in the swap
+cache rather than the page cache is that pages in the swap cache always
+use <TT>swapper_space</TT> as their <TT>address_space</TT> in
+<TT>page</TT>&#X2192;<TT>mapping</TT>. The second difference is that pages are
+added to the swap cache with <TT>add_to_swap_cache()</TT> instead of
+<TT>add_to_page_cache()</TT>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html067.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 11.3: Call Graph: <TT>add_to_swap_cache()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: add_to_swap_cache"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Anonymous pages are not part of the swap cache <EM>until</EM> an attempt is
+made to swap them out. The variable <TT>swapper_space</TT> is declared as
+follows in <TT>swap_state.c</TT>:</P><PRE CLASS="verbatim"> 39 struct address_space swapper_space = {
+ 40     LIST_HEAD_INIT(swapper_space.clean_pages),
+ 41     LIST_HEAD_INIT(swapper_space.dirty_pages),
+ 42     LIST_HEAD_INIT(swapper_space.locked_pages),
+ 43     0,
+ 44     &amp;swap_aops,
+ 45 };
+</PRE><P>A page is identified as being part of the swap cache once the
+<TT>page</TT>&#X2192;<TT>mapping</TT> field has been set to <TT>swapper_space</TT>
+which is tested by the <TT>PageSwapCache()</TT><A NAME="@mainindex929"></A> macro. Linux uses the
+exact same code for keeping pages between swap and memory in sync as it uses
+for keeping file-backed pages and memory in sync as they both share the page
+cache code, the differences are just in the functions used.</P><P>The address space for backing storage, <TT>swapper_space</TT> uses
+<TT>swap_ops</TT><A NAME="@mainindex930"></A> for it's <TT>address_space</TT>&#X2192;<TT>a_ops</TT>. The
+<TT>page</TT>&#X2192;<TT>index</TT> field is then used to store the
+<TT>swp_entry_t</TT> structure instead of a file offset which is
+it's normal purpose. The <TT>address_space_operations</TT> struct
+<TT>swap_aops</TT> is declared as follows in <TT>swap_state.c</TT>:</P><PRE CLASS="verbatim"> 34 static struct address_space_operations swap_aops = {
+ 35     writepage: swap_writepage,
+ 36     sync_page: block_sync_page,
+ 37 };
+</PRE><P>When a page is being added to the swap cache, a slot is allocated
+with <TT>get_swap_page()</TT>, added to the page cache with
+<TT>add_to_swap_cache()</TT><A NAME="@mainindex931"></A> and then marked dirty. When the page is
+next laundered, it will actually be written to backing storage on disk as
+the normal page cache would operate. This process is illustrated in Figure
+<A HREF="#fig: Adding a Page to the Swap Cache">11.4</A>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html068.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 11.4: Adding a Page to the Swap Cache</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Adding a Page to the Swap Cache"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Subsequent swapping of the page from shared PTEs results in a call to
+<TT>swap_duplicate()</TT><A NAME="@mainindex932"></A> which simply increments the reference to the
+slot in the <TT>swap_map</TT>. If the PTE is marked dirty by the hardware
+as a result of a write, the bit is cleared and the <TT>struct page</TT>
+is marked dirty with <TT>set_page_dirty()</TT> so that the on-disk copy
+will be synced before the page is dropped. This ensures that until all
+references to the page have been dropped, a check will be made to ensure
+the data on disk matches the data in the page frame.</P><P>When the reference count to the page finally reaches 0, the page is eligible
+to be dropped from the page cache and the swap map count will have the count
+of the number of PTEs the on-disk slot belongs to so that the slot will not
+be freed prematurely. It is laundered and finally dropped with the same LRU
+aging and logic described in Chapter <A HREF="understand013.html#chap: Page Frame Reclamation">10</A>.</P><P>If, on the other hand, a page fault occurs for a page that is &#X201C;swapped out&#X201D;,
+the logic in <TT>do_swap_page()</TT> will check to see if the page exists
+in the swap cache by calling <TT>lookup_swap_cache()</TT>. If it does,
+the PTE is updated to point to the page frame, the page reference count
+incremented and the swap slot decremented with <TT>swap_free()</TT>.</P><BLOCKQUOTE CLASS="table"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center">
+<TABLE BORDER=1 CELLSPACING=0 CELLPADDING=1><TR><TD VALIGN=top ALIGN=left> <P><A NAME="@mainindex933"></A><TT>swp_entry_t get_swap_page()</TT></P></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This function allocates a slot in a <TT>swap_map</TT> by
+searching active swap areas. This is covered in greater detail in Section
+<A HREF="#sec: Allocating a swap slot">11.3</A> but included here as it is principally used in conjunction with the swap cache</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex934"></A><TT>int add_to_swap_cache(struct page *page, swp_entry_t entry)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This function adds a page to the swap cache. It first checks
+if it already exists by calling <TT>swap_duplicate()</TT> and if not,
+is adds it to the swap cache via the normal page cache interface function
+<TT>add_to_page_cache_unique()</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex935"></A><TT>struct page * lookup_swap_cache(swp_entry_t entry)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This searches the swap cache and returns the <TT>struct
+page</TT> corresponding to the supplied <TT>entry</TT>. It works by searching
+the normal page cache based on <TT>swapper_space</TT> and the
+<TT>swap_map</TT> offset</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex936"></A><TT>int swap_duplicate(swp_entry_t entry)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> This function verifies a swap entry is valid and if so, increments
+its swap map count</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>
+<A NAME="@mainindex937"></A><TT>void swap_free(swp_entry_t entry)</TT></TD></TR>
+<TR><TD VALIGN=top ALIGN=left> The complement function to <TT>swap_duplicate()</TT>. It
+decrements the relevant counter in the <TT>swap_map</TT>. When the count
+reaches zero, the slot is effectively free</TD></TR>
+<TR><TD VALIGN=top ALIGN=left>&nbsp;</TD></TR>
+</TABLE> 
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Table 11.1: Swap Cache API</TD></TR>
+</TABLE></DIV> 
+<A NAME="tab: Swap Cache API"></A>
+</DIV>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><H2 CLASS="section"><A NAME="toc77"></A><A NAME="htoc82">11.5</A>  Reading Pages from Backing Storage</H2><P>
+<A NAME="@mainindex938"></A></P><P>The principal function used when reading in pages is
+<TT>read_swap_cache_async()</TT><A NAME="@mainindex939"></A> which is mainly called during
+page faulting. The function begins be searching the swap cache with
+<TT>find_get_page()</TT>. Normally, swap cache searches are performed
+by <TT>lookup_swap_cache()</TT> but that function updates statistics on
+the number of searches performed and as the cache may need to be searched
+multiple times, <TT>find_get_page()</TT> is used instead.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html069.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 11.5: Call Graph: <TT>read_swap_cache_async()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: read_swap_cache_async"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The page can already exist in the swap cache if another process has the same
+page mapped or multiple processes are faulting on the same page at the same
+time. If the page does not exist in the swap cache, one must be allocated
+and filled with data from backing storage.</P><P>Once the page is allocated with <TT>alloc_page()</TT>, it is added to the
+swap cache with <TT>add_to_swap_cache()</TT> as swap cache operations may
+only be performed on pages in the swap cache. If the page cannot be added to
+the swap cache, the swap cache will be searched again to make sure another
+process has not put the data in the swap cache already.</P><P>To read information from backing storage, <TT>rw_swap_page()</TT><A NAME="@mainindex940"></A> is
+called which is discussed in Section <A HREF="#sec: Reading/Writing the Swap Area">11.7</A>.
+Once the function completes, <TT>page_cache_release()</TT> is called to
+drop the reference to the page taken by <TT>find_get_page()</TT>.</P><H2 CLASS="section"><A NAME="toc78"></A><A NAME="htoc83">11.6</A>  Writing Pages to Backing Storage</H2><P>
+<A NAME="@mainindex941"></A></P><P>When any page is being written to disk, the
+<TT>address_space</TT>&#X2192;<TT>a_ops</TT> is consulted to find the
+appropriate write-out function. In the case of backing storage,
+the <TT>address_space</TT> is <TT>swapper_space</TT> and
+the swap operations are contained in <TT>swap_aops</TT>. The struct
+<TT>swap_aops</TT> registers <TT>swap_writepage()</TT> as it's write-out
+function.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html070.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 11.6: Call Graph: <TT>sys_writepage()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: sys_writepage"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The function <TT>swap_writepage()</TT> behaves differently depending on
+whether the writing process is the last user of the swap cache page or
+not. It knows this by calling <TT>remove_exclusive_swap_page()</TT><A NAME="@mainindex942"></A>
+which checks if there is any other processes using the page. This is a simple
+case of examining the page count with the <TT>pagecache_lock</TT> held. If no
+other process is mapping the page, it is removed from the swap cache and freed.</P><P>If <TT>remove_exclusive_swap_page()</TT> removed the page from the swap
+cache and freed it <TT>swap_writepage()</TT> will unlock the page as it is no
+longer in use. If it still exists in the swap cache, <TT>rw_swap_page()</TT>
+is called to write the data to the backing storage.</P><H2 CLASS="section"><A NAME="toc79"></A><A NAME="htoc84">11.7</A>  Reading/Writing Swap Area Blocks</H2><P>
+<A NAME="sec: Reading/Writing the Swap Area"></A>
+<A NAME="@mainindex943"></A></P><P>The top-level function for reading and writing to the swap area
+is <TT>rw_swap_page()</TT><A NAME="@mainindex944"></A>. This function ensures that all
+operations are performed through the swap cache to prevent lost updates.
+<TT>rw_swap_page_base()</TT><A NAME="@mainindex945"></A> is the core function which performs the
+real work.</P><P>It begins by checking if the operation is a read. If it is, it clears the
+uptodate flag with <TT>ClearPageUptodate()</TT> as the page is obviously
+not up to date if IO is required to fill it with data. This flag will
+be set again if the page is successfully read from disk. It then calls
+<TT>get_swaphandle_info()</TT><A NAME="@mainindex946"></A> to acquire the device for the swap
+partition of the inode for the swap file. These are required by the block layer
+which will be performing the actual IO.</P><P>The core function can work with either swap partition or files as it uses the
+block layer function <TT>brw_page()</TT><A NAME="@mainindex947"></A> to perform the actual disk IO. If
+the swap area is a file, <TT>bmap()</TT><A NAME="@mainindex948"></A> is used to fill a local array
+with a list of all blocks in the filesystem which contain the page data.
+Remember that filesystems may have their own method of storing files and
+disk and it is not as simple as the swap partition where information may be
+written directly to disk. If the backing storage is a partition, then only
+one page-sized block requires IO and as there is no filesystem involved,
+<TT>bmap()</TT><A NAME="@mainindex949"></A> is unnecessary.</P><P>Once it is known what blocks must be read or written, a normal block IO
+operation takes place with <TT>brw_page()</TT><A NAME="@mainindex950"></A>. All IO that is performed
+is asynchronous so the function returns quickly. Once the IO is complete,
+the block layer will unlock the page and any waiting process will wake up.</P><H2 CLASS="section"><A NAME="toc80"></A><A NAME="htoc85">11.8</A>  Activating a Swap Area</H2><P>
+<A NAME="@mainindex951"></A>
+<A NAME="@mainindex952"></A></P><P>As it has now been covered what swap areas are, how they are represented and
+how pages are tracked, it is time to see how they all tie together to activate
+an area. Activating an area is conceptually quite simple; Open the file, load
+the header information from disk, populate a <TT>swap_info_struct</TT>
+and add it to the swap list.</P><P>The function responsible for the activation of a swap area is
+<TT>sys_swapon()</TT><A NAME="@mainindex953"></A> and it takes two parameters, the path to the special
+file for the swap area and a set of flags. While swap is been activated, the
+<EM>Big Kernel Lock (BKL)</EM><A NAME="@mainindex954"></A> is held which prevents any application
+entering kernel space while this operation is been performed. The function
+is quite large but can be broken down into the following simple steps;</P><UL CLASS="itemize"><LI CLASS="li-itemize">Find a free <TT>swap_info_struct</TT> in the <TT>swap_info</TT>
+array an initialise it with default values</LI><LI CLASS="li-itemize">Call <TT>user_path_walk()</TT> which traverses the directory tree
+for the supplied <TT>specialfile</TT> and populates a
+<TT>namidata</TT> structure with the available data on the file,
+such as the <TT>dentry</TT> and the filesystem information for where
+it is stored (<TT>vfsmount</TT>)</LI><LI CLASS="li-itemize">Populate <TT>swap_info_struct</TT> fields pertaining to the
+dimensions of the swap area and how to find it. If the swap
+area is a partition, the block size will be configured to the
+<TT>PAGE_SIZE</TT> before calculating the size. If it is a file,
+the information is obtained directly from the <TT>inode</TT></LI><LI CLASS="li-itemize">Ensure the area is not already activated. If not, allocate a page from
+memory and read the first page sized slot from the swap area. This page
+contains information such as the number of good slots and how to populate
+the <TT>swap_info_struct</TT>&#X2192;<TT>swap_map</TT> with the bad entries</LI><LI CLASS="li-itemize">Allocate memory with <TT>vmalloc()</TT> for
+<TT>swap_info_struct</TT>&#X2192;<TT>swap_map</TT> and initialise
+each entry with 0 for good slots and <TT>SWAP_MAP_BAD</TT>
+otherwise. Ideally the header information will be a version 2 file
+format as version 1 was limited to swap areas of just under 128MiB for
+architectures with 4KiB page sizes like the x86<SUP><A NAME="text17" HREF="#note17">3</A></SUP></LI><LI CLASS="li-itemize">After ensuring the information indicated in the header
+matches the actual swap area, fill in the remaining information in the
+<TT>swap_info_struct</TT> such as the maximum number of pages and
+the available good pages. Update the global statistics for
+<TT>nr_swap_pages</TT> and <TT>total_swap_pages</TT></LI><LI CLASS="li-itemize">The swap area is now fully active and initialised and so it is inserted
+into the swap list in the correct position based on priority of the newly
+activated area</LI></UL><P>At the end of the function, the BKL is released and the system now has a
+new swap area available for paging to.</P><H2 CLASS="section"><A NAME="toc81"></A><A NAME="htoc86">11.9</A>  Deactivating a Swap Area</H2><P>
+<A NAME="@mainindex955"></A>
+<A NAME="@mainindex956"></A></P><P>In comparison to activating a swap area, deactivation is incredibly expensive.
+The principal problem is that the area cannot be simply removed, every page
+that is swapped out must now be swapped back in again. Just as there is no
+quick way of mapping a <TT>struct page</TT> to every PTE that references
+it, there is no quick way to map a swap entry to a PTE either. This requires
+that all process page tables be traversed to find PTEs which reference the
+swap area to be deactivated and swap them in. This of course means that swap
+deactivation will fail if the physical memory is not available.</P><P>The function responsible for deactivating an area is, predictably enough,
+called <TT>sys_swapoff()</TT><A NAME="@mainindex957"></A>. This function is mainly concerned with
+updating the <TT>swap_info_struct</TT>. The major task of paging in each
+paged-out page is the responsibility of <TT>try_to_unuse()</TT><A NAME="@mainindex958"></A> which is
+<EM>extremely</EM> expensive. For each slot used in the <TT>swap_map</TT>,
+the page tables for processes have to be traversed searching for it. In the
+worst case, all page tables belonging to all <TT>mm_struct</TT>s may
+have to be traversed. Therefore, the tasks taken for deactivating an area
+are broadly speaking;</P><UL CLASS="itemize"><LI CLASS="li-itemize">Call <TT>user_path_walk()</TT> to acquire the information about the
+special file to be deactivated and then take the BKL</LI><LI CLASS="li-itemize">Remove the <TT>swap_info_struct</TT> from the swap list and update
+the global statistics on the number of swap pages available
+(<TT>nr_swap_pages</TT>) and the total number of swap entries
+(<TT>total_swap_pages</TT>. Once this is acquired, the BKL can be
+released again</LI><LI CLASS="li-itemize">Call <TT>try_to_unuse()</TT> which will page in all pages from the swap
+area to be deactivated. This function loops through the swap map using
+<TT>find_next_to_unuse()</TT> to locate the next used swap slot. For
+each used slot it finds, it performs the following;<UL CLASS="itemize"><LI CLASS="li-itemize">Call <TT>read_swap_cache_async()</TT> to allocate a page
+for the slot saved on disk. Ideally it exists in the swap cache
+already but the page allocator will be called if it is not</LI><LI CLASS="li-itemize">Wait on the page to be fully paged in and lock it. Once locked,
+call <TT>unuse_process()</TT> for every process that has a
+PTE referencing the page. This function traverses the page table
+searching for the relevant PTE and then updates it to point to the
+<TT>struct page</TT>. If the page is a shared memory page with
+no remaining reference, <TT>shmem_unuse()</TT> is called instead</LI><LI CLASS="li-itemize">Free all slots that were permanently mapped. It is believed
+	 that slots will never become permanently reserved so the risk
+	 is taken.</LI><LI CLASS="li-itemize">Delete the page from the swap cache to prevent
+<TT>try_to_swap_out()</TT> referencing a page in the event it
+still somehow has a reference in swap map</LI></UL></LI><LI CLASS="li-itemize">If there was not enough available memory to page in all the entries, the
+swap area is reinserted back into the running system as it cannot be
+simply dropped. If it succeeded, the <TT>swap_info_struct</TT>
+is placed into an uninitialised state and the <TT>swap_map</TT>
+memory freed with <TT>vfree()</TT></LI></UL><H2 CLASS="section"><A NAME="toc82"></A><A NAME="htoc87">11.10</A>  Whats New in 2.6</H2><P>
+<A NAME="sec: Swap Management"></A></P><P>The most important addition to the <TT>struct swap_info_struct</TT>
+is the addition of a linked list called <TT>extent_list</TT> and a cache
+field called <TT>curr_swap_extent</TT> for the implementation of extents.</P><P>Extents, which are represented by a <TT>struct swap_extent</TT>,
+map a contiguous range of pages in the swap area into a contiguous range
+of disk blocks. These extents are setup at swapon time by the function
+<TT>setup_swap_extents()</TT>. For block devices, there will only be one
+swap extent and it will not improve performance but the extent it setup so that
+swap areas backed by block devices or regular files can be treated the same.</P><P>It can make a large difference with swap files which will have multiple
+extents representing ranges of pages clustered together in blocks. When
+searching for the page at a particular offset, the extent list will be
+traversed. To improve search times, the last extent that was searched will be
+cached in <TT>swap_extent</TT>&#X2192;<TT>curr_swap_extent</TT>.</P><P>
+	</P><HR CLASS="footnoterule"><DL CLASS="thefootnotes"><DT CLASS="dt-thefootnotes">
+<A NAME="note15" HREF="#text15">1</A></DT><DD CLASS="dd-thefootnotes">Not to mention the affluent reader.
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note16" HREF="#text16">2</A></DT><DD CLASS="dd-thefootnotes">A Sun E450 could have in the region of 20 disks in it for
+example.
+</DD><DT CLASS="dt-thefootnotes"><A NAME="note17" HREF="#text17">3</A></DT><DD CLASS="dd-thefootnotes">See the Code
+Commentary for the comprehensive reason for this.
+</DD></DL>
+<HR>
+[ <A HREF="understand013.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand015.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

@@ -1,0 +1,653 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Physical Page Allocation</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand022.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand024.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc272">Appendix F</A>  Physical Page Allocation</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc112"></A><A NAME="htoc273">F.1</A>  Allocating Pages</H2><H3 CLASS="subsection"><A NAME="htoc274">F.1.1</A>  Function: alloc_pages</H3><P> <EM>Source: include/linux/mm.h</EM> <A NAME="func: alloc_pages"></A> <A NAME="@codeindex185"></A></P><P>The call graph for this function is shown at <A HREF="understand009.html#fig: alloc_pages">6.3</A>. It is
+declared as follows;</P><PRE CLASS="verbatim">439 static inline struct page * alloc_pages(unsigned int gfp_mask, 
+                                  unsigned int order)
+440 {
+444       if (order &gt;= MAX_ORDER)
+445             return NULL;
+446       return _alloc_pages(gfp_mask, order);
+447 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>439</B>The <TT>gfp_mask</TT><A NAME="@codeindex186"></A> (Get Free Pages) flags tells the
+		 allocator how it may behave. For example
+		 <TT>GFP_WAIT</TT> is not set, the allocator will
+		 not block and instead return NULL if memory is tight. The
+		 order is the power of two number of pages to allocate</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>444-445</B>A simple debugging check optimized away at compile time</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>446</B>This function is described next
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc275">F.1.2</A>  Function: _alloc_pages</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: _alloc_pages"></A> <A NAME="@codeindex187"></A></P><P>The function <TT>_alloc_pages()</TT><A NAME="@codeindex188"></A> comes in two varieties. The
+first is designed to only work with UMA architectures such as the x86
+and is in <TT>mm/page_alloc.c</TT>. It only refers to the static node
+<TT>contig_page_data</TT><A NAME="@codeindex189"></A>. The second is in <TT>mm/numa.c</TT> and
+is a simple extension. It uses a node-local allocation policy which means
+that memory will be allocated from the bank closest to the processor.
+For the purposes of this book, only the <TT>mm/page_alloc.c</TT>
+version will be examined but developers on NUMA architectures should read
+<TT>_alloc_pages()</TT> and <TT>_alloc_pages_pgdat()</TT> as well in
+<TT>mm/numa.c</TT></P><PRE CLASS="verbatim">244 #ifndef CONFIG_DISCONTIGMEM
+245 struct page *_alloc_pages(unsigned int gfp_mask, 
+                              unsigned int order)
+246 {
+247     return __alloc_pages(gfp_mask, order,
+248       contig_page_data.node_zonelists+(gfp_mask &amp; GFP_ZONEMASK));
+249 }
+250 #endif
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>244</B>The ifndef is for UMA architectures like the x86. NUMA
+		architectures used the <TT>_alloc_pages()</TT> function
+		in <TT>mm/numa.c</TT> which employs a node local policy for
+		allocations</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>245</B>The <TT>gfp_mask</TT> flags tell the allocator how it may
+		behave. The <TT>order</TT> is the power of two number of
+		pages to allocate</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>247</B><TT>node_zonelists</TT> is an array of preferred fallback zones to
+		allocate from. It is initialised in
+		<TT>build_zonelists()</TT>(See Section <A HREF="understand019.html#func: build_zonelists">B.1.6</A>)
+		The lower 16 bits of <TT>gfp_mask</TT> indicate what
+		zone is preferable to allocate from. Applying the bitmask
+		<TT>gfp_mask</TT> &amp; <TT>GFP_ZONEMASK</TT>
+		will give the index in <TT>node_zonelists</TT> we prefer
+		to allocate from.
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc276">F.1.3</A>  Function: __alloc_pages</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: __alloc_pages"></A> <A NAME="@codeindex190"></A></P><P>At this stage, we've reached what is described as the &#X201C;heart of the
+zoned buddy allocator&#X201D;, the <TT>__alloc_pages()</TT> function. It is
+responsible for cycling through the fallback zones and selecting one suitable
+for the allocation. If memory is tight, it will take some steps to address
+the problem. It will wake <B>kswapd</B> and if necessary it will do the
+work of <B>kswapd</B> manually.</P><PRE CLASS="verbatim">327 struct page * __alloc_pages(unsigned int gfp_mask, 
+                                unsigned int order,
+                                zonelist_t *zonelist)
+328 {
+329       unsigned long min;
+330       zone_t **zone, * classzone;
+331       struct page * page;
+332       int freed;
+333 
+334       zone = zonelist-&gt;zones;
+335       classzone = *zone;
+336       if (classzone == NULL)
+337             return NULL;
+338       min = 1UL &lt;&lt; order;
+339       for (;;) {
+340             zone_t *z = *(zone++);
+341             if (!z)
+342                   break;
+343 
+344             min += z-&gt;pages_low;
+345             if (z-&gt;free_pages &gt; min) {
+346                   page = rmqueue(z, order);
+347                   if (page)
+348                         return page;
+349             }
+350       }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>334</B>Set zone to be the preferred zone to allocate from</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>335</B>The preferred zone is recorded as the classzone. If one
+		of the pages low watermarks is reached later, the classzone
+		is marked as needing balance</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>336-337</B>An unnecessary sanity check. <TT>build_zonelists()</TT>
+		would need to be seriously broken for this to happen</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>338-350</B>This style of block appears a number of times in this
+		function. It reads as &#X201C;cycle through all zones in this
+		fallback list and see can the allocation be satisfied without
+		violating watermarks&#X201D;. Note that the <TT>pages_low</TT>
+		for each fallback zone is added together. This is deliberate
+		to reduce the probability a fallback zone will be used.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>340</B><TT>z</TT> is the zone currently been examined. The <TT>zone</TT>
+		variable is moved to the next fallback zone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>341-342</B>If this is the last zone in the fallback list, break</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>344</B>Increment the number of pages to be allocated by the
+		watermark for easy comparisons. This happens for each zone
+		in the fallback zones. While this appears first to be a bug,
+		this behavior is actually intended to reduce the probability
+		a fallback zone is used.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>345-349</B>Allocate the page block if it can be assigned without
+		reaching the <TT>pages_min</TT> watermark.
+		<TT>rmqueue()</TT>(See Section <A HREF="#func: rmqueue">F.1.4</A>) is responsible from
+		removing the block of pages from the zone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>347-348</B>If the pages could be allocated, return a pointer to them</DD></DL><PRE CLASS="verbatim">352       classzone-&gt;need_balance = 1;
+353       mb();
+354       if (waitqueue_active(&amp;kswapd_wait))
+355             wake_up_interruptible(&amp;kswapd_wait);
+356 
+357       zone = zonelist-&gt;zones;
+358       min = 1UL &lt;&lt; order;
+359       for (;;) {
+360             unsigned long local_min;
+361             zone_t *z = *(zone++);
+362             if (!z)
+363                   break;
+364 
+365             local_min = z-&gt;pages_min;
+366             if (!(gfp_mask &amp; __GFP_WAIT))
+367                   local_min &gt;&gt;= 2;
+368             min += local_min;
+369             if (z-&gt;free_pages &gt; min) {
+370                   page = rmqueue(z, order);
+371                   if (page)
+372                         return page;
+373             }
+374       }
+375 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>352</B>Mark the preferred zone as needing balance. This flag will be
+		read later by <B>kswapd</B></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>353</B>This is a memory barrier. It ensures that all CPU's will see
+		any changes made to variables before this line of code. This
+		is important because <B>kswapd</B> could be running on
+		a different processor to the memory allocator.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>354-355</B>Wake up <B>kswapd</B> if it is asleep</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>357-358</B>Begin again with the first preferred zone and min value</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>360-374</B>Cycle through all the zones. This time, allocate the pages
+		if they can be allocated without hitting the
+		<TT>pages_min</TT> watermark</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>365</B><TT>local_min</TT> how low a number of free pages this
+		zone can have</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>366-367</B>If the process can not wait or reschedule
+		(<TT>__GFP_WAIT</TT> is clear), then allow the zone
+		to be put in further memory pressure than the watermark
+		normally allows
+</DD></DL><PRE CLASS="verbatim">376       /* here we're in the low on memory slow path */
+377 
+378 rebalance:
+379       if (current-&gt;flags &amp; (PF_MEMALLOC | PF_MEMDIE)) {
+380             zone = zonelist-&gt;zones;
+381             for (;;) {
+382                   zone_t *z = *(zone++);
+383                   if (!z)
+384                         break;
+385 
+386                   page = rmqueue(z, order);
+387                   if (page)
+388                         return page;
+389             }
+390             return NULL;
+391       }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>378</B>This label is returned to after an attempt is made to
+		synchronusly free pages. From this line on, the low on memory
+		path has been reached. It is likely the process will sleep</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>379-391</B>These two flags are only set by the OOM killer. As the
+		process is trying to kill itself cleanly, allocate the
+		pages if at all possible as it is known they will be freed
+		very soon
+</DD></DL><PRE CLASS="verbatim">393       /* Atomic allocations - we can't balance anything */
+394       if (!(gfp_mask &amp; __GFP_WAIT))
+395             return NULL;
+396 
+397       page = balance_classzone(classzone, gfp_mask, order, &amp;freed);
+398       if (page)
+399             return page;
+400 
+401       zone = zonelist-&gt;zones;
+402       min = 1UL &lt;&lt; order;
+403       for (;;) {
+404             zone_t *z = *(zone++);
+405             if (!z)
+406                   break;
+407 
+408             min += z-&gt;pages_min;
+409             if (z-&gt;free_pages &gt; min) {
+410                   page = rmqueue(z, order);
+411                   if (page)
+412                         return page;
+413             }
+414       }
+415 
+416       /* Don't let big-order allocations loop */
+417       if (order &gt; 3)
+418             return NULL;
+419 
+420       /* Yield for kswapd, and try again */
+421       yield();
+422       goto rebalance;
+423 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>394-395</B>If the calling process can not sleep, return NULL as the
+		only way to allocate the pages from here involves sleeping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>397</B><TT>balance_classzone()</TT>(See Section <A HREF="#func: balance_classzone">F.1.6</A>)
+		performs the work of <B>kswapd</B> in a synchronous fashion.
+		The principal difference is that instead of freeing the
+		memory into a global pool, it is kept for the process using
+		the <TT>current</TT>&#X2192;<TT>local_pages</TT><A NAME="@mainindex1018"></A>
+		linked list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>398-399</B>If a page block of the right order has been freed, return
+		it. Just because this is NULL does not mean an allocation
+		will fail as it could be a higher order of pages that
+		was released</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>403-414</B>This is identical to the block above. Allocate the page
+		blocks if it can be done without hitting the pages_min
+		watermark</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>417-418</B>Satisifing a large allocation like 2<SUP>4</SUP> number of
+		pages is difficult. If it has not been satisfied by now,
+		it is better to simply return NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>421</B>Yield the processor to give <B>kswapd</B> a chance to work</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>422</B>Attempt to balance the zones again and allocate
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc277">F.1.4</A>  Function: rmqueue</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: rmqueue"></A> <A NAME="@codeindex191"></A></P><P>This function is called from <TT>__alloc_pages()</TT>. It is responsible
+for finding a block of memory large enough to be used for the allocation. If
+a block of memory of the requested size is not available, it will look for
+a larger order that may be split into two buddies. The actual splitting is
+performed by the <TT>expand()</TT><A NAME="@codeindex192"></A> (See Section <A HREF="#func: expand">F.1.5</A>) function.</P><PRE CLASS="verbatim">198 static FASTCALL(struct page *rmqueue(zone_t *zone, 
+                                         unsigned int order));
+199 static struct page * rmqueue(zone_t *zone, unsigned int order)
+200 {
+201       free_area_t * area = zone-&gt;free_area + order;
+202       unsigned int curr_order = order;
+203       struct list_head *head, *curr;
+204       unsigned long flags;
+205       struct page *page;
+206 
+207       spin_lock_irqsave(&amp;zone-&gt;lock, flags);
+208       do {
+209             head = &amp;area-&gt;free_list;
+210             curr = head-&gt;next;
+211 
+212             if (curr != head) {
+213                   unsigned int index;
+214 
+215                   page = list_entry(curr, struct page, list);
+216                   if (BAD_RANGE(zone,page))
+217                         BUG();
+218                   list_del(curr);
+219                   index = page - zone-&gt;zone_mem_map;
+220                   if (curr_order != MAX_ORDER-1)
+221                         MARK_USED(index, curr_order, area);
+222                   zone-&gt;free_pages -= 1UL &lt;&lt; order;
+223 
+224                   page = expand(zone, page, index, order,
+                                    curr_order, area);
+225                   spin_unlock_irqrestore(&amp;zone-&gt;lock, flags);
+226 
+227                   set_page_count(page, 1);
+228                   if (BAD_RANGE(zone,page))
+229                         BUG();
+230                   if (PageLRU(page))
+231                         BUG();
+232                   if (PageActive(page))
+233                         BUG();
+234                   return page;    
+235             }
+236             curr_order++;
+237             area++;
+238       } while (curr_order &lt; MAX_ORDER);
+239       spin_unlock_irqrestore(&amp;zone-&gt;lock, flags);
+240 
+241       return NULL;
+242 }
+
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>199</B>The parameters are the zone to allocate from and what order of
+	pages are required </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>201</B>Because the <TT>free_area</TT> is an array of linked lists,
+the order may be used an an index within the array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>207</B>Acquire the zone lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>208-238</B>This while block is responsible for finding what order of
+		pages we will need to allocate from. If there isn't a free
+		block at the order we are interested in, check the higher
+		blocks until a suitable one is found</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>209</B><TT>head</TT> is the list of free page blocks for this order</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>210</B><TT>curr</TT> is the first block of pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>212-235</B>If there is a free page block at this order, then allocate
+		it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>215</B>page is set to be a pointer to the first page in the free block</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>216-217</B>Sanity check that checks to make sure the page this page
+		belongs to this zone and is within the
+		<TT>zone_mem_map</TT>. It is unclear how this could
+		possibly happen without severe bugs in the allocator itself
+		that would place blocks in the wrong zones</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>218</B>As the block is going to be allocated, remove it from the free
+		list </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>219</B><TT>index</TT> treats the <TT>zone_mem_map</TT> as an array
+		of pages so that index will be the offset within the array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>220-221</B>Toggle the bit that represents this pair of buddies.
+		<TT>MARK_USED()</TT> is a macro which calculates which
+		bit to toggle</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>222</B>Update the statistics for this
+		zone. <TT>1UL</TT>&lt;&lt;<TT>order</TT> is the number of
+		pages been allocated</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>224</B><TT>expand()</TT>(See Section <A HREF="#func: expand">F.1.5</A>) is the function responsible
+for splitting page blocks of higher orders</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>225</B>No other updates to the zone need to take place so release the
+		lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>227</B>Show that the page is in use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>228-233</B>Sanity checks</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>234</B>Page block has been successfully allocated so return it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>236-237</B>If a page block was not free of the correct order, move to
+		a higher order of page blocks and see what can be found
+		there </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>239</B>No other updates to the zone need to take place so release the
+		lock </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>241</B>No page blocks of the requested or higher order are available 
+		so return failure</DD></DL><H3 CLASS="subsection"><A NAME="htoc278">F.1.5</A>  Function: expand</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: expand"></A> <A NAME="@codeindex193"></A></P><P>This function splits page blocks of higher orders until a page block of the
+needed order is available.</P><PRE CLASS="verbatim">177 static inline struct page * expand (zone_t *zone, 
+                              struct page *page,
+                              unsigned long index, 
+                              int low, 
+                              int high, 
+                              free_area_t * area)
+179 {
+180       unsigned long size = 1 &lt;&lt; high;
+181 
+182       while (high &gt; low) {
+183             if (BAD_RANGE(zone,page))
+184                   BUG();
+185             area--;
+186             high--;
+187             size &gt;&gt;= 1;
+188             list_add(&amp;(page)-&gt;list, &amp;(area)-&gt;free_list);
+189             MARK_USED(index, high, area);
+190             index += size;
+191             page += size;
+192       }
+193       if (BAD_RANGE(zone,page))
+194             BUG();
+195       return page;
+196 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>177</B>The parameters are
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>zone</B> is where the allocation is coming from
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>page</B> is the first page of the block been split
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>index</B> is the index of page within <TT>mem_map</TT>
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>low</B> is the order of pages needed for the allocation
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>high</B> is the order of pages that is been split for the allocation
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>area</B> is the <TT>free_area_t</TT> representing the high
+		order block of pages 
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>180</B><TT>size</TT> is the number of pages in the block that is to be
+split </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>182-192</B>Keep splitting until a block of the needed page order is
+		found </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>183-184</B>Sanity check that checks to make sure the page this page
+belongs to this zone and is within the
+<TT>zone_mem_map</TT> </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>185</B><TT>area</TT> is now the next <TT>free_area_t</TT>
+		representing the lower order of page blocks</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>186</B><TT>high</TT> is the next order of page blocks to be split</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>187</B>The size of the block been split is now half as big</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>188</B>Of the pair of buddies, the one lower in the <TT>mem_map</TT>
+		is added to the free list for the lower order</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>189</B>Toggle the bit representing the pair of buddies</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>190</B><TT>index</TT> now the index of the second buddy of the newly
+created pair </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>191</B><TT>page</TT> now points to the second buddy of the newly
+created paid </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>193-194</B>Sanity check </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>195</B>The blocks have been successfully split so return the page
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc279">F.1.6</A>  Function: balance_classzone</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: balance_classzone"></A> <A NAME="@codeindex194"></A></P><P>This function is part of the direct-reclaim path. Allocators which can sleep
+will call this function to start performing the work of <B>kswapd</B>
+in a synchronous fashion. As the process is performing the work itself,
+the pages it frees of the desired order are reserved in a linked list in
+<TT>current</TT>&#X2192;<TT>local_pages</TT> and the number of page blocks in
+the list is stored in <TT>current</TT>&#X2192;<TT>nr_local_pages</TT>. Note that
+page blocks is not the same as number of pages. A page block could be of any
+order.</P><PRE CLASS="verbatim">253 static struct page * balance_classzone(zone_t * classzone, 
+                                           unsigned int gfp_mask, 
+                                           unsigned int order, 
+                                           int * freed)
+254 {
+255     struct page * page = NULL;
+256     int __freed = 0;
+257 
+258     if (!(gfp_mask &amp; __GFP_WAIT))
+259         goto out;
+260     if (in_interrupt())
+261         BUG();
+262 
+263     current-&gt;allocation_order = order;
+264     current-&gt;flags |= PF_MEMALLOC | PF_FREE_PAGES;
+265 
+266     __freed = try_to_free_pages_zone(classzone, gfp_mask);
+267 
+268     current-&gt;flags &amp;= ~(PF_MEMALLOC | PF_FREE_PAGES);
+269 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>258-259</B>If the caller is not allowed to sleep, then goto <TT>out</TT>
+to exit the function. For this to occur, the function would have to be called
+directly or <TT>__alloc_pages()</TT> would need to be deliberately broken</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>260-261</B>This function may not be used by interrupts. Again, deliberate
+damage would have to be introduced for this condition to occur</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>263</B>Record the desired size of the allocation in
+<TT>current</TT>&#X2192;<TT>allocation_order</TT>. This is actually unused although
+it could have been used to only add pages of the desired order to the
+<TT>local_pages</TT> list. As it is, the order of pages in the list is
+stored in <TT>page</TT>&#X2192;<TT>index</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>264</B>Set the flags which will the free functions to add the pages to the
+<TT>local_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>266</B>Free pages directly from the desired zone
+with <TT>try_to_free_pages_zone()</TT> 
+(See Section <A HREF="understand027.html#func: try_to_free_pages_zone">J.5.3</A>). This is where the direct-reclaim path intersects
+with <B>kswapd</B></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>268</B>Clear the flags again so that the free functions do not continue to
+add pages to the <TT>local_pages</TT> list</DD></DL><PRE CLASS="verbatim">270     if (current-&gt;nr_local_pages) {
+271         struct list_head * entry, * local_pages;
+272         struct page * tmp;
+273         int nr_pages;
+274 
+275         local_pages = &amp;current-&gt;local_pages;
+276 
+277         if (likely(__freed)) {
+278             /* pick from the last inserted so we're lifo */
+279             entry = local_pages-&gt;next;
+280             do {
+281                 tmp = list_entry(entry, struct page, list);
+282                 if (tmp-&gt;index == order &amp;&amp; 
+                        memclass(page_zone(tmp), classzone)) {
+283                     list_del(entry);
+284                     current-&gt;nr_local_pages--;
+285                     set_page_count(tmp, 1);
+286                     page = tmp;
+287 
+288                     if (page-&gt;buffers)
+289                         BUG();
+290                     if (page-&gt;mapping)
+291                         BUG();
+292                     if (!VALID_PAGE(page))
+293                         BUG();
+294                     if (PageLocked(page))
+295                         BUG();
+296                     if (PageLRU(page))
+297                         BUG();
+298                     if (PageActive(page))
+299                         BUG();
+300                     if (PageDirty(page))
+301                         BUG();
+302 
+303                     break;
+304                 }
+305             } while ((entry = entry-&gt;next) != local_pages);
+306         }
+</PRE><P>Presuming that pages exist in the <TT>local_pages</TT> list, this function
+will cycle through the list looking for a page block belonging to the desired
+zone and order.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>270</B>Only enter this block if pages are stored in the local list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>275</B>Start at the beginning of the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>277</B>If pages were freed with <TT>try_to_free_pages_zone()</TT>
+then...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>279</B>The last one inserted is chosen first as it is likely to be cache
+hot and it is desirable to use pages that have been recently referenced</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>280-305</B>Cycle through the pages in the list until we find one of the
+desired order and zone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>281</B>Get the page from this list entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>282</B>The order of the page block is stored in
+<TT>page</TT>&#X2192;<TT>index</TT> so check if the order matches the desired order
+and that it belongs to the right zone. It is unlikely that pages from another
+zone are on this list but it could occur if <TT>swap_out()</TT> is called to
+free pages directly from process page tables</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>283</B>This is a page of the right order and zone so remove it from the
+list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>284</B>Decrement the number of page blocks in the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>285</B>Set the page count to 1 as it is about to be freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>286</B>Set <TT>page</TT> as it will be returned. <TT>tmp</TT> is needed
+for the next block for freeing the remaining pages in the local list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>288-301</B>Perform the same checks that are performed in
+<TT>__free_pages_ok()</TT> to ensure it is safe to free this page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>305</B>Move to the next page in the list if the current one was not of the
+desired order and zone</DD></DL><PRE CLASS="verbatim">308         nr_pages = current-&gt;nr_local_pages;
+309         /* free in reverse order so that the global 
+             * order will be lifo */
+310         while ((entry = local_pages-&gt;prev) != local_pages) {
+311             list_del(entry);
+312             tmp = list_entry(entry, struct page, list);
+313             __free_pages_ok(tmp, tmp-&gt;index);
+314             if (!nr_pages--)
+315                 BUG();
+316         }
+317         current-&gt;nr_local_pages = 0;
+318     }
+319  out:
+320     *freed = __freed;
+321     return page;
+322 }
+</PRE><P>This block frees the remaining pages in the list.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>308</B>Get the number of page blocks that are to be freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>310</B>Loop until the <TT>local_pages</TT> list is empty</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>311</B>Remove this page block from the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>312</B>Get the <TT>struct page</TT> for the entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>313</B>Free the page with <TT>__free_pages_ok()</TT> 
+(See Section <A HREF="#func: __free_pages_ok">F.3.2</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>314-315</B>If the count of page blocks reaches zero and there is still
+pages in the list, it means that the accounting is seriously broken somewhere
+or that someone added pages to the <TT>local_pages</TT> list manually so call
+<TT>BUG()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>317</B>Set the number of page blocks to 0 as they have all been freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>320</B>Update the <TT>freed</TT> parameter to tell the caller how many
+pages were freed in total</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>321</B>Return the page block of the requested order and zone. If the
+freeing failed, this will be returning NULL</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc113"></A><A NAME="htoc280">F.2</A>  Allocation Helper Functions</H2><P>This section will cover miscellaneous helper functions and macros
+the Buddy Allocator uses to allocate pages. Very few of them do &#X201C;real&#X201D;
+work and are available just for the convenience of the programmer.</P><H3 CLASS="subsection"><A NAME="htoc281">F.2.1</A>  Function: alloc_page</H3><P> <EM>Source: include/linux/mm.h</EM> <A NAME="func: alloc_page"></A> <A NAME="@codeindex195"></A></P><P>This trivial macro just calls <TT>alloc_pages()</TT> with an order of 0 to
+return 1 page. It is declared as follows</P><PRE CLASS="verbatim">449 #define alloc_page(gfp_mask) alloc_pages(gfp_mask, 0)
+</PRE><H3 CLASS="subsection"><A NAME="htoc282">F.2.2</A>  Function: __get_free_page</H3><P> <EM>Source: include/linux/mm.h</EM> <A NAME="func: __get_free_page"></A> <A NAME="@codeindex196"></A></P><P>This trivial function calls <TT>__get_free_pages()</TT> with an order
+of 0 to return 1 page. It is declared as follows</P><PRE CLASS="verbatim">454 #define __get_free_page(gfp_mask) \
+455             __get_free_pages((gfp_mask),0)
+</PRE><H3 CLASS="subsection"><A NAME="htoc283">F.2.3</A>  Function: __get_free_pages</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: __get_free_pages"></A> <A NAME="@codeindex197"></A></P><P>This function is for callers who do not want to worry about pages and only
+get back an address it can use. It is declared as follows</P><PRE CLASS="verbatim">428 unsigned long __get_free_pages(unsigned int gfp_mask, 
+                           unsigned int order)
+428 {
+430       struct page * page;
+431 
+432       page = alloc_pages(gfp_mask, order);
+433       if (!page)
+434             return 0;
+435       return (unsigned long) page_address(page);
+436 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>431</B> <TT>alloc_pages()</TT> does the work of allocating the page
+block. See Section <A HREF="#func: alloc_pages">F.1.1</A> </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>433-434</B> Make sure the page is valid</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>435</B> <TT>page_address()</TT> returns the physical address of the page
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc284">F.2.4</A>  Function: __get_dma_pages</H3><P> <EM>Source: include/linux/mm.h</EM> <A NAME="func: __get_dma_pages"></A> <A NAME="@codeindex198"></A></P><P>This is of principle interest to device drivers. It will return memory from
+<TT>ZONE_DMA</TT> suitable for use with DMA devices. It is declared as follows</P><PRE CLASS="verbatim">457 #define __get_dma_pages(gfp_mask, order) \
+458         __get_free_pages((gfp_mask) | GFP_DMA,(order))
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>458</B> The <TT>gfp_mask</TT> is or-ed with <TT>GFP_DMA</TT>
+to tell the allocator to allocate from <TT>ZONE_DMA</TT></DD></DL><H3 CLASS="subsection"><A NAME="htoc285">F.2.5</A>  Function: get_zeroed_page</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: get_zeroed_page"></A> <A NAME="@codeindex199"></A></P><P>This function will allocate one page and then zero out the contents of it. It is
+declared as follows</P><PRE CLASS="verbatim">438 unsigned long get_zeroed_page(unsigned int gfp_mask)
+439 {
+440       struct page * page;
+441 
+442       page = alloc_pages(gfp_mask, 0);
+443       if (page) {
+444             void *address = page_address(page);
+445             clear_page(address);
+446             return (unsigned long) address;
+447       }
+448       return 0;
+449 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>438</B><TT>gfp_mask</TT> are the flags which affect allocator
+behaviour.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>442</B><TT>alloc_pages()</TT> does the work of allocating the page
+block. See Section <A HREF="#func: alloc_pages">F.1.1</A> </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>444</B><TT>page_address()</TT> returns the physical address of the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>445</B><TT>clear_page()</TT> will fill the contents of a page with zero</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>446</B>Return the address of the zeroed page
+</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc114"></A><A NAME="htoc286">F.3</A>  Free Pages</H2><H3 CLASS="subsection"><A NAME="htoc287">F.3.1</A>  Function: __free_pages</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: __free_pages"></A> <A NAME="@codeindex200"></A></P><P>The call graph for this function is shown in Figure 
+<A HREF="understand009.html#fig: __free_pages">6.4</A>. Just to be confusing, the opposite
+to <TT>alloc_pages()</TT> is not <TT>free_pages()</TT>, it is
+<TT>__free_pages()</TT>. <TT>free_pages()</TT><A NAME="@codeindex201"></A> is a helper function
+which takes an address as a parameter, it will be discussed in a later section.</P><PRE CLASS="verbatim">451 void __free_pages(struct page *page, unsigned int order)
+452 {
+453       if (!PageReserved(page) &amp;&amp; put_page_testzero(page))
+454             __free_pages_ok(page, order);
+455 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>451</B>The parameters are the <TT>page</TT> we wish to free and what
+order block it is</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>453</B>Sanity checked. <TT>PageReserved()</TT> indicates that the page
+is reserved by the boot memory allocator. <TT>put_page_testzero()</TT><A NAME="@codeindex202"></A>
+is just a macro wrapper around <TT>atomic_dec_and_test()</TT> decrements
+the usage count and makes sure it is zero</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>454</B>Call the function that does all the hard work</DD></DL><H3 CLASS="subsection"><A NAME="htoc288">F.3.2</A>  Function: __free_pages_ok</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: __free_pages_ok"></A> <A NAME="@codeindex203"></A></P><P>This function will do the actual freeing of the page and coalesce the buddies
+if possible.</P><PRE CLASS="verbatim">81 static void FASTCALL(__free_pages_ok (struct page *page, 
+                               unsigned int order));
+ 82 static void __free_pages_ok (struct page *page, unsigned int order)
+ 83 {
+ 84       unsigned long index, page_idx, mask, flags;
+ 85       free_area_t *area;
+ 86       struct page *base;
+ 87       zone_t *zone;
+ 88 
+ 93       if (PageLRU(page)) {
+ 94             if (unlikely(in_interrupt()))
+ 95                   BUG();
+ 96             lru_cache_del(page);
+ 97       }
+ 98 
+ 99       if (page-&gt;buffers)
+100             BUG();
+101       if (page-&gt;mapping)
+102             BUG();
+103       if (!VALID_PAGE(page))
+104             BUG();
+105       if (PageLocked(page))
+106             BUG();
+107       if (PageActive(page))
+108             BUG();
+109       page-&gt;flags &amp;= ~((1&lt;&lt;PG_referenced) | (1&lt;&lt;PG_dirty));
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>82</B>The parameters are the beginning of the page block to free and
+what order number of pages are to be freed.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>93-97</B>A dirty page on the LRU will still have the LRU bit set when pinned
+for IO. On IO completion, it is freed so it must now be removed from the LRU
+list </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>99-108</B>Sanity checks</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>109</B>The flags showing a page has being referenced and is dirty have to
+be cleared because the page is now free and not in use
+</DD></DL><PRE CLASS="verbatim">110 
+111       if (current-&gt;flags &amp; PF_FREE_PAGES)
+112             goto local_freelist;
+113  back_local_freelist:
+114 
+115       zone = page_zone(page);
+116 
+117       mask = (~0UL) &lt;&lt; order;
+118       base = zone-&gt;zone_mem_map;
+119       page_idx = page - base;
+120       if (page_idx &amp; ~mask)
+121             BUG();
+122       index = page_idx &gt;&gt; (1 + order);
+123 
+124       area = zone-&gt;free_area + order;
+125 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>111-112</B>If this flag is set, the pages freed are
+to be kept for the process doing the freeing. This is set by
+<TT>balance_classzone()</TT>(See Section <A HREF="#func: balance_classzone">F.1.6</A>) during page
+allocation if the caller is freeing the pages itself rather than waiting
+for <B>kswapd</B> to do the work</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>115</B>The zone the page belongs to is encoded within the page flags. The
+<TT>page_zone()</TT> macro returns the zone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>117</B>The calculation of mask is discussed in companion document. It
+is basically related to the address calculation of the buddy</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>118</B><TT>base</TT> is the beginning of this
+<TT>zone_mem_map</TT>. For the buddy calculation to work, it was to be
+relative to an address 0 so that the addresses will be a power of two</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>119</B><TT>page_idx</TT> treats the <TT>zone_mem_map</TT> as an
+array of pages. This is the index page within the map</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>120-121</B>If the index is not the proper power of two, things are
+severely broken and calculation of the buddy will not work</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>122</B>This <TT>index</TT> is the bit index within
+<TT>free_area</TT>&#X2192;<TT>map</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>124</B><TT>area</TT> is the area storing the free lists and map for
+the order block the pages are been freed from.
+</DD></DL><PRE CLASS="verbatim">126       spin_lock_irqsave(&amp;zone-&gt;lock, flags);
+127 
+128       zone-&gt;free_pages -= mask;
+129 
+130       while (mask + (1 &lt;&lt; (MAX_ORDER-1))) {
+131             struct page *buddy1, *buddy2;
+132 
+133             if (area &gt;= zone-&gt;free_area + MAX_ORDER)
+134                   BUG();
+135             if (!__test_and_change_bit(index, area-&gt;map))
+136                   /*
+137                    * the buddy page is still allocated.
+138                    */
+139                   break;
+140             /*
+141              * Move the buddy up one level.
+142              * This code is taking advantage of the identity:
+143              *      -mask = 1+~mask
+144              */
+145             buddy1 = base + (page_idx ^ -mask);
+146             buddy2 = base + page_idx;
+147             if (BAD_RANGE(zone,buddy1))
+148                   BUG();
+149             if (BAD_RANGE(zone,buddy2))
+150                   BUG();
+151 
+152             list_del(&amp;buddy1-&gt;list);
+153             mask &lt;&lt;= 1;
+154             area++;
+155             index &gt;&gt;= 1;
+156             page_idx &amp;= mask;
+157       }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>126</B>The zone is about to be altered so take out the lock. The lock is
+an interrupt safe lock as it is possible for interrupt handlers to allocate
+a page in this path</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>128</B>Another side effect of the calculation of <TT>mask</TT> is that
+<TT>-mask</TT> is the number of pages that are to be freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>130-157</B>The allocator will keep trying to coalesce blocks together
+until it either cannot merge or reaches the highest order that can be merged.
+mask will be adjusted for each order block that is merged. When the highest
+order that can be merged is reached, this while loop will evaluate to 0 and
+exit.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>133-134</B>If by some miracle, <TT>mask</TT> is corrupt, this check will
+make sure the <TT>free_area</TT> array will not not be read beyond the end</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>135</B>Toggle the bit representing this pair of buddies. If the bit
+was previously zero, both buddies were in use. As this buddy is been freed,
+one is still in use and cannot be merged</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>145-146</B>The calculation of the two addresses is discussed in Chapter
+<A HREF="understand009.html#chap: Physical Page Allocation">6</A> </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>147-150</B>Sanity
+check to make sure the pages are within the correct
+<TT>zone_mem_map</TT> and actually belong to this zone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>152</B>The buddy has been freed so remove it from any list it was part of</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>153-156</B>Prepare to examine the higher order buddy for merging</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>153</B>Move the mask one bit to the left for order 2<SUP><I>k</I>+1</SUP></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>154</B>area is a pointer within an array so <TT>area++</TT> moves to
+the next index</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>155</B>The index in the bitmap of the higher order </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>156</B>The page index within the <TT>zone_mem_map</TT> for the buddy
+to merge
+</DD></DL><PRE CLASS="verbatim">158       list_add(&amp;(base + page_idx)-&gt;list, &amp;area-&gt;free_list);
+159 
+160       spin_unlock_irqrestore(&amp;zone-&gt;lock, flags);
+161       return;
+162 
+163  local_freelist:
+164       if (current-&gt;nr_local_pages)
+165             goto back_local_freelist;
+166       if (in_interrupt())
+167             goto back_local_freelist;             
+168 
+169       list_add(&amp;page-&gt;list, &amp;current-&gt;local_pages);
+170       page-&gt;index = order;
+171       current-&gt;nr_local_pages++;
+172 }
+
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>158</B>As much merging as possible as completed and a new page block
+is free so add it to the <TT>free_list</TT> for this order</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>160-161</B>Changes to the zone is complete so free the lock and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>163</B>This is the code path taken when the pages are not freed to the
+main pool but instaed are reserved for the process doing the freeing.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>164-165</B>If the process already has reserved pages, it is
+not allowed to reserve any more so return back. This is unusual as
+<TT>balance_classzone()</TT> assumes that more than one page block may be
+returned on this list. It is likely to be an oversight but may still work
+if the first page block freed is the same order and zone as required by
+<TT>balance_classzone()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>166-167</B>An interrupt does not have process context so it has to
+free in the normal fashion. It is unclear how an interrupt could end up here
+at all. This check is likely to be bogus and impossible to be true</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>169</B>Add the page block to the list for the processes
+<TT>local_pages</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>170</B>Record what order allocation it was for freeing later</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>171</B>Increase the use count for <TT>nr_local_pages</TT>
+</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc115"></A><A NAME="htoc289">F.4</A>  Free Helper Functions</H2><P>
+<A NAME="c_sec: Page Free Helper Functions"></A></P><P>These functions are very similar to the page allocation helper
+functions in that they do no &#X201C;real&#X201D; work themselves and depend on the
+<TT>__free_pages()</TT> function to perform the actual free.</P><H3 CLASS="subsection"><A NAME="htoc290">F.4.1</A>  Function: free_pages</H3><P> <EM>Source: mm/page_alloc.c</EM> <A NAME="func: free_pages"></A> <A NAME="@codeindex204"></A></P><P>This function takes an address instead of a page as a parameter to free. It
+is declared as follows</P><PRE CLASS="verbatim">457 void free_pages(unsigned long addr, unsigned int order)
+458 {
+459       if (addr != 0)
+460             __free_pages(virt_to_page(addr), order);
+461 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>460</B> The function is discussed in Section <A HREF="#func: __free_pages">F.3.1</A>. The macro <TT>virt_to_page()</TT> returns the <TT>struct page</TT>
+for
+the <TT>addr</TT></DD></DL><H3 CLASS="subsection"><A NAME="htoc291">F.4.2</A>  Function: __free_page</H3><P> <EM>Source: include/linux/mm.h</EM> <A NAME="func: __free_page"></A> <A NAME="@codeindex205"></A></P><P>This trivial macro just calls the function <TT>__free_pages()</TT> (See
+Section <A HREF="#func: __free_pages">F.3.1</A>) with an order 0 for 1 page. It is declared
+as follows</P><PRE CLASS="verbatim">472 #define __free_page(page) __free_pages((page), 0)
+</PRE><H3 CLASS="subsection"><A NAME="htoc292">F.4.3</A>  Function: free_page</H3><P> <EM>Source: include/linux/mm.h</EM> <A NAME="func: free_page"></A> <A NAME="@codeindex206"></A></P><P>This trivial macro just calls the function <TT>free_pages()</TT>. The
+essential difference between this macro and <TT>__free_page()</TT> is that
+this function takes a virtual address as a parameter and
+<TT>__free_page()</TT> takes a <TT>struct page</TT>.</P><PRE CLASS="verbatim">472 #define free_page(addr) free_pages((addr),0)
+</PRE><P>	</P><HR>
+[ <A HREF="understand022.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand024.html">Next &raquo;</A> ]
+</BODY>
+</HTML>

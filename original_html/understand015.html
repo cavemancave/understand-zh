@@ -1,0 +1,394 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand.css">
+<TITLE>Shared Memory Virtual Filesystem</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand014.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand016.html">Next &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc88">Chapter 12</A>  Shared Memory Virtual Filesystem</H1><P>
+<A NAME="chap: Shared Memory Virtual Filesystem"></A>
+<A NAME="@mainindex959"></A>
+<A NAME="@mainindex960"></A></P><P>Sharing a region region of memory backed by a file or device is simply a
+case of calling <TT>mmap()</TT> with the <TT>MAP_SHARED</TT> flag.
+However, there are two important cases where an anonymous region needs
+to be shared between processes. The first is when <TT>mmap()</TT> with
+<TT>MAP_SHARED</TT> but no file backing. These regions will be shared
+between a parent and child process after a <TT>fork()</TT> is executed. The
+second is when a region is explicitly setting them up with <TT>shmget()</TT>
+and attached to the virtual address space with <TT>shmat()</TT>.</P><P>When pages within a VMA are backed by a file on disk, the
+interface used is straight-forward. To read a page during a
+page fault, the required <TT>nopage()</TT> function is found
+<TT>vm_area_struct</TT>&#X2192;<TT>vm_ops</TT>. To write a page to
+backing storage, the appropriate <TT>writepage()</TT> function
+is found in the <TT>address_space_operations</TT> via
+<TT>inode</TT>&#X2192;<TT>i_mapping</TT>&#X2192;<TT>a_ops</TT> or
+alternatively via <TT>page</TT>&#X2192;<TT>mapping</TT>&#X2192;<TT>a_ops</TT>.
+When normal file operations are taking place such as <TT>mmap()</TT>,
+<TT>read()</TT> and <TT>write()</TT>, the <TT>struct file_operations</TT>
+with the appropriate functions is found via <TT>inode</TT>&#X2192;<TT>i_fop</TT>
+and so on. These relationships were illustrated in Figure 
+<A HREF="understand007.html#fig: Data Structures related to the Address Space">4.2</A>.</P><P><A NAME="@mainindex961"></A>This is a very clean interface that is
+conceptually easy to understand but it does not help anonymous pages as
+there is no file backing. To keep this nice interface, Linux creates an
+artifical file-backing for anonymous pages using a RAM-based filesystem
+where each VMA is backed by a &#X201C;file&#X201D; in this filesystem. Every inode in
+the filesystem is placed on a linked list called <TT>shmem_inodes</TT><A NAME="@mainindex962"></A>
+so that they may always be easily located. This allows the same file-based
+interface to be used without treating anonymous pages as a special case.</P><P>The filesystem comes in two variations called <EM>shm</EM><A NAME="@mainindex963"></A> and
+<EM>tmpfs</EM><A NAME="@mainindex964"></A>. They both share core functionality and mainly differ
+in what they are used for. <TT>shm</TT> is for use by the kernel for
+creating file backings for anonymous pages and for backing regions created
+by <TT>shmget()</TT>. This filesystem is mounted by <TT>kern_mount()</TT><A NAME="@mainindex965"></A>
+so that it is mounted internally and not visible to users. <TT>tmpfs</TT> is
+a temporary filesystem that may be optionally mounted on <TT>/tmp/</TT> to
+have a fast RAM-based temporary filesystem. A secondary use for <TT>tmpfs</TT>
+is to mount it on <TT>/dev/shm/</TT>. Processes that <TT>mmap()</TT> files
+in the <TT>tmpfs</TT> filesystem will be able to share information between
+them as an alternative to System V IPC mechanisms. Regardless of the type
+of use, <TT>tmpfs</TT> must be explicitly mounted by the system administrator.</P><P>This chapter begins with a description of how the virtual filesystem is
+implemented. From there we will discuss how shared regions are setup and
+destroyed before talking about how the tools are used to implement System
+V IPC mechanisms.</P><H2 CLASS="section"><A NAME="toc83"></A><A NAME="htoc89">12.1</A>  Initialising the Virtual Filesystem</H2><P>
+<A NAME="@mainindex966"></A></P><P>The virtual filesystem is initialised by the function
+<TT>init_tmpfs()</TT> during either system start or when the module is
+begin loaded. This function registers the two filesystems, <TT>tmpfs</TT>
+and <TT>shm</TT>, mounts <TT>shm</TT> as an internal filesystem with
+<TT>kern_mount()</TT>. It then calculates the maximum number of blocks and
+inodes that can exist in the filesystems. As part of the registration, the
+function <TT>shmem_read_super()</TT> is used as a callback to populate a
+<TT>struct super_block</TT> with more information about the filesystems
+such as making the block size equal to the page size.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html071.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 12.1: Call Graph: <TT>init_tmpfs()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: init_shmem_fs"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>Every inode created in the filesystem will have a <TT>struct</TT>
+<TT>shmem_inode_info</TT><A NAME="@mainindex967"></A> associated with it which contains private
+information specific to the filesystem. The function <TT>SHMEM_I()</TT><A NAME="@mainindex968"></A>
+takes an inode as a parameter and returns a pointer to a struct of this type.
+It is declared as follows in &lt;<TT>linux/shmem_fs.h</TT>&gt;:</P><PRE CLASS="verbatim"> 20 struct shmem_inode_info {
+ 21     spinlock_t              lock;
+ 22     unsigned long           next_index;
+ 23     swp_entry_t             i_direct[SHMEM_NR_DIRECT];
+ 24     void                  **i_indirect;
+ 25     unsigned long           swapped;
+ 26     unsigned long           flags;
+ 27     struct list_head        list;
+ 28     struct inode           *inode;
+ 29 };
+</PRE><P>The fields are:</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>lock</B> is a spinlock protecting the inode information from concurrent
+accessses
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>next_index</B> is an index of the last page being used in the file. This
+will be different from <TT>inode</TT>&#X2192;<TT>i_size</TT> while a file is being
+trucated</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>i_direct</B> is a direct block containing the first
+<TT>SHMEM_NR_DIRECT</TT> swap vectors in use by the file. See Section
+<A HREF="#sec: Locating Swapped Pages">12.4.1</A>.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>i_indirect</B> is a pointer to the first indirect block. See Section
+<A HREF="#sec: Locating Swapped Pages">12.4.1</A>.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>swapped</B> is a count of the number of pages belonging to the file that are
+currently swapped out</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B> is currently only used to remember if the file belongs
+to a shared region setup by <TT>shmget()</TT>. It is set by specifying
+<TT>SHM_LOCK</TT><A NAME="@mainindex969"></A> with <TT>shmctl()</TT> and unlocked by specifying
+<TT>SHM_UNLOCK</TT><A NAME="@mainindex970"></A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>list</B> is a list of all inodes used by the filesystem</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>inode</B> is a pointer to the parent inode</DD></DL><H2 CLASS="section"><A NAME="toc84"></A><A NAME="htoc90">12.2</A>  Using <TT>shmem</TT> Functions</H2><P>
+<A NAME="sec: Using shmem Functions"></A>
+<A NAME="@mainindex971"></A></P><P>Different structs contain pointers for shmem specific functions. In all
+cases, <TT>tmpfs</TT> and <TT>shm</TT> share the same structs.</P><P>For faulting in pages and writing them to backing storage, two structs called
+<TT>shmem_aops</TT> and <TT>shmem_vm_ops</TT> of type <TT>struct
+address_space_operations</TT> and <TT>struct vm_operations_struct</TT>
+respectively are declared. </P><P>The address space operations <TT>struct shmem_aops</TT> contains
+pointers to a small number of functions of which the most important one is
+<TT>shmem_writepage()</TT><A NAME="@mainindex972"></A> which is called when a page is moved from the
+page cache to the swap cache. <TT>shmem_removepage()</TT> is called when
+a page is removed from the page cache so that the block can be reclaimed.
+<TT>shmem_readpage()</TT><A NAME="@mainindex973"></A> is not used by tmpfs but is provided so
+that the <TT>sendfile()</TT> system call my be used with tmpfs files.
+<TT>shmem_prepare_write()</TT><A NAME="@mainindex974"></A> and <TT>shmem_commit_write()</TT><A NAME="@mainindex975"></A>
+are also unused, but are provided so that tmpfs can be used with the
+loopback device. <TT>shmem_aops</TT> is declared as follows in
+<TT>mm/shmem.c</TT></P><PRE CLASS="verbatim">1500 static struct address_space_operations shmem_aops = {
+1501     removepage:     shmem_removepage,
+1502     writepage:      shmem_writepage,
+1503 #ifdef CONFIG_TMPFS
+1504     readpage:       shmem_readpage,
+1505     prepare_write:  shmem_prepare_write,
+1506     commit_write:   shmem_commit_write,
+1507 #endif
+1508 };
+</PRE><P>Anonymous VMAs use <TT>shmem_vm_ops</TT> as it's
+<TT>vm_operations_struct</TT> so that <TT>shmem_nopage()</TT> is
+called when a new page is being faulted in. It is declared as follows:</P><PRE CLASS="verbatim">1426 static struct vm_operations_struct shmem_vm_ops = {
+1427     nopage: shmem_nopage,
+1428 };
+</PRE><P>To perform operations on files and inodes, two structs,
+<TT>file_operations</TT><A NAME="@mainindex976"></A> and <TT>inode_operations</TT><A NAME="@mainindex977"></A>
+are required. The <TT>file_operations</TT>, called
+<TT>shmem_file_operations</TT><A NAME="@mainindex978"></A>, provides functions which implement
+<TT>mmap()</TT>, <TT>read()</TT>, <TT>write()</TT> and <TT>fsync()</TT>. It
+is declared as follows:</P><PRE CLASS="verbatim">1510 static struct file_operations shmem_file_operations = {
+1511     mmap:           shmem_mmap,
+1512 #ifdef CONFIG_TMPFS
+1513     read:           shmem_file_read,
+1514     write:          shmem_file_write,
+1515     fsync:          shmem_sync_file,
+1516 #endif
+1517 };
+</PRE><P>Three sets of <TT>inode_operations</TT> are provided. The first is
+<TT>shmem_inode_operations</TT><A NAME="@mainindex979"></A> which is used for file inodes. The
+second, called <TT>shmem_dir_inode_operations</TT><A NAME="@mainindex980"></A> is for directories.
+The last pair, called <TT>shmem_symlink_inline_operations</TT><A NAME="@mainindex981"></A> and
+<TT>shmem_symlink_inode_operations</TT><A NAME="@mainindex982"></A> is for use with symbolic links.</P><P>The two file operations supported are <TT>truncate()</TT> and
+<TT>setattr()</TT> which are stored in a <TT>struct inode_operations</TT>
+called <TT>shmem_inode_operations</TT><A NAME="@mainindex983"></A>. <TT>shmem_truncate()</TT>
+is used to truncate a file. <TT>shmem_notify_change()</TT> is called when
+the file attributes change. This allows, amoung other things, to allows a
+file to be grown with <TT>truncate()</TT> and use the global zero page as
+the data page. <TT>shmem_inode_operations</TT> is declared as follows:</P><PRE CLASS="verbatim">1519 static struct inode_operations shmem_inode_operations = {
+1520         truncate:       shmem_truncate,
+1521         setattr:        shmem_notify_change,
+1522 };
+</PRE><P>The directory <TT>inode_operations</TT> provides functions such as
+<TT>create()</TT>, <TT>link()</TT> and <TT>mkdir()</TT>. They are declared
+as follows:</P><PRE CLASS="verbatim">1524 static struct inode_operations shmem_dir_inode_operations = {
+1525 #ifdef CONFIG_TMPFS
+1526     create:         shmem_create,
+1527     lookup:         shmem_lookup,
+1528     link:           shmem_link,
+1529     unlink:         shmem_unlink,
+1530     symlink:        shmem_symlink,
+1531     mkdir:          shmem_mkdir,
+1532     rmdir:          shmem_rmdir,
+1533     mknod:          shmem_mknod,
+1534     rename:         shmem_rename,
+1535 #endif
+1536 };
+</PRE><P>The last pair of operations are for use with symlinks. They are declared as:</P><PRE CLASS="verbatim">1354 static struct inode_operations shmem_symlink_inline_operations = {
+1355         readlink:       shmem_readlink_inline,
+1356         follow_link:    shmem_follow_link_inline,
+1357 };
+1358 
+1359 static struct inode_operations shmem_symlink_inode_operations = {
+1360         truncate:       shmem_truncate,
+1361         readlink:       shmem_readlink,
+1362         follow_link:    shmem_follow_link,
+1363 };
+</PRE><P>The difference between the two <TT>readlink()</TT> and <TT>follow_link()</TT>
+functions is related to where the link information is stored. A symlink
+inode does not require the private inode information <TT>struct
+shmem_inode_information</TT>. If the length of the symbolic link name is
+smaller than this struct, the space in the inode is used to store the name
+and <TT>shmem_symlink_inline_operations</TT> becomes the inode operations
+struct. Otherwise a page is allocated with <TT>shmem_getpage()</TT><A NAME="@mainindex984"></A>, the
+symbolic link is copied to it and <TT>shmem_symlink_inode_operations</TT>
+is used. The second struct includes a <TT>truncate()</TT> function so that
+the page will be reclaimed when the file is deleted.</P><P>These various structs ensure that the shmem equivalent of inode related
+operations will be used when regions are backed by virtual files. When they
+are used, the majority of the VM sees no difference between pages backed by
+a real file and ones backed by virtual files.</P><H2 CLASS="section"><A NAME="toc85"></A><A NAME="htoc91">12.3</A>  Creating Files in <TT>tmpfs</TT></H2><P>
+<A NAME="@mainindex985"></A>
+<A NAME="@mainindex986"></A></P><P>As <TT>tmpfs</TT> is mounted as a proper filesystem that is visible
+to the user, it must support directory inode operations such as
+<TT>open()</TT>, <TT>mkdir()</TT> and <TT>link()</TT>. Pointers to
+functions which implement these for <TT>tmpfs</TT> are provided in
+<TT>shmem_dir_inode_operations</TT> which was shown in Section 
+<A HREF="#sec: Using shmem Functions">12.2</A>.</P><P>The implementations of most of these functions are quite small and, at some
+level, they are all interconnected as can be seen from Figure 
+<A HREF="#fig: shmem_create">12.2</A>. All of them share the same basic principal of
+performing some work with inodes in the virtual filesystem and the majority
+of the inode fields are filled in by <TT>shmem_get_inode()</TT>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html072.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 12.2: Call Graph: <TT>shmem_create()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: shmem_create"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>When creating a new file, the top-level function called is
+<TT>shmem_create()</TT>. This small function calls <TT>shmem_mknod()</TT>
+with the <TT>S_IFREG</TT> flag added so that a regular file will be
+created. <TT>shmem_mknod()</TT> is little more than a wrapper around the
+<TT>shmem_get_inode()</TT> which, predictably, creates a new inode and
+fills in the struct fields. The three fields of principal interest that are
+filled are the <TT>inode</TT>&#X2192;<TT>i_mapping</TT>&#X2192;<TT>a_ops</TT>,
+<TT>inode</TT>&#X2192;<TT>i_op</TT> and <TT>inode</TT>&#X2192;<TT>i_fop</TT> fields. Once
+the inode has been created, <TT>shmem_mknod()</TT> updates the directory
+inode <TT>size</TT> and <TT>mtime</TT> statistics before instantiating
+the new inode.</P><P>Files are created differently in <TT>shm</TT> even though the filesystems
+are essentially identical in functionality. How these files are created is
+covered later in Section <A HREF="#sec: Setting up Shared Regions">12.7</A>. </P><H2 CLASS="section"><A NAME="toc86"></A><A NAME="htoc92">12.4</A>  Page Faulting within a Virtual File</H2><P>
+<A NAME="sec: Page Faulting within a Virtual File"></A>
+<A NAME="@mainindex987"></A></P><P>When a page fault occurs, <TT>do_no_page()</TT> will call
+<TT>vma</TT>&#X2192;<TT>vm_ops</TT>&#X2192;<TT>nopage</TT> if it
+exists. In the case of the virtual filesystem, this means the function
+<TT>shmem_nopage()</TT>, whose call graph is shown in Figure <A HREF="#fig: shmem_nopage">12.3</A>,
+will be called when a page fault occurs.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html073.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 12.3: Call Graph: <TT>shmem_nopage()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: shmem_nopage"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The core function in this case is <TT>shmem_getpage()</TT> which is
+responsible for either allocating a new page or finding it in swap. This
+overloading of fault types is unusual as <TT>do_swap_page()</TT> is normally
+responsible for locating pages that have been moved to the swap cache or
+backing storage using information encoded within the PTE. In this case,
+pages backed by virtual files have their PTE set to 0 when they are moved
+to the swap cache. The inode's private filesystem data stores direct and
+indirect block information which is used to locate the pages later. This
+operation is very similar in many respects to normal page faulting.</P><H3 CLASS="subsection">12.4.1  Locating Swapped Pages</H3><P>
+<A NAME="sec: Locating Swapped Pages"></A></P><P>When a page has been swapped out, a <TT>swp_entry_t</TT> will contain
+information needed to locate the page again. Instead of using the PTEs for
+this task, the information is stored within the filesystem-specific private
+information in the inode.</P><P>When faulting, the function called to locate the swap entry is
+<TT>shmem_alloc_entry()</TT>. It's basic task is to perform basic checks
+and ensure that <TT>shmem_inode_info</TT>&#X2192;<TT>next_index</TT> always
+points to the page index at the end of the virtual file. It's principal task
+is to call <TT>shmem_swp_entry()</TT> which searches for the swap vector
+within the inode information with <TT>shmem_swp_entry()</TT> and allocate
+new pages as necessary to store swap vectors.</P><P>The first <TT>SHMEM_NR_DIRECT</TT> entries are stored in
+<TT>inode</TT>&#X2192;<TT>i_direct</TT>. This means that for the x86, files that
+are smaller than 64KiB (<TT>SHMEM_NR_DIRECT * PAGE_SIZE</TT>) will not
+need to use indirect blocks. Larger files must use indirect blocks starting
+with the one located at <TT>inode</TT>&#X2192;<TT>i_indirect</TT>.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html074.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 12.4: Traversing Indirect Blocks in a Virtual
+File</TD></TR>
+</TABLE></DIV>
+<A NAME="fig: Traversing Indirect Blocks in a Virtual File"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The initial indirect block (<TT>inode</TT>&#X2192;<TT>i_indirect</TT>) is broken
+into two halves. The first half contains pointers to doubly indirect blocks
+and the second half contains pointers to triply indirect blocks. The doubly
+indirect blocks are pages containing swap vectors (<TT>swp_entry_t</TT>).
+The triple indirect blocks contain pointers to pages which in turn are filled
+with swap vectors. The relationship between the different levels of indirect
+blocks is illustrated in Figure 
+<A HREF="#fig: Traversing Indirect Blocks in a Virtual File">12.4</A>. The
+relationship means that the maximum number of pages in a virtual
+file (<TT>SHMEM_MAX_INDEX</TT><A NAME="@mainindex988"></A>) is defined as follows in
+<TT>mm/shmem.c</TT>:</P><PRE CLASS="verbatim"> 44 #define SHMEM_MAX_INDEX  (
+         SHMEM_NR_DIRECT + 
+         (ENTRIES_PER_PAGEPAGE/2) *
+         (ENTRIES_PER_PAGE+1))
+</PRE><H3 CLASS="subsection">12.4.2  Writing Pages to Swap</H3><P>The function <TT>shmem_writepage()</TT> is the registered function in the
+filesystems <TT>address_space_operations</TT> for writing pages to
+swap. The function is responsible for simply moving the page from the page
+cache to the swap cache. This is implemented with a few simple steps:</P><UL CLASS="itemize"><LI CLASS="li-itemize">Record the current <TT>page</TT>&#X2192;<TT>mapping</TT> and information
+about the inode</LI><LI CLASS="li-itemize">Allocate a free slot in the backing storage with <TT>get_swap_page()</TT></LI><LI CLASS="li-itemize">Allocate a <TT>swp_entry_t</TT> with <TT>shmem_swp_entry()</TT></LI><LI CLASS="li-itemize">Remove the page from the page cache </LI><LI CLASS="li-itemize">Add the page to the swap cache. If it fails, free the swap slot, add
+back to the page cache and try again</LI></UL><H2 CLASS="section"><A NAME="toc87"></A><A NAME="htoc93">12.5</A>  File Operations in <TT>tmpfs</TT></H2><P>Four operations, <TT>mmap()</TT>, <TT>read()</TT>, <TT>write()</TT> and
+<TT>fsync()</TT> are supported with virtual files. Pointers to the functions
+are stored in <TT>shmem_file_operations</TT> which was shown in Section
+<A HREF="#sec: Using shmem Functions">12.2</A>. </P><P>There is little that is unusual in the implementation of these operations
+and they are covered in detail in the Code Commentary. The <TT>mmap()</TT>
+operation is implemented by <TT>shmem_mmap()</TT> and it simply
+updates the VMA that is managing the mapped region. <TT>read()</TT>,
+implemented by <TT>shmem_read()</TT>, performs the operation of copying
+bytes from the virtual file to a userspace buffer, faulting in pages
+as necessary. <TT>write()</TT>, implemented by <TT>shmem_write()</TT>
+is essentially the same. The <TT>fsync()</TT> operation is implemented
+by <TT>shmem_file_sync()</TT> but is essentially a NULL operation as it
+performs no task and simply returns 0 for success. As the files only exist
+in RAM, they do not need to be synchronised with any disk.</P><H2 CLASS="section"><A NAME="toc88"></A><A NAME="htoc94">12.6</A>  Inode Operations in <TT>tmpfs</TT></H2><P>The most complex operation that is supported for inodes is truncation and
+involves four distinct stages. The first, in <TT>shmem_truncate()</TT>
+will truncate the a partial page at the end of the file and continually
+calls <TT>shmem_truncate_indirect()</TT> until the file is truncated to
+the proper size. Each call to <TT>shmem_truncate_indirect()</TT> will only
+process one indirect block at each pass which is why it may need to be called
+multiple times.</P><P>The second stage, in <TT>shmem_truncate_indirect()</TT>, understands both
+doubly and triply indirect blocks. It finds the next indirect block that
+needs to be truncated. This indirect block, which is passed to the third
+stage, will contain pointers to pages which in turn contain swap vectors.</P><P>The third stage in <TT>shmem_truncate_direct()</TT> works with pages that
+contain swap vectors. It selects a range that needs to be truncated and
+passes the range to the last stage <TT>shmem_swp_free()</TT>. The last
+stage frees entries with <TT>free_swap_and_cache()</TT><A NAME="@mainindex989"></A> which frees
+both the swap entry and the page containing data.</P><P>The linking and unlinking of files is very simple as most of the work is
+performed by the filesystem layer. To link a file, the directory inode size
+is incremented, the <TT>ctime</TT> and <TT>mtime</TT> of the affected
+inodes is updated and the number of links to the inode being linked to is
+incremented. A reference to the new dentry is then taken with <TT>dget()</TT>
+before instantiating the new <TT>dentry</TT> with <TT>d_instantiate()</TT>.
+Unlinking updates the same inode statistics before decrementing the reference
+to the <TT>dentry</TT> with <TT>dput()</TT>. <TT>dput()</TT> will also
+call <TT>iput()</TT> which will clear up the inode when it's reference count
+hits zero.</P><P>Creating a directory will use <TT>shmem_mkdir()</TT> to perform the
+task. It simply uses <TT>shmem_mknod()</TT> with the <TT>S_IFDIR</TT>
+flag before incrementing the parent directory inode's <TT>i_nlink</TT>
+counter. The function <TT>shmem_rmdir()</TT> will delete a directory
+by first ensuring it is empty with <TT>shmem_empty()</TT>. If it is, the
+function then decrementing the parent directory inode's <TT>i_nlink</TT>
+count and calls <TT>shmem_unlink()</TT> to remove the requested directory.</P><H2 CLASS="section"><A NAME="toc89"></A><A NAME="htoc95">12.7</A>  Setting up Shared Regions</H2><P>
+<A NAME="sec: Setting up Shared Regions"></A>
+<A NAME="@mainindex990"></A>
+<A NAME="@mainindex991"></A></P><P>A shared region is backed by a file created in <TT>shm</TT>. There are
+two cases where a new file will be created, during the setup of a shared
+region with <TT>shmget()</TT> and when an anonymous region is setup with
+<TT>mmap()</TT> with the <TT>MAP_SHARED</TT> flag. Both functions use
+the core function <TT>shmem_file_setup()</TT> to create a file.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html075.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 12.5: Call Graph: <TT>shmem_zero_setup()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: shmem_zero_setup"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>As the filesystem is internal, the names of the files created do not have
+to be unique as the files are always located by inode, not name. Therefore,
+<TT>shmem_zero_setup()</TT> always says to create a file called
+<TT>dev/zero</TT> which is how it shows up in the file
+<TT>/proc/pid/maps</TT>. Files created by <TT>shmget()</TT> are called
+<TT>SYSVNN</TT> where the <TT>NN</TT> is the key that is passed as a
+parameter to <TT>shmget()</TT>.</P><P>The core function <TT>shmem_file_setup()</TT> simply creates a new dentry
+and inode, fills in the relevant fields and instantiates them.</P><H2 CLASS="section"><A NAME="toc90"></A><A NAME="htoc96">12.8</A>  System V IPC</H2><P>
+<A NAME="@mainindex992"></A><A NAME="@mainindex993"></A></P><P>The full internals of the IPC implementation is beyond the scope
+of this book. This section will focus just on the implementations
+of <TT>shmget()</TT><A NAME="@mainindex994"></A> and <TT>shmat()</TT><A NAME="@mainindex995"></A> and how they are
+affected by the VM. The system call <TT>shmget()</TT> is implemented
+by <TT>sys_shmget()</TT>. It performs basic checks to the parameters
+and sets up the IPC related data structures. To create the segment, it
+calls <TT>newseg()</TT><A NAME="@mainindex996"></A>. This is the function that creates the file
+in <TT>shmfs</TT> with <TT>shmem_file_setup()</TT> as discussed in the
+previous section.</P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html076.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure 12.6: Call Graph: <TT>sys_shmget()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: sys_shmget"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>The system call <TT>shmat()</TT> is implemented by <TT>sys_shmat()</TT>. There
+is little remarkable about the function. It acquires the appropriate descriptor
+and makes sure all the parameters are valid before calling <TT>do_mmap()</TT>
+to map the shared region into the process address space. There are only
+two points of note in the function. </P><P>The first is that it is responsible for ensuring that VMAs will
+not overlap if the caller specifies the address. The second is that
+the <TT>shp</TT>&#X2192;<TT>shm_nattch</TT> counter is maintained by a
+<TT>vm_operations_struct()</TT> called <TT>shm_vm_ops</TT><A NAME="@mainindex997"></A>. It
+registers <TT>open()</TT> and <TT>close()</TT> callbacks called
+<TT>shm_open()</TT> and <TT>shm_close()</TT> respectively. The
+<TT>shm_close()</TT> callback is also responsible for destroyed shared
+regions if the <TT>SHM_DEST</TT><A NAME="@mainindex998"></A> flag is specified and the
+<TT>shm_nattch</TT> counter reaches zero.</P><H2 CLASS="section"><A NAME="toc91"></A><A NAME="htoc97">12.9</A>  What's New in 2.6</H2><P>The core concept and functionality of the filesystem remains the same and
+the changes are either optimisations or extensions to the filesystem's
+functionality. If the reader understands the 2.4 implementation well, the
+2.6 implementation will not present much trouble<SUP><A NAME="text18" HREF="#note18">1</A></SUP>.</P><P>A new fields have been added to the <TT>shmem_inode_info</TT> called
+<TT>alloced</TT>. The <TT>alloced</TT> field stores
+how many data pages are allocated to the file which had to be calculated on
+the fly in 2.4 based on <TT>inode</TT>&#X2192;<TT>i_blocks</TT>. It both saves a
+few clock cycles on a common operation as well as making the code a bit more
+readable. </P><P>The <TT>flags</TT> field now uses the <TT>VM_ACCOUNT</TT> flag
+as well as the <TT>VM_LOCKED</TT> flag. The <TT>VM_ACCOUNT</TT>,
+always set, means that the VM will carefully account for the amount of memory
+used to make sure that allocations will not fail. </P><P>Extensions to the file operations are the ability to seek with the system
+call <TT>_llseek()</TT>, implemented by <TT>generic_file_llseek()</TT>
+and to use <TT>sendfile()</TT> with virtual files, implemented by
+<TT>shmem_file_sendfile()</TT>. An extension has been added to the VMA operations to allow non-linear mappings,
+implemented by <TT>shmem_populate()</TT>. </P><P>The last major change is that the filesystem is responsible for the
+allocation and destruction of it's own inodes which are two new callbacks
+in <TT>struct super_operations</TT>. It is simply implemented by the
+creation of a slab cache called <TT>shmem_inode_cache</TT><A NAME="@mainindex999"></A>. A constructor
+function <TT>init_once()</TT> is registered for the slab allocator to use
+for initialising each new inode.</P><P>
+	</P><HR CLASS="footnoterule"><DL CLASS="thefootnotes"><DT CLASS="dt-thefootnotes">
+<A NAME="note18" HREF="#text18">1</A></DT><DD CLASS="dd-thefootnotes">I find that saying
+&#X201C;How hard could it possibly be&#X201D; always helps.
+</DD></DL>
+<HR>
+[ <A HREF="understand014.html">&laquo; Previous</A> ]
+[ <A HREF="index.html">&uarr; Up</A> ]
+[ <A HREF="understand016.html">Next &raquo;</A> ]
+</BODY>
+</HTML>
