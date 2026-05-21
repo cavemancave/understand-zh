@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第十二章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand014_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand016.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1 id="chap-shared-memory-vfs">第十二章　共享内存虚拟文件系统</h1>
+  <div class="meta">原文版本：Chapter 12 — Shared Memory Virtual Filesystem</div>
+
+<p>
+共享一块由文件或设备作为后备的内存区，只需用 <tt>MAP_SHARED</tt> 标志调用 <tt>mmap()</tt> 即可。然而有两种重要情形是需要在进程间共享<em>匿名</em>区的：第一种是不带文件后备地以 <tt>MAP_SHARED</tt> 方式调用 <tt>mmap()</tt>，这类区域会在执行 <tt>fork()</tt> 之后由父子进程共享；第二种是通过 <tt>shmget()</tt> 显式创建一个区，然后用 <tt>shmat()</tt> 把它挂接到虚拟地址空间。
+</p>
+
+<p>
+当 VMA 中的页由磁盘上的文件作为后备时，所用的接口很直接。要在缺页时读入一页，所需的 <tt>nopage()</tt> 函数可以通过 <tt>vm_area_struct</tt>&rarr;<tt>vm_ops</tt> 找到。要把一页写回后备存储，则在 <tt>address_space_operations</tt> 中查找相应的 <tt>writepage()</tt> 函数，通常经由 <tt>inode</tt>&rarr;<tt>i_mapping</tt>&rarr;<tt>a_ops</tt>，或者经由 <tt>page</tt>&rarr;<tt>mapping</tt>&rarr;<tt>a_ops</tt>。在进行 <tt>mmap()</tt>、<tt>read()</tt> 和 <tt>write()</tt> 等普通文件操作时，带有相应函数的 <tt>struct file_operations</tt> 通过 <tt>inode</tt>&rarr;<tt>i_fop</tt> 找到，等等。它们之间的关系在<a href="../original_html/understand007.html#fig: Data Structures related to the Address Space">图 4.2</a> 中已经展示过。
+</p>
+
+<p>
+这是一种非常清晰、概念上很容易理解的接口，但它对匿名页并不适用，因为匿名页没有文件作为后备。为了沿用这套漂亮的接口，Linux 借助一个基于 RAM 的文件系统，为匿名页人造出文件后备：每一个 VMA 都对应该文件系统中的一个&ldquo;文件&rdquo;。该文件系统中的每个 inode 都挂在一个名为 <tt>shmem_inodes</tt> 的链表上，以便随时方便地定位它们。这样，同一套基于文件的接口便可被使用，而无需把匿名页当作特例处理。
+</p>
+
+<p>
+这个文件系统有两个变体，分别叫做 <em>shm</em> 和 <em>tmpfs</em>。它们共享核心功能，主要区别在用途。<tt>shm</tt> 供内核为匿名页创建文件后备，以及为 <tt>shmget()</tt> 创建的共享区提供后备。该文件系统通过 <tt>kern_mount()</tt> 挂载，因此是在内部挂载、对用户不可见的。<tt>tmpfs</tt> 是一个临时文件系统，可以选择性地挂载到 <tt>/tmp/</tt>，提供一个基于 RAM 的高速临时文件系统。<tt>tmpfs</tt> 的另一个用途是挂载到 <tt>/dev/shm/</tt>：在该 <tt>tmpfs</tt> 文件系统中用 <tt>mmap()</tt> 映射文件的进程，可以以此在进程间共享信息，作为 System V IPC 机制的一种替代方案。无论用途如何，<tt>tmpfs</tt> 必须由系统管理员显式挂载。
+</p>
+
+<p>
+本章先描述虚拟文件系统的实现方式，然后讨论共享区的建立与销毁，最后说明如何借助这些工具实现 System V IPC 机制。
+</p>
+
+<h2 id="sec-init-virtual-fs">12.1　初始化虚拟文件系统</h2>
+
+<p>
+虚拟文件系统由 <tt>init_tmpfs()</tt> 函数初始化，可能在系统启动时执行，也可能在模块被加载时执行。该函数注册 <tt>tmpfs</tt> 和 <tt>shm</tt> 两个文件系统，并用 <tt>kern_mount()</tt> 把 <tt>shm</tt> 挂载为内部文件系统。随后它计算文件系统中可以存在的最大块数与 inode 数。作为注册的一部分，<tt>shmem_read_super()</tt> 作为回调函数被用来填充 <tt>struct super_block</tt>，向其中写入文件系统的更多信息，例如把块大小设为页大小。
+</p>
+
+<div class="figure" id="fig-init-tmpfs">
+  <img src="../original_html/figures/understand-html071.png" alt="图 12.1：调用图：init_tmpfs()">
+  <div class="caption">图 12.1：调用图：<tt>init_tmpfs()</tt></div>
+</div>
+
+<p>
+该文件系统中创建的每个 inode 都会关联一个 <tt>struct shmem_inode_info</tt>，其中保存与本文件系统相关的私有信息。<tt>SHMEM_I()</tt> 函数以一个 inode 作为参数，返回指向该结构的指针。它在 &lt;<tt>linux/shmem_fs.h</tt>&gt; 中声明如下：
+</p>
+
+<pre> 20 struct shmem_inode_info {
+ 21     spinlock_t              lock;
+ 22     unsigned long           next_index;
+ 23     swp_entry_t             i_direct[SHMEM_NR_DIRECT];
+ 24     void                  **i_indirect;
+ 25     unsigned long           swapped;
+ 26     unsigned long           flags;
+ 27     struct list_head        list;
+ 28     struct inode           *inode;
+ 29 };
+</pre>
+
+<p>各字段含义如下：</p>
+
+<dl>
+  <dt><b>lock</b></dt>
+  <dd>保护 inode 信息免受并发访问的自旋锁。</dd>
+
+  <dt><b>next_index</b></dt>
+  <dd>文件中正在使用的最后一页的索引。文件被截断（truncate）期间，该值会与 <tt>inode</tt>&rarr;<tt>i_size</tt> 不同。</dd>
+
+  <dt><b>i_direct</b></dt>
+  <dd>直接块，包含该文件正在使用的前 <tt>SHMEM_NR_DIRECT</tt> 个交换向量。参见<a href="#sec-locating-swapped">第 12.4.1 节</a>。</dd>
+
+  <dt><b>i_indirect</b></dt>
+  <dd>指向第一个间接块的指针。参见<a href="#sec-locating-swapped">第 12.4.1 节</a>。</dd>
+
+  <dt><b>swapped</b></dt>
+  <dd>属于本文件、当前被换出到交换区的页数。</dd>
+
+  <dt><b>flags</b></dt>
+  <dd>目前仅用于记录该文件是否属于 <tt>shmget()</tt> 创建的共享区。通过 <tt>shmctl()</tt> 指定 <tt>SHM_LOCK</tt> 来置位，指定 <tt>SHM_UNLOCK</tt> 来解锁。</dd>
+
+  <dt><b>list</b></dt>
+  <dd>本文件系统所使用的全部 inode 的链表。</dd>
+
+  <dt><b>inode</b></dt>
+  <dd>指向其父 inode 的指针。</dd>
+</dl>
+
+<h2 id="sec-using-shmem-functions">12.2　使用 <tt>shmem</tt> 相关函数</h2>
+
+<p>
+若干结构中都包含指向 shmem 专用函数的指针。所有这些场合，<tt>tmpfs</tt> 与 <tt>shm</tt> 共用同一组结构。
+</p>
+
+<p>
+用于缺页换入页面以及把页面写回后备存储的，是两个名为 <tt>shmem_aops</tt> 和 <tt>shmem_vm_ops</tt> 的结构，分别属于 <tt>struct address_space_operations</tt> 与 <tt>struct vm_operations_struct</tt>。
+</p>
+
+<p>
+地址空间操作 <tt>struct shmem_aops</tt> 包含指向若干函数的指针，其中最重要的是 <tt>shmem_writepage()</tt>，当一个页从页缓存被移到交换缓存时被调用。<tt>shmem_removepage()</tt> 在页从页缓存中被移除时调用，以便能回收对应的块。<tt>shmem_readpage()</tt> 不被 tmpfs 使用，但仍提供，以便 <tt>sendfile()</tt> 系统调用可用于 tmpfs 文件。<tt>shmem_prepare_write()</tt> 与 <tt>shmem_commit_write()</tt> 也未被使用，但提供它们是为了让 tmpfs 可以与回环设备（loopback device）配合使用。<tt>shmem_aops</tt> 在 <tt>mm/shmem.c</tt> 中声明如下：
+</p>
+
+<pre>1500 static struct address_space_operations shmem_aops = {
+1501     removepage:     shmem_removepage,
+1502     writepage:      shmem_writepage,
+1503 #ifdef CONFIG_TMPFS
+1504     readpage:       shmem_readpage,
+1505     prepare_write:  shmem_prepare_write,
+1506     commit_write:   shmem_commit_write,
+1507 #endif
+1508 };
+</pre>
+
+<p>
+匿名 VMA 使用 <tt>shmem_vm_ops</tt> 作为其 <tt>vm_operations_struct</tt>，这样在缺页换入新页时就会调用 <tt>shmem_nopage()</tt>。它的声明如下：
+</p>
+
+<pre>1426 static struct vm_operations_struct shmem_vm_ops = {
+1427     nopage: shmem_nopage,
+1428 };
+</pre>
+
+<p>
+要对文件和 inode 进行操作，需要 <tt>file_operations</tt> 与 <tt>inode_operations</tt> 这两个结构。<tt>file_operations</tt> 称为 <tt>shmem_file_operations</tt>，提供了实现 <tt>mmap()</tt>、<tt>read()</tt>、<tt>write()</tt> 与 <tt>fsync()</tt> 的函数，声明如下：
+</p>
+
+<pre>1510 static struct file_operations shmem_file_operations = {
+1511     mmap:           shmem_mmap,
+1512 #ifdef CONFIG_TMPFS
+1513     read:           shmem_file_read,
+1514     write:          shmem_file_write,
+1515     fsync:          shmem_sync_file,
+1516 #endif
+1517 };
+</pre>
+
+<p>
+共提供了三组 <tt>inode_operations</tt>。第一组是 <tt>shmem_inode_operations</tt>，用于文件 inode；第二组 <tt>shmem_dir_inode_operations</tt> 用于目录；最后一对 <tt>shmem_symlink_inline_operations</tt> 与 <tt>shmem_symlink_inode_operations</tt> 用于符号链接。
+</p>
+
+<p>
+对文件 inode 支持的两种操作是 <tt>truncate()</tt> 与 <tt>setattr()</tt>，保存在名为 <tt>shmem_inode_operations</tt> 的 <tt>struct inode_operations</tt> 中。<tt>shmem_truncate()</tt> 用于截断文件。<tt>shmem_notify_change()</tt> 在文件属性发生变化时被调用，这使得（其他用途之外）可以通过 <tt>truncate()</tt> 增大一个文件、并以全局零页作为其数据页。<tt>shmem_inode_operations</tt> 的声明如下：
+</p>
+
+<pre>1519 static struct inode_operations shmem_inode_operations = {
+1520         truncate:       shmem_truncate,
+1521         setattr:        shmem_notify_change,
+1522 };
+</pre>
+
+<p>
+目录使用的 <tt>inode_operations</tt> 提供了诸如 <tt>create()</tt>、<tt>link()</tt> 与 <tt>mkdir()</tt> 等函数，声明如下：
+</p>
+
+<pre>1524 static struct inode_operations shmem_dir_inode_operations = {
+1525 #ifdef CONFIG_TMPFS
+1526     create:         shmem_create,
+1527     lookup:         shmem_lookup,
+1528     link:           shmem_link,
+1529     unlink:         shmem_unlink,
+1530     symlink:        shmem_symlink,
+1531     mkdir:          shmem_mkdir,
+1532     rmdir:          shmem_rmdir,
+1533     mknod:          shmem_mknod,
+1534     rename:         shmem_rename,
+1535 #endif
+1536 };
+</pre>
+
+<p>最后一对操作用于符号链接，声明如下：</p>
+
+<pre>1354 static struct inode_operations shmem_symlink_inline_operations = {
+1355         readlink:       shmem_readlink_inline,
+1356         follow_link:    shmem_follow_link_inline,
+1357 };
+1358 
+1359 static struct inode_operations shmem_symlink_inode_operations = {
+1360         truncate:       shmem_truncate,
+1361         readlink:       shmem_readlink,
+1362         follow_link:    shmem_follow_link,
+1363 };
+</pre>
+
+<p>
+两组 <tt>readlink()</tt> 与 <tt>follow_link()</tt> 函数的差别与链接信息的存放位置有关。符号链接 inode 并不需要私有 inode 信息 <tt>struct shmem_inode_information</tt>。如果符号链接的名字长度小于该结构的大小，就直接利用 inode 中的空间来保存名字，此时使用的是 <tt>shmem_symlink_inline_operations</tt>；否则会用 <tt>shmem_getpage()</tt> 分配一页，把符号链接内容复制到该页中，并改用 <tt>shmem_symlink_inode_operations</tt>。后一组结构包含 <tt>truncate()</tt> 函数，以便在文件被删除时回收该页。
+</p>
+
+<p>
+这些结构合在一起，确保了当区域由虚拟文件作后备时，会使用 shmem 对应的 inode 相关操作。在它们投入使用之后，VM 的大部分代码就察觉不到由真实文件后备的页与由虚拟文件后备的页之间的差别了。
+</p>
+
+<h2 id="sec-creating-files-tmpfs">12.3　在 <tt>tmpfs</tt> 中创建文件</h2>
+
+<p>
+由于 <tt>tmpfs</tt> 被挂载为对用户可见的正规文件系统，它必须支持诸如 <tt>open()</tt>、<tt>mkdir()</tt> 和 <tt>link()</tt> 之类的目录 inode 操作。在 <a href="#sec-using-shmem-functions">第 12.2 节</a>展示过的 <tt>shmem_dir_inode_operations</tt> 中提供了实现这些操作的函数指针。
+</p>
+
+<p>
+这些函数大多实现得相当简短，并且从某种程度上彼此联系紧密，<a href="#fig-shmem-create">图 12.2</a> 即展示了这一点。它们都基于同一基本原则：对虚拟文件系统中的 inode 做一些工作，而 inode 的大部分字段是由 <tt>shmem_get_inode()</tt> 来填充的。
+</p>
+
+<div class="figure" id="fig-shmem-create">
+  <img src="../original_html/figures/understand-html072.png" alt="图 12.2：调用图：shmem_create()">
+  <div class="caption">图 12.2：调用图：<tt>shmem_create()</tt></div>
+</div>
+
+<p>
+创建新文件时，顶层调用的是 <tt>shmem_create()</tt>。这个小函数加上 <tt>S_IFREG</tt> 标志去调用 <tt>shmem_mknod()</tt>，从而创建一个普通文件。<tt>shmem_mknod()</tt> 本身只是对 <tt>shmem_get_inode()</tt> 的薄包装，后者如其名所示，会创建一个新 inode 并填充其结构字段。其中重点填充的三个字段是 <tt>inode</tt>&rarr;<tt>i_mapping</tt>&rarr;<tt>a_ops</tt>、<tt>inode</tt>&rarr;<tt>i_op</tt> 与 <tt>inode</tt>&rarr;<tt>i_fop</tt>。inode 创建好之后，<tt>shmem_mknod()</tt> 会更新目录 inode 的 <tt>size</tt> 与 <tt>mtime</tt> 等统计信息，然后实例化新 inode。
+</p>
+
+<p>
+尽管两个文件系统在功能上本质相同，但在 <tt>shm</tt> 中文件的创建方式有所不同。<tt>shm</tt> 中文件的创建过程将在<a href="#sec-shared-regions">第 12.7 节</a>讨论。
+</p>
+
+<h2 id="sec-page-faulting-vfile">12.4　虚拟文件中的页错误处理</h2>
+
+<p>
+当发生缺页时，<tt>do_no_page()</tt> 会调用 <tt>vma</tt>&rarr;<tt>vm_ops</tt>&rarr;<tt>nopage</tt>（若存在）。对于虚拟文件系统而言，这意味着发生缺页时被调用的是 <tt>shmem_nopage()</tt>，其调用图见<a href="#fig-shmem-nopage">图 12.3</a>。
+</p>
+
+<div class="figure" id="fig-shmem-nopage">
+  <img src="../original_html/figures/understand-html073.png" alt="图 12.3：调用图：shmem_nopage()">
+  <div class="caption">图 12.3：调用图：<tt>shmem_nopage()</tt></div>
+</div>
+
+<p>
+此处的核心函数是 <tt>shmem_getpage()</tt>，它负责分配一个新页，或在交换区中找到对应的页。这种把缺页类型重载的方式比较少见——通常应由 <tt>do_swap_page()</tt> 根据 PTE 中编码的信息来定位已经被移到交换缓存或后备存储中的页。但在这里，由虚拟文件后备的页在被移入交换缓存时，其 PTE 会被置 0；而该 inode 的文件系统私有数据保存着直接块和间接块信息，用于稍后定位页。这一过程在许多方面与普通缺页处理非常相似。
+</p>
+
+<h3 id="sec-locating-swapped">12.4.1　定位被换出的页</h3>
+
+<p>
+当一页被换出时，<tt>swp_entry_t</tt> 中会保存再次定位该页所需的信息。这一信息不是放在 PTE 中，而是保存在 inode 的文件系统私有信息里。
+</p>
+
+<p>
+缺页时用于定位 swap 条目的函数是 <tt>shmem_alloc_entry()</tt>。它的基本职责是做一些基本检查，并确保 <tt>shmem_inode_info</tt>&rarr;<tt>next_index</tt> 始终指向虚拟文件末尾的页索引。它主要工作是调用 <tt>shmem_swp_entry()</tt>，在 inode 信息中查找交换向量；必要时还会分配新的页来存放交换向量。
+</p>
+
+<p>
+前 <tt>SHMEM_NR_DIRECT</tt> 个条目存放在 <tt>inode</tt>&rarr;<tt>i_direct</tt> 中。这意味着在 x86 上，小于 64KiB（即 <tt>SHMEM_NR_DIRECT * PAGE_SIZE</tt>）的文件不需要使用间接块。更大的文件则必须使用间接块，从 <tt>inode</tt>&rarr;<tt>i_indirect</tt> 处的间接块开始。
+</p>
+
+<div class="figure" id="fig-traversing-indirect">
+  <img src="../original_html/figures/understand-html074.png" alt="图 12.4：在虚拟文件中遍历间接块">
+  <div class="caption">图 12.4：在虚拟文件中遍历间接块</div>
+</div>
+
+<p>
+最初的间接块（<tt>inode</tt>&rarr;<tt>i_indirect</tt>）分为两半：前一半包含指向<em>二级</em>间接块的指针，后一半包含指向<em>三级</em>间接块的指针。二级间接块本身是包含交换向量（<tt>swp_entry_t</tt>）的页。三级间接块包含指向其他页的指针，这些页中又填满了交换向量。不同层级的间接块之间的关系见<a href="#fig-traversing-indirect">图 12.4</a>。由此关系可知，虚拟文件中最大页数（<tt>SHMEM_MAX_INDEX</tt>）在 <tt>mm/shmem.c</tt> 中定义如下：
+</p>
+
+<pre> 44 #define SHMEM_MAX_INDEX  (
+         SHMEM_NR_DIRECT + 
+         (ENTRIES_PER_PAGEPAGE/2) *
+         (ENTRIES_PER_PAGE+1))
+</pre>
+
+<h3 id="sec-writing-pages-swap">12.4.2　把页写入交换区</h3>
+
+<p>
+<tt>shmem_writepage()</tt> 是在该文件系统的 <tt>address_space_operations</tt> 中登记的、用于把页写入交换区的函数。该函数所做的只是把页从页缓存移到交换缓存，分几个简单步骤实现：
+</p>
+
+<ul>
+  <li>记录当前的 <tt>page</tt>&rarr;<tt>mapping</tt> 以及关于 inode 的信息；</li>
+  <li>用 <tt>get_swap_page()</tt> 在后备存储中分配一个空闲槽位；</li>
+  <li>用 <tt>shmem_swp_entry()</tt> 分配一个 <tt>swp_entry_t</tt>；</li>
+  <li>把该页从页缓存中移除；</li>
+  <li>把该页加入交换缓存。如果失败，则释放该交换槽位，把页放回页缓存中，并重试。</li>
+</ul>
+
+<h2 id="sec-file-ops-tmpfs">12.5　<tt>tmpfs</tt> 中的文件操作</h2>
+
+<p>
+虚拟文件支持四种操作：<tt>mmap()</tt>、<tt>read()</tt>、<tt>write()</tt> 与 <tt>fsync()</tt>，函数指针保存在 <a href="#sec-using-shmem-functions">第 12.2 节</a>展示过的 <tt>shmem_file_operations</tt> 中。
+</p>
+
+<p>
+这些操作的实现没有什么特别之处，其细节会在配套的代码注释（Code Commentary）中给出。<tt>mmap()</tt> 操作由 <tt>shmem_mmap()</tt> 实现，仅仅更新管理被映射区的 VMA。<tt>read()</tt> 由 <tt>shmem_read()</tt> 实现，它把虚拟文件中的字节复制到用户态缓冲区，必要时缺页换入页面。<tt>write()</tt> 由 <tt>shmem_write()</tt> 实现，基本与之相同。<tt>fsync()</tt> 由 <tt>shmem_file_sync()</tt> 实现，但实际上是一个空操作——它不做任何事，直接返回 0 表示成功。因为文件只存在于 RAM 中，根本不需要与磁盘同步。
+</p>
+
+<h2 id="sec-inode-ops-tmpfs">12.6　<tt>tmpfs</tt> 中的 inode 操作</h2>
+
+<p>
+inode 上支持的最复杂操作是截断（truncation），它涉及四个明显的阶段。第一阶段在 <tt>shmem_truncate()</tt> 中，会先截断文件末尾不完整的那一页，并不断调用 <tt>shmem_truncate_indirect()</tt>，直到文件被截断到目标大小。每次调用 <tt>shmem_truncate_indirect()</tt> 一趟只处理一个间接块，因此可能需要被多次调用。
+</p>
+
+<p>
+第二阶段在 <tt>shmem_truncate_indirect()</tt> 中，能够处理二级和三级间接块，它会找到下一个需要被截断的间接块。这个间接块会被传给第三阶段，它包含指向若干页的指针，而这些页又包含交换向量。
+</p>
+
+<p>
+第三阶段在 <tt>shmem_truncate_direct()</tt> 中，处理包含交换向量的页。它选出需要被截断的范围，然后把这一范围交给最后一个阶段 <tt>shmem_swp_free()</tt>。最后阶段用 <tt>free_swap_and_cache()</tt> 释放各个条目，该函数会同时释放交换条目和包含数据的页。
+</p>
+
+<p>
+文件的链接与解链接非常简单，因为大部分工作由文件系统层完成。链接一个文件时，目录 inode 的大小递增，相关 inode 的 <tt>ctime</tt> 与 <tt>mtime</tt> 被更新，被链接到的 inode 的链接计数也递增。然后用 <tt>dget()</tt> 取得对新 dentry 的引用，再用 <tt>d_instantiate()</tt> 实例化新的 <tt>dentry</tt>。解链接时同样会更新这些 inode 统计信息，并用 <tt>dput()</tt> 减少对 <tt>dentry</tt> 的引用。<tt>dput()</tt> 也会调用 <tt>iput()</tt>，当 inode 引用计数归零时清理该 inode。
+</p>
+
+<p>
+创建目录会用 <tt>shmem_mkdir()</tt> 来完成。它只是带上 <tt>S_IFDIR</tt> 标志调用 <tt>shmem_mknod()</tt>，然后把父目录 inode 的 <tt>i_nlink</tt> 计数递增。<tt>shmem_rmdir()</tt> 用于删除目录，它先通过 <tt>shmem_empty()</tt> 确保目录为空。若为空，则把父目录 inode 的 <tt>i_nlink</tt> 减一，并调用 <tt>shmem_unlink()</tt> 删除该目录。
+</p>
+
+<h2 id="sec-shared-regions">12.7　建立共享区</h2>
+
+<p>
+共享区由一个在 <tt>shm</tt> 中创建的文件作为后备。有两种情形会创建新文件：用 <tt>shmget()</tt> 建立共享区时，以及用带 <tt>MAP_SHARED</tt> 标志的 <tt>mmap()</tt> 建立匿名区时。两种情形都使用核心函数 <tt>shmem_file_setup()</tt> 来创建文件。
+</p>
+
+<div class="figure" id="fig-shmem-zero-setup">
+  <img src="../original_html/figures/understand-html075.png" alt="图 12.5：调用图：shmem_zero_setup()">
+  <div class="caption">图 12.5：调用图：<tt>shmem_zero_setup()</tt></div>
+</div>
+
+<p>
+由于该文件系统是内部的，所创建的文件名不必唯一，因为文件总是按 inode 而非按名字定位。因此 <tt>shmem_zero_setup()</tt> 总是创建一个名为 <tt>dev/zero</tt> 的文件——它就以这个名字出现在 <tt>/proc/pid/maps</tt> 中。而由 <tt>shmget()</tt> 创建的文件名为 <tt>SYSVNN</tt>，其中 <tt>NN</tt> 是传给 <tt>shmget()</tt> 的 key 参数。
+</p>
+
+<p>
+核心函数 <tt>shmem_file_setup()</tt> 只是创建一个新 <tt>dentry</tt> 和 inode，填充相关字段，然后将其实例化。
+</p>
+
+<h2 id="sec-sysv-ipc">12.8　System V IPC</h2>
+
+<p>
+IPC 的全部内部实现细节超出了本书的范围。本节只关注 <tt>shmget()</tt> 与 <tt>shmat()</tt> 的实现，以及它们如何受到 VM 的影响。系统调用 <tt>shmget()</tt> 由 <tt>sys_shmget()</tt> 实现。它对参数做基本检查，并建立 IPC 相关的数据结构。为创建段，它会调用 <tt>newseg()</tt>。如上一节所述，<tt>newseg()</tt> 正是借助 <tt>shmem_file_setup()</tt> 在 <tt>shmfs</tt> 中创建文件的函数。
+</p>
+
+<div class="figure" id="fig-sys-shmget">
+  <img src="../original_html/figures/understand-html076.png" alt="图 12.6：调用图：sys_shmget()">
+  <div class="caption">图 12.6：调用图：<tt>sys_shmget()</tt></div>
+</div>
+
+<p>
+系统调用 <tt>shmat()</tt> 由 <tt>sys_shmat()</tt> 实现，其本身没什么特别值得一提的内容。它获取相应的描述符，确认全部参数都合法，然后调用 <tt>do_mmap()</tt>，把共享区映射到进程的地址空间。该函数只有两点值得注意。
+</p>
+
+<p>
+第一，若调用者指定了地址，则该函数负责确保 VMA 不会相互重叠。第二，<tt>shp</tt>&rarr;<tt>shm_nattch</tt> 计数器由一个名为 <tt>shm_vm_ops</tt> 的 <tt>vm_operations_struct</tt> 来维护，它注册了两个回调 <tt>shm_open()</tt> 与 <tt>shm_close()</tt>，分别对应 <tt>open()</tt> 与 <tt>close()</tt>。<tt>shm_close()</tt> 还负责在指定了 <tt>SHM_DEST</tt> 标志且 <tt>shm_nattch</tt> 归零时销毁共享区。
+</p>
+
+<h2 id="sec-whats-new-2-6">12.9　2.6 中的新变化</h2>
+
+<p>
+该文件系统的核心概念与功能保持不变，所做的修改要么是优化，要么是对功能的扩展。如果读者对 2.4 的实现已经理解透彻，则 2.6 的实现应不会带来太大困难<sup><a id="text18" href="#note18">1</a></sup>。
+</p>
+
+<p>
+在 <tt>shmem_inode_info</tt> 中新增了一个字段 <tt>alloced</tt>。<tt>alloced</tt> 字段保存文件已分配了多少数据页——在 2.4 中，这一数值是基于 <tt>inode</tt>&rarr;<tt>i_blocks</tt> 临时算出来的。该字段既在常见操作上节省了一些时钟周期，也使代码更易读。
+</p>
+
+<p>
+现在 <tt>flags</tt> 字段除了 <tt>VM_LOCKED</tt> 之外还使用 <tt>VM_ACCOUNT</tt> 标志。<tt>VM_ACCOUNT</tt> 始终被置位，表示 VM 会精细地核算所用的内存量，以确保分配不会失败。
+</p>
+
+<p>
+文件操作的扩展包括：可通过 <tt>_llseek()</tt> 系统调用进行 seek（由 <tt>generic_file_llseek()</tt> 实现），以及对虚拟文件使用 <tt>sendfile()</tt>（由 <tt>shmem_file_sendfile()</tt> 实现）。VMA 操作也新增了一项扩展，以支持非线性映射，由 <tt>shmem_populate()</tt> 实现。
+</p>
+
+<p>
+最后一个重要变化是：文件系统自身负责其 inode 的分配与销毁，对应的是 <tt>struct super_operations</tt> 中的两个新回调。其实现很简单——创建一个名为 <tt>shmem_inode_cache</tt> 的 slab 缓存。同时为 slab 分配器注册一个构造函数 <tt>init_once()</tt>，用于初始化每个新 inode。
+</p>
+
+<hr>
+<div class="notes">
+  <h3>译注</h3>
+  <ul>
+    <li>&ldquo;Shared Memory Virtual Filesystem&rdquo;译为&ldquo;共享内存虚拟文件系统&rdquo;。</li>
+    <li>&ldquo;anonymous page/region&rdquo;译为&ldquo;匿名页/匿名区&rdquo;，&ldquo;backing storage&rdquo;译为&ldquo;后备存储&rdquo;。</li>
+    <li>&ldquo;swap cache&rdquo;译为&ldquo;交换缓存&rdquo;，&ldquo;swap entry&rdquo;译为&ldquo;交换条目&rdquo;，&ldquo;swap vector&rdquo;译为&ldquo;交换向量&rdquo;。</li>
+    <li>&ldquo;direct/indirect block&rdquo;沿用文件系统惯用译法&ldquo;直接块/间接块&rdquo;，&ldquo;doubly/triply indirect&rdquo;译为&ldquo;二级/三级间接&rdquo;。</li>
+    <li>&ldquo;truncate&rdquo;译为&ldquo;截断&rdquo;。</li>
+    <li>函数名、宏名、结构体名（如 <tt>shmem_inode_info</tt>、<tt>shmem_writepage</tt>、<tt>swp_entry_t</tt>、<tt>tmpfs</tt> 等）均保留英文，便于查阅源码。</li>
+  </ul>
+</div>
+
+<hr class="footnoterule">
+<dl class="thefootnotes">
+  <dt><a id="note18" href="#text18">1</a></dt>
+  <dd>我发现，说一句&ldquo;能有多难呢？&rdquo;总是颇有帮助。</dd>
+</dl>
+
+<nav>
+  [ <a href="understand014_zh.html">&laquo; 上一章</a> ]
+  [ <a href="index.html">&uarr; 返回目录</a> ]
+  [ <a href="../original_html/understand016.html">下一章 &raquo;</a> ]
+</nav>
+
+<p><small>原文来源：<a href="../original_html/understand015.html">understand015.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
+</body>
+</html>
