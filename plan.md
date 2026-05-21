@@ -14,17 +14,24 @@
 - Figures in `original_html/figures/`: 81 PNGs (`understand-html001.png` .. `understand-html081.png`).
 - Figures already referenced in existing zh files: 28 (in `understand005_zh.html`..`understand008_zh.html`).
 
-## Workflow (per-chapter, then per-figure) — each unit runs in a fresh sub-agent
+## Workflow (UPDATED 2026-05-21: translate ALL chapters first, then convert figures)
 
-To avoid attention/context deterioration, every translation file and every figure-to-SVG conversion is delegated to a **fresh sub-agent (separate context window)** via the `task` tool. The main session only orchestrates: picks the next todo, launches a sub-agent with complete context, then commits+pushes (or has the sub-agent commit+push) and moves on.
+User's revised preference: finish translating every remaining English chapter into Chinese FIRST (PNG `<img>` refs kept as-is), and only AFTER all chapters are translated, go back and convert figures to inline SVG, chapter by chapter.
 
-For each remaining English source file `understandNNN.html`:
-1. **Launch sub-agent A (translation)** — prompt includes: source path, target path, style rules from `AGENTS.md`, css link convention, leave image refs unchanged for now, translate `alt` text. Sub-agent writes the file, runs sanity checks, then `git add` + `git commit` (English message) + `git push`.
-2. Main session verifies commit landed.
-3. For each figure referenced by that chapter, **launch sub-agent B (one figure)** — prompt includes: PNG path, target zh HTML, the exact `<img>` tag to replace, instructions to author inline `<svg>` with Chinese labels, then commit+push.
-4. Move to next chapter.
+Each unit (one file translation, one figure conversion) still runs in a **fresh sub-agent (separate context window)** via the `task` tool. The main session only orchestrates.
 
-Retroactive SVG conversion for `understand005_zh..008_zh.html` (28 figures) follows the same one-sub-agent-per-figure rule.
+### Phase 1 — Translate all remaining chapters
+For each remaining English source file `understandNNN.html` (013 → 029):
+1. Launch a fresh sub-agent A (translation): source path, target path, style rules, css link convention, leave image refs as PNGs, translate `alt` text. Sub-agent writes the file, then `git add` + `git commit` (English message) + `git push`.
+2. Verify commit landed, then move to next chapter.
+
+### Phase 2 — Convert PNG figures to inline SVG
+After Phase 1 is complete, walk chapters in order. For each PNG `<img>` in each `understandNNN_zh.html`, launch a fresh sub-agent B that inspects the source PNG, authors a hand-drawn inline `<svg>` with Chinese labels, replaces the `<img>` tag, commits + pushes. Includes the retroactive SVG conversion for `understand005_zh..009_zh.html` figures still referenced as PNG, plus understand012 figures 056-058.
+
+### Already done in this session
+- understand010 (Chapter 7): translated + all 4 figures (033-036) SVGified.
+- understand011 (Chapter 8): translated + all 17 figures (037-053) SVGified.
+- understand012 (Chapter 9): translated; figures 054-055 SVGified; 056-058 deferred to Phase 2.
 
 ## Sub-agent contract
 - Type: `general-purpose` (full toolset, Sonnet) for translation; `general-purpose` for SVG too (geometry + commit work).
