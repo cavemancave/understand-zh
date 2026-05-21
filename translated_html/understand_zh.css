@@ -1,0 +1,61 @@
+/* 中文翻译版样式表 —— 在原版 understand.css 基础上做中文阅读优化 */
+
+body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Source Han Sans SC",
+                 "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.8;
+    max-width: 960px;
+    margin: 2em auto;
+    padding: 0 1.2em;
+    color: #1a1a1a;
+    background: #fdfdfa;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: #003366;
+    line-height: 1.4;
+    margin-top: 1.4em;
+}
+
+h1.chapter    { font-size: 1.9em; border-bottom: 2px solid #003366; padding-bottom: .2em; }
+h2.section    { font-size: 1.5em; }
+h3.subsection { font-size: 1.2em; }
+
+a          { color: #0645ad; text-decoration: none; }
+a:hover    { text-decoration: underline; }
+a:visited  { color: #0b0080; }
+
+hr         { border: none; border-top: 1px solid #ccc; margin: 1.2em 0; }
+
+ul.toc     { list-style: none; padding-left: 0; }
+ul.toc ul  { list-style: none; padding-left: 1.6em; }
+li.li-toc  { margin: .3em 0; }
+
+tt, code, pre {
+    font-family: "Consolas", "Menlo", "DejaVu Sans Mono", monospace;
+    font-size: .95em;
+}
+pre {
+    background: #f4f4ee;
+    padding: .8em 1em;
+    border-left: 3px solid #aabbcc;
+    overflow-x: auto;
+    line-height: 1.5;
+}
+code, tt { background: #f4f4ee; padding: 0 .2em; border-radius: 2px; }
+
+table          { border-collapse: collapse; margin: 1em 0; }
+table, th, td  { border: 1px solid #bbb; padding: .35em .7em; }
+th             { background: #eef; }
+
+img            { max-width: 100%; }
+
+.figure         { text-align: center; margin: 1.2em 0; }
+.figure img     { max-width: 100%; height: auto; }
+.figure .caption{ color: #555; font-size: .95em; margin-top: .4em; }
+
+/* 页眉/页脚导航 */
+.nav, body > a, hr + a { font-size: .95em; }
+
+/* 中英对照括号里的英文略弱化 */
+h1 small, h2 small, h3 small { color: #666; font-weight: normal; }

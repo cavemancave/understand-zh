@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第二章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand004_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="understand006_zh.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1>第二章　描述物理内存</h1>
+  <div class="meta">原文版本：Chapter 2 — Describing Physical Memory</div>
+
+  <p>Linux 可以运行在多种不同的硬件架构上，因此需要一种与架构无关的方式来描述内存。本章将介绍内核用于记录内存块（bank）、物理页以及影响 VM 行为的标志位所使用的数据结构。</p>
+
+  <p>VM 中第一个普遍存在的核心概念是<em>非一致性内存访问（Non-Uniform Memory Access，NUMA）</em>。在大型机器上，内存可能被组织成若干 bank，处理器访问它们的开销会随着到 CPU 的"距离"不同而不同。例如，可能有一组内存专门分配给每个 CPU，或者有一组内存非常适合放在外设网卡附近用于 DMA。</p>
+
+  <p>每个 bank 称为一个<em>结点（node）</em>，在 Linux 中由 <tt>struct pglist_data</tt> 表示——即使在 UMA 架构上也是如此。该结构总是通过其 typedef <tt>pg_data_t</tt> 来引用。系统中所有结点都挂在一个以 NULL 结尾的链表 <tt>pgdat_list</tt> 上，每个结点通过 <tt>pg_data_t-&gt;node_next</tt> 字段链接到下一个结点。对于像 PC 桌面这样的 UMA 架构，只使用一个静态的 <tt>pg_data_t</tt> 结构，称为 <tt>contig_page_data</tt>。结点的更多内容将在 2.1 节进一步讨论。</p>
+
+  <p>每个结点又被划分为若干称为<em>区（zone）</em>的块，每个区代表内存中的某段范围。注意，这里的 zone 与"基于 zone 的分配器（zone based allocator）"中的 zone 含义不同，两者并无关联。区由 <tt>struct zone_struct</tt> 描述，typedef 为 <tt>zone_t</tt>，类型为 <tt>ZONE_DMA</tt>、<tt>ZONE_NORMAL</tt> 或 <tt>ZONE_HIGHMEM</tt>。每种类型对应不同的用途：<tt>ZONE_DMA</tt> 是较低物理内存范围，某些 ISA 设备需要使用；<tt>ZONE_NORMAL</tt> 中的内存由内核直接映射到线性地址空间的上部区域（详见 4.1 节）；<tt>ZONE_HIGHMEM</tt> 是系统中剩余可用的内存，内核不直接映射。</p>
+
+  <p>在 x86 架构上，各 zone 的范围为：</p>
+  <table>
+    <tr><td><tt>ZONE_DMA</tt></td><td>低端的前 16 MiB 内存</td></tr>
+    <tr><td><tt>ZONE_NORMAL</tt></td><td>16 MiB &ndash; 896 MiB</td></tr>
+    <tr><td><tt>ZONE_HIGHMEM</tt></td><td>896 MiB 直至结束</td></tr>
+  </table>
+
+  <p>需要特别注意的是，许多内核操作只能在 <tt>ZONE_NORMAL</tt> 上执行，因此它是性能最关键的区。Zone 的更多内容将在 2.2 节讨论。每个物理页帧都由一个 <tt>struct page</tt> 表示，所有 page 结构保存在一个全局数组 <tt>mem_map</tt> 中，它通常位于 <tt>ZONE_NORMAL</tt> 的起始处，或在低端内存机器上紧接在已加载的内核映像保留区之后。<tt>struct page</tt> 详见 2.4 节，全局 <tt>mem_map</tt> 数组详见 3.7 节。这些结构之间的基本关系如图 2.1 所示。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html001.png" alt="图 2.1">
+    <div class="caption">图 2.1：结点、Zone 与 Page 之间的关系</div>
+  </div>
+
+  <p>由于内核可直接访问的内存（<tt>ZONE_NORMAL</tt>）大小有限，Linux 引入了<em>高端内存（High Memory）</em>的概念，详见 2.5 节。本章将先介绍结点、区与页的表示，然后再引入高端内存管理。</p>
+
+  <h2 class="section">2.1　结点（Nodes）</h2>
+  <p>如前所述，每个内存结点由 <tt>pg_data_t</tt>（即 <tt>struct pglist_data</tt>）描述。在分配页面时，Linux 采用<em>本地结点分配策略（node-local allocation policy）</em>，从距离当前运行 CPU 最近的结点分配内存。由于进程倾向于在同一 CPU 上运行，因此通常会使用当前结点的内存。该结构在 <tt>&lt;linux/mmzone.h&gt;</tt> 中声明如下：</p>
+  <pre>129 typedef struct pglist_data {
+130     zone_t node_zones[MAX_NR_ZONES];
+131     zonelist_t node_zonelists[GFP_ZONEMASK+1];
+132     int nr_zones;
+133     struct page *node_mem_map;
+134     unsigned long *valid_addr_bitmap;
+135     struct bootmem_data *bdata;
+136     unsigned long node_start_paddr;
+137     unsigned long node_start_mapnr;
+138     unsigned long node_size;
+139     int node_id;
+140     struct pglist_data *node_next;
+141 } pg_data_t;</pre>
+
+  <p>下面简要说明每个字段：</p>
+  <ul>
+    <li><b>node_zones</b>　本结点的 zone，依次为 <tt>ZONE_HIGHMEM</tt>、<tt>ZONE_NORMAL</tt>、<tt>ZONE_DMA</tt>；</li>
+    <li><b>node_zonelists</b>　分配时偏好的 zone 顺序。该顺序由 <tt>mm/page_alloc.c</tt> 中的 <tt>build_zonelists()</tt> 在 <tt>free_area_init_core()</tt> 调用时建立。在 <tt>ZONE_HIGHMEM</tt> 分配失败时可能回退到 <tt>ZONE_NORMAL</tt>，进一步失败则回退到 <tt>ZONE_DMA</tt>；</li>
+    <li><b>nr_zones</b>　本结点中 zone 的数量，介于 1 到 3 之间。并非所有结点都有 3 个 zone，例如某个 CPU bank 可能没有 <tt>ZONE_DMA</tt>；</li>
+    <li><b>node_mem_map</b>　代表本结点中每个物理帧的 <tt>struct page</tt> 数组的首页，位于全局 <tt>mem_map</tt> 数组中的某处；</li>
+    <li><b>valid_addr_bitmap</b>　用于描述结点内存中没有实际内存对应的"空洞"。实际上只有 Sparc 与 Sparc64 架构使用它，其它架构忽略；</li>
+    <li><b>bdata</b>　仅对启动内存分配器（详见第 5 章）有意义；</li>
+    <li><b>node_start_paddr</b>　结点的起始物理地址。使用 <tt>unsigned long</tt> 并不理想，因为它对启用 PAE 的 ia32 等架构来说不够用（PAE 见 2.5 节）。更合适的做法是使用<em>页帧号（Page Frame Number，PFN）</em>。PFN 就是按页大小为单位、在物理内存中的索引。某物理地址的 PFN 可以简单定义为 <tt>(page_phys_addr &gt;&gt; PAGE_SHIFT)</tt>；</li>
+    <li><b>node_start_mapnr</b>　给出本结点在全局 <tt>mem_map</tt> 中的页面偏移。由 <tt>free_area_init_core()</tt> 计算，等于 <tt>mem_map</tt> 与本结点局部 <tt>mem_map</tt>（即 <tt>lmem_map</tt>）之间的页面数；</li>
+    <li><b>node_size</b>　本 zone 中的页面总数；</li>
+    <li><b>node_id</b>　结点 ID（NID），从 0 开始；</li>
+    <li><b>node_next</b>　指向 NULL 结尾链表中的下一个结点。</li>
+  </ul>
+
+  <p>系统中所有结点都挂在 <tt>pgdat_list</tt> 链表上。结点是在被 <tt>init_bootmem_core()</tt> 初始化时挂入该链表的（见 5.2.1 节）。在 2.4.18 之前的内核中，遍历该链表的典型代码为：</p>
+  <pre>    pg_data_t * pgdat;
+    pgdat = pgdat_list;
+    do {
+          /* 对 pgdata_t 做点什么 */
+          ...
+    } while ((pgdat = pgdat-&gt;node_next));</pre>
+  <p>较新的内核提供了宏 <tt>for_each_pgdat()</tt>，本质上是一个 for 循环，用以提高代码可读性。</p>
+
+  <h2 class="section">2.2　Zone</h2>
+  <p>Zone 由 <tt>struct zone_struct</tt> 描述，通常通过 typedef <tt>zone_t</tt> 引用。它记录页面使用统计、空闲区域信息和锁等。声明位于 <tt>&lt;linux/mmzone.h&gt;</tt>：</p>
+  <pre>37 typedef struct zone_struct {
+41     spinlock_t        lock;
+42     unsigned long     free_pages;
+43     unsigned long     pages_min, pages_low, pages_high;
+44     int               need_balance;
+45
+49     free_area_t       free_area[MAX_ORDER];
+50
+76     wait_queue_head_t * wait_table;
+77     unsigned long     wait_table_size;
+78     unsigned long     wait_table_shift;
+79
+83     struct pglist_data *zone_pgdat;
+84     struct page        *zone_mem_map;
+85     unsigned long      zone_start_paddr;
+86     unsigned long      zone_start_mapnr;
+87
+91     char               *name;
+92     unsigned long      size;
+93 } zone_t;</pre>
+
+  <p>各字段简要说明：</p>
+  <ul>
+    <li><b>lock</b>　自旋锁，保护本 zone 不被并发访问；</li>
+    <li><b>free_pages</b>　zone 中的空闲页总数；</li>
+    <li><b>pages_min, pages_low, pages_high</b>　zone 的三条水位线（watermark），将在下一节介绍；</li>
+    <li><b>need_balance</b>　通知页换出进程 <b>kswapd</b> 对本 zone 进行平衡的标志。当可用页数达到某条水位线时，称该 zone "需要平衡"；</li>
+    <li><b>free_area</b>　伙伴系统（buddy allocator）使用的空闲区位图；</li>
+    <li><b>wait_table</b>　等待某页被释放的进程的等待队列哈希表。它对 <tt>wait_on_page()</tt> 和 <tt>unlock_page()</tt> 很重要。如果所有进程都等在同一个队列上，被唤醒时它们就会争抢仍被锁住的其它页面，这种现象称为"惊群（thundering herd）"。等待表详见 2.2.3 节；</li>
+    <li><b>wait_table_size</b>　哈希表中队列的数量，是 2 的幂；</li>
+    <li><b>wait_table_shift</b>　long 类型的位数减去 wait_table_size 的二进制对数；</li>
+    <li><b>zone_pgdat</b>　指向父 <tt>pg_data_t</tt>；</li>
+    <li><b>zone_mem_map</b>　本 zone 在全局 <tt>mem_map</tt> 中对应的首页；</li>
+    <li><b>zone_start_paddr</b>　与 <tt>node_start_paddr</tt> 含义相同；</li>
+    <li><b>zone_start_mapnr</b>　与 <tt>node_start_mapnr</tt> 含义相同；</li>
+    <li><b>name</b>　zone 的字符串名："DMA"、"Normal" 或 "HighMem"；</li>
+    <li><b>size</b>　以页为单位的 zone 大小。</li>
+  </ul>
+
+  <h3>2.2.1　Zone 水位线（Watermarks）</h3>
+  <p>当系统可用内存较少时，页换出守护进程 <b>kswapd</b> 会被唤醒以开始释放页面（见第 10 章）。如果压力很大，分配进程本身会同步释放内存，这条路径有时称为<em>直接回收（direct-reclaim）</em>。这些影响换页行为的参数与 FreeBSD [McK96] 和 Solaris [MM01] 类似。</p>
+
+  <p>每个 zone 有三条水位线：<tt>pages_low</tt>、<tt>pages_min</tt> 和 <tt>pages_high</tt>，用于跟踪 zone 承受的压力。它们之间的关系如图 2.2 所示。<tt>pages_min</tt> 的值在内存初始化时由 <tt>free_area_init_core()</tt> 计算，与 zone 的页数大小成比例，初值为 <i>ZoneSizeInPages / 128</i>。其最小值为 20 页（在 x86 上约 80 KiB），最大值为 255 页（在 x86 上约 1 MiB）。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html002.png" alt="图 2.2">
+    <div class="caption">图 2.2：Zone 水位线</div>
+  </div>
+
+  <ul>
+    <li><b>pages_low</b>　当空闲页数达到 <tt>pages_low</tt> 时，伙伴分配器会唤醒 <b>kswapd</b> 开始释放页面。这相当于 Solaris 中的 <tt>lotsfree</tt>，FreeBSD 中的 <tt>freemin</tt>。其默认值是 <tt>pages_min</tt> 的两倍；</li>
+    <li><b>pages_min</b>　当达到 <tt>pages_min</tt> 时，分配器将同步执行 <b>kswapd</b> 的工作，即<em>直接回收</em>路径。Solaris 中没有完全等价的概念，最接近的是 <tt>desfree</tt> 或 <tt>minfree</tt>，它们决定换页扫描进程的唤醒频率；</li>
+    <li><b>pages_high</b>　一旦 <b>kswapd</b> 被唤醒开始释放页面，只有当空闲页数达到 <tt>pages_high</tt> 时才认为 zone 已"平衡"，此后 <b>kswapd</b> 会重新进入睡眠。Solaris 中称为 <tt>lotsfree</tt>，BSD 中称为 <tt>free_target</tt>。默认为 <tt>pages_min</tt> 的三倍。</li>
+  </ul>
+
+  <p>无论各操作系统对换页参数的命名如何，其含义都是一样的：决定换页守护进程或其它进程释放页面的努力程度。</p>
+
+  <h3>2.2.2　计算 Zone 的大小</h3>
+  <div class="figure">
+    <img src="../original_html/figures/understand-html003.png" alt="图 2.3">
+    <div class="caption">图 2.3：函数调用图：<tt>setup_memory()</tt></div>
+  </div>
+
+  <p>PFN 是按页计数的物理内存映射中的偏移。系统可用的第一个 PFN，即 <tt>min_low_pfn</tt>，位于 <tt>_end</tt>（已加载内核映像的末尾）之后第一个页面的开头。该值作为文件作用域变量保存在 <tt>mm/bootmem.c</tt> 中，供启动内存分配器使用。</p>
+
+  <p>系统中的最后一个页帧 <tt>max_pfn</tt> 的计算方式与架构密切相关。在 x86 上，函数 <tt>find_max_pfn()</tt> 遍历整个 <em>e820</em> 映射表查找最高的页帧。e820 是 BIOS 提供的一张表，描述哪些物理内存可用、被保留或不存在。该值同样作为文件作用域变量保存在 <tt>mm/bootmem.c</tt>。</p>
+
+  <p><tt>max_low_pfn</tt> 在 x86 上由 <tt>find_max_low_pfn()</tt> 计算，标志 <tt>ZONE_NORMAL</tt> 的末尾。它代表内核可直接访问的物理内存，与线性地址空间中由 <tt>PAGE_OFFSET</tt> 划分的内核/用户空间相关。注意，在低端内存机器上 <tt>max_pfn</tt> 与 <tt>max_low_pfn</tt> 相等。</p>
+
+  <p>有了 <tt>min_low_pfn</tt>、<tt>max_low_pfn</tt> 和 <tt>max_pfn</tt> 这三个变量，就能很容易地算出高端内存的起止，并保存在 <tt>arch/i386/mm/init.c</tt> 的文件作用域变量 <tt>highstart_pfn</tt> 与 <tt>highend_pfn</tt> 中。这些值稍后将用于初始化高端内存页面以供物理页分配器使用（见 5.5 节）。</p>
+
+  <h3>2.2.3　Zone 等待队列表</h3>
+  <p>对页面执行 IO（换入或换出）时，会将其加锁以防止访问到不一致的数据。希望使用该页的进程必须先调用 <tt>wait_on_page()</tt> 加入等待队列。IO 完成后页面通过 <tt>UnlockPage()</tt> 解锁，等待队列上的所有进程会被唤醒。理论上每个页面都可以有自己的等待队列，但成本太高，因此 Linux 把等待队列存放在 <tt>zone_t</tt> 中。</p>
+
+  <p>整个 zone 也可以只用一个等待队列，但这意味着只要 zone 中任一页解锁，所有在该 zone 中等待的进程都会被唤醒，造成严重的<em>惊群（thundering herd）</em>问题。因此 <tt>zone_t-&gt;wait_table</tt> 存放的是一张等待队列哈希表。哈希冲突时可能仍会无谓地唤醒进程，但冲突预计不会频繁出现。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html004.png" alt="图 2.4">
+    <div class="caption">图 2.4：在锁住的页上等待</div>
+  </div>
+
+  <p>等待表在 <tt>free_area_init_core()</tt> 中分配。表的大小由 <tt>wait_table_size()</tt> 计算并保存在 <tt>zone_t-&gt;wait_table_size</tt> 中，上限为 4096 个等待队列。对于较小的表，大小为足以容纳 <tt>NoPages / PAGES_PER_WAITQUEUE</tt> 个队列所需的最小 2 的幂；其中 <tt>NoPages</tt> 是 zone 中的页数，<tt>PAGE_PER_WAITQUEUE</tt> 定义为 256。即：</p>
+  <pre>wait_table_size = log2((NoPages * 2) / PAGES_PER_WAITQUEUE - 1)</pre>
+
+  <p>字段 <tt>zone_t-&gt;wait_table_shift</tt> 是页地址右移多少位后可作为表内索引的位数。函数 <tt>page_waitqueue()</tt> 负责为某 zone 中的某页返回应使用的等待队列，使用基于 <tt>struct page</tt> 虚拟地址的简单乘法哈希算法。</p>
+
+  <p>具体做法是用地址乘以 <tt>GOLDEN_RATIO_PRIME</tt>，再将结果右移 <tt>zone_t-&gt;wait_table_shift</tt> 位作为哈希表索引。<tt>GOLDEN_RATIO_PRIME</tt> [Lev00] 是最接近该架构最大整数的<em>黄金比率（golden ratio）</em>[Knu68] 的最大质数。</p>
+
+  <h2 class="section">2.3　Zone 的初始化</h2>
+  <p>在 <tt>paging_init()</tt> 完成内核页表的全部设置之后才会初始化 zone。页表初始化将在 3.6 节介绍。可以预料，各架构以不同方式完成此任务，但目标始终一致：决定将哪些参数传给 <tt>free_area_init()</tt>（UMA）或 <tt>free_area_init_node()</tt>（NUMA）。UMA 只需要一个参数 <tt>zones_size</tt>。完整的参数列表如下：</p>
+  <ul>
+    <li><b>nid</b>　结点 ID，是被初始化结点的逻辑标识；</li>
+    <li><b>pgdat</b>　被初始化结点的 <tt>pg_data_t</tt>。在 UMA 中即 <tt>contig_page_data</tt>；</li>
+    <li><b>pmap</b>　稍后由 <tt>free_area_init_core()</tt> 设置，指向为该结点分配的局部 <tt>lmem_map</tt> 数组的起始位置。在 NUMA 中被忽略，因为 NUMA 将 <tt>mem_map</tt> 视为从 <tt>PAGE_OFFSET</tt> 开始的虚拟数组。在 UMA 中，该指针就是全局变量 <tt>mem_map</tt>，至此完成 UMA 下 <tt>mem_map</tt> 的初始化；</li>
+    <li><b>zones_sizes</b>　包含每个 zone 页数大小的数组；</li>
+    <li><b>zone_start_paddr</b>　第一个 zone 的起始物理地址；</li>
+    <li><b>zone_holes</b>　包含各 zone 中内存空洞总大小的数组。</li>
+  </ul>
+
+  <p>核心函数 <tt>free_area_init_core()</tt> 负责用相关信息填充每个 <tt>zone_t</tt>，并为该结点分配 <tt>mem_map</tt> 数组。注意，此时并不确定 zone 中哪些页是空闲的，这要到启动内存分配器退役时才知道（详见第 5 章）。</p>
+
+  <h3>2.3.1　初始化 <tt>mem_map</tt></h3>
+  <p><tt>mem_map</tt> 区域在系统启动期间以两种方式之一创建。在 NUMA 系统上，全局 <tt>mem_map</tt> 被视为从 <tt>PAGE_OFFSET</tt> 开始的虚拟数组；对每个活动结点调用 <tt>free_area_init_node()</tt>，为其分配该数组中属于自己的部分。在 UMA 系统上，<tt>free_area_init()</tt> 使用 <tt>contig_page_data</tt> 作为结点，全局 <tt>mem_map</tt> 同时充当该结点的"局部" <tt>mem_map</tt>。两个函数的调用图如图 2.5 所示。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html005.png" alt="图 2.5">
+    <div class="caption">图 2.5：函数调用图：<tt>free_area_init()</tt></div>
+  </div>
+
+  <p>核心函数 <tt>free_area_init_core()</tt> 为正在初始化的结点分配一个局部 <tt>lmem_map</tt>。该数组的内存通过 <tt>alloc_bootmem_node()</tt> 由启动内存分配器分配（见第 5 章）。在 UMA 架构下，这块新分配的内存就成为全局的 <tt>mem_map</tt>；而 NUMA 稍有不同。</p>
+
+  <p>NUMA 架构在各自结点内分配 <tt>lmem_map</tt> 的内存。全局 <tt>mem_map</tt> 从未被显式分配，而是被置为 <tt>PAGE_OFFSET</tt>，作为虚拟数组对待。局部映射的地址保存在 <tt>pg_data_t-&gt;node_mem_map</tt> 中，位于虚拟 <tt>mem_map</tt> 内部。对于结点中存在的每个 zone，其在虚拟 <tt>mem_map</tt> 中的地址保存在 <tt>zone_t-&gt;zone_mem_map</tt> 中。其余代码都将 <tt>mem_map</tt> 当作真正的数组来使用，因为各结点只会使用其中有效的区域。</p>
+
+  <h2 class="section">2.4　页（Pages）</h2>
+  <p>系统中每个物理页帧都对应一个 <tt>struct page</tt>，用于跟踪其状态。在 2.2 内核 [BC00] 中，该结构与 System V [GC94] 中的对应结构很相似，但和其它 UNIX 变体一样，这个结构经历了较大的变化。在 <tt>&lt;linux/mm.h&gt;</tt> 中声明如下：</p>
+  <pre>152 typedef struct page {
+153     struct list_head list;
+154     struct address_space *mapping;
+155     unsigned long index;
+156     struct page *next_hash;
+158     atomic_t count;
+159     unsigned long flags;
+161     struct list_head lru;
+163     struct page **pprev_hash;
+164     struct buffer_head * buffers;
+175
+176 #if defined(CONFIG_HIGHMEM) || defined(WANT_PAGE_VIRTUAL)
+177     void *virtual;
+179 #endif /* CONFIG_HIGMEM || WANT_PAGE_VIRTUAL */
+180 } mem_map_t;</pre>
+
+  <p>各字段简要说明：</p>
+  <ul>
+    <li><b>list</b>　一个页可能属于多个链表，该字段用作链表头。例如，属于某个映射的页会挂在 <tt>address_space</tt> 维护的三个循环链表之一：<tt>clean_pages</tt>、<tt>dirty_pages</tt> 或 <tt>locked_pages</tt>。在 slab 分配器中，该字段用于保存指向该页所属 slab 和 cache 的指针。它也用于把空闲页块链接在一起；</li>
+    <li><b>mapping</b>　当文件或设备被内存映射时，其 inode 拥有一个相关联的 <tt>address_space</tt>。若该页属于该文件，则此字段指向该地址空间。如果页是匿名的，且 <tt>mapping</tt> 字段已置位，则 <tt>address_space</tt> 是 <tt>swapper_space</tt>，管理交换地址空间；</li>
+    <li><b>index</b>　含义随页面状态而变化。若页是文件映射的一部分，它表示页在文件内的偏移；若页是 swap cache 的一部分，它是页在交换地址空间（<tt>swapper_space</tt>）中的偏移。另外，当一组页正被释放给某个进程时，<tt>__free_pages_ok()</tt> 会将被释放页块的 order（即 2 的幂次方个数）保存到 <tt>index</tt> 中；</li>
+    <li><b>next_hash</b>　属于文件映射的页按 inode 和偏移进行哈希。该字段把哈希到同一桶的页链接在一起；</li>
+    <li><b>count</b>　页的引用计数。若降到 0，可被释放；大于 0 表示被一个或多个进程使用，或被内核用于等待 IO 等场景；</li>
+    <li><b>flags</b>　描述页状态的标志位，全部声明于 <tt>&lt;linux/mm.h&gt;</tt>，列于表 2.1。还定义了一组用于测试、清除、设置这些位的宏（见表 2.2）。其中较值得注意的是 <tt>SetPageUptodate()</tt>，若架构定义了 <tt>arch_set_page_uptodate()</tt>，会在置位前先调用它；</li>
+    <li><b>lru</b>　对于页面替换策略，可能被换出的页要么挂在 <tt>page_alloc.c</tt> 中声明的 <tt>active_list</tt>，要么挂在 <tt>inactive_list</tt> 上，该字段是这些 LRU 链表的链表头。这两个链表详见第 10 章；</li>
+    <li><b>pprev_hash</b>　与 <tt>next_hash</tt> 配对使用，使哈希链表成为双向链表；</li>
+    <li><b>buffers</b>　若页关联了某块设备的缓冲区，该字段用于跟踪 <tt>buffer_head</tt>。被进程映射的匿名页若有 swap 文件作为后备存储，也可能有关联的 <tt>buffer_head</tt>。这是因为页必须按底层文件系统定义的块大小与后备存储同步；</li>
+    <li><b>virtual</b>　通常只有 <tt>ZONE_NORMAL</tt> 中的页被内核直接映射。要访问 <tt>ZONE_HIGHMEM</tt> 中的页需使用 <tt>kmap()</tt> 将页映射到内核（详见第 9 章）。可映射的页数有限。被映射后，该字段就是其虚拟地址。</li>
+  </ul>
+
+  <p>类型 <tt>mem_map_t</tt> 是 <tt>struct page</tt> 的 typedef，便于在 <tt>mem_map</tt> 数组中引用。</p>
+
+  <h4>表 2.1：描述页状态的标志位</h4>
+  <table>
+    <tr><th>位名</th><th>描述</th></tr>
+    <tr><td><tt>PG_active</tt></td><td>当页位于 <tt>active_list</tt> LRU 时置位，移出时清除。表示该页是"热"页</td></tr>
+    <tr><td><tt>PG_arch_1</tt></td><td>架构相关的页状态位。通用代码保证页第一次进入 page cache 时该位为清零状态，使得架构可以延迟 D-Cache 刷新（见 3.9 节）直到页被某进程映射</td></tr>
+    <tr><td><tt>PG_checked</tt></td><td>仅由 Ext2 文件系统使用</td></tr>
+    <tr><td><tt>PG_dirty</tt></td><td>指示页需要回写到磁盘。被写过的页面不会立即回写，需要这一位避免在写出之前被释放</td></tr>
+    <tr><td><tt>PG_error</tt></td><td>磁盘 I/O 出错时置位</td></tr>
+    <tr><td><tt>PG_fs_1</tt></td><td>预留给文件系统自用。当前仅 NFS 使用它来指示页是否与远端服务器同步</td></tr>
+    <tr><td><tt>PG_highmem</tt></td><td>高端内存中的页不能被内核永久映射。在 <tt>mem_init()</tt> 中将这些页打上此标记</td></tr>
+    <tr><td><tt>PG_launder</tt></td><td>仅对页面替换策略重要。当 VM 想换出某页时会置位并调用 <tt>writepage()</tt>。扫描时若遇到同时置有该位和 <tt>PG_locked</tt> 的页，会等待 I/O 完成</td></tr>
+    <tr><td><tt>PG_locked</tt></td><td>页因磁盘 I/O 而必须锁在内存中时置位。I/O 开始时设，完成时清</td></tr>
+    <tr><td><tt>PG_lru</tt></td><td>页在 <tt>active_list</tt> 或 <tt>inactive_list</tt> 上时置位</td></tr>
+    <tr><td><tt>PG_referenced</tt></td><td>若页被映射，并通过 mapping/index 哈希表访问过则置位，用于在 LRU 链表间移动页</td></tr>
+    <tr><td><tt>PG_reserved</tt></td><td>用于永远不会被换出的页。启动内存分配器（第 5 章）会为系统启动期间分配的页置位。后来也用于标记空页或不存在的页</td></tr>
+    <tr><td><tt>PG_slab</tt></td><td>标记页被 slab 分配器使用</td></tr>
+    <tr><td><tt>PG_skip</tt></td><td>某些架构用它跳过没有物理内存对应的地址空间部分</td></tr>
+    <tr><td><tt>PG_unused</tt></td><td>字面意义上没有被使用</td></tr>
+    <tr><td><tt>PG_uptodate</tt></td><td>页无错误地从磁盘读入后置位</td></tr>
+  </table>
+
+  <h4>表 2.2：测试、设置和清除 <tt>page-&gt;flags</tt> 状态位的宏</h4>
+  <table>
+    <tr><th>位名</th><th>设置</th><th>测试</th><th>清除</th></tr>
+    <tr><td><tt>PG_active</tt></td><td><tt>SetPageActive()</tt></td><td><tt>PageActive()</tt></td><td><tt>ClearPageActive()</tt></td></tr>
+    <tr><td><tt>PG_arch_1</tt></td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
+    <tr><td><tt>PG_checked</tt></td><td><tt>SetPageChecked()</tt></td><td><tt>PageChecked()</tt></td><td>n/a</td></tr>
+    <tr><td><tt>PG_dirty</tt></td><td><tt>SetPageDirty()</tt></td><td><tt>PageDirty()</tt></td><td><tt>ClearPageDirty()</tt></td></tr>
+    <tr><td><tt>PG_error</tt></td><td><tt>SetPageError()</tt></td><td><tt>PageError()</tt></td><td><tt>ClearPageError()</tt></td></tr>
+    <tr><td><tt>PG_highmem</tt></td><td>n/a</td><td><tt>PageHighMem()</tt></td><td>n/a</td></tr>
+    <tr><td><tt>PG_launder</tt></td><td><tt>SetPageLaunder()</tt></td><td><tt>PageLaunder()</tt></td><td><tt>ClearPageLaunder()</tt></td></tr>
+    <tr><td><tt>PG_locked</tt></td><td><tt>LockPage()</tt></td><td><tt>PageLocked()</tt></td><td><tt>UnlockPage()</tt></td></tr>
+    <tr><td><tt>PG_lru</tt></td><td><tt>TestSetPageLRU()</tt></td><td><tt>PageLRU()</tt></td><td><tt>TestClearPageLRU()</tt></td></tr>
+    <tr><td><tt>PG_referenced</tt></td><td><tt>SetPageReferenced()</tt></td><td><tt>PageReferenced()</tt></td><td><tt>ClearPageReferenced()</tt></td></tr>
+    <tr><td><tt>PG_reserved</tt></td><td><tt>SetPageReserved()</tt></td><td><tt>PageReserved()</tt></td><td><tt>ClearPageReserved()</tt></td></tr>
+    <tr><td><tt>PG_skip</tt></td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
+    <tr><td><tt>PG_slab</tt></td><td><tt>PageSetSlab()</tt></td><td><tt>PageSlab()</tt></td><td><tt>PageClearSlab()</tt></td></tr>
+    <tr><td><tt>PG_unused</tt></td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
+    <tr><td><tt>PG_uptodate</tt></td><td><tt>SetPageUptodate()</tt></td><td><tt>PageUptodate()</tt></td><td><tt>ClearPageUptodate()</tt></td></tr>
+  </table>
+
+  <h3>2.4.1　将页映射到 Zone</h3>
+  <p>直到 2.4.18，<tt>struct page</tt> 通过 <tt>page-&gt;zone</tt> 字段保存它所在 zone 的引用。但即使是这样一个小指针，在数以千计的 <tt>struct page</tt> 上累积起来也会消耗大量内存，因此被认为浪费。较新的内核移除了 <tt>zone</tt> 字段，改为使用 <tt>page-&gt;flags</tt> 的高 <tt>ZONE_SHIFT</tt> 位（在 x86 上为 8 位）来确定页所属 zone。首先在 <tt>mm/page_alloc.c</tt> 中建立了一个 zone 表 <tt>zone_table</tt>：</p>
+  <pre>33 zone_t *zone_table[MAX_NR_ZONES*MAX_NR_NODES];
+34 EXPORT_SYMBOL(zone_table);</pre>
+
+  <p><tt>MAX_NR_ZONES</tt> 是结点中可能的 zone 数量上限（即 3）；<tt>MAX_NR_NODES</tt> 是结点数量上限。<tt>EXPORT_SYMBOL()</tt> 使 <tt>zone_table</tt> 对可加载模块可见。这张表被当作多维数组使用。在 <tt>free_area_init_core()</tt> 中，结点的所有页都被初始化。首先设置表项：</p>
+  <pre>733           zone_table[nid * MAX_NR_ZONES + j] = zone;</pre>
+
+  <p>其中 nid 是结点 ID，j 是 zone 索引，<tt>zone</tt> 是 <tt>zone_t</tt> 结构。然后对每个页调用 <tt>set_page_zone()</tt>：</p>
+  <pre>788           set_page_zone(page, nid * MAX_NR_ZONES + j);</pre>
+
+  <p>参数 <tt>page</tt> 是被设置 zone 的页。可见，<tt>zone_table</tt> 中的索引被保存到了 page 中。</p>
+
+  <h2 class="section">2.5　高端内存（High Memory）</h2>
+  <p>由于内核可用地址空间（<tt>ZONE_NORMAL</tt>）大小有限，内核支持"高端内存"的概念。在 32 位 x86 系统上，高端内存有两个阈值：4 GiB 和 64 GiB。4 GiB 上限与 32 位物理地址可寻址的内存量有关。要访问 1 GiB 到 4 GiB 之间的内存，内核使用 <tt>kmap()</tt> 临时将高端内存中的页映射到 <tt>ZONE_NORMAL</tt>。详见第 9 章。</p>
+
+  <p>64 GiB 的第二个上限与<em>物理地址扩展（Physical Address Extension，PAE）</em>有关。PAE 是 Intel 的发明，使 32 位系统能使用更多的 RAM。它为内存寻址额外提供 4 位，可寻址多达 2<sup>36</sup> 字节（64 GiB）。</p>
+
+  <p>理论上 PAE 允许处理器寻址多达 64 GiB，但在实践中，Linux 进程仍无法使用这么多 RAM，因为虚拟地址空间仍然只有 4 GiB。一些用户试图用一个进程 <tt>malloc()</tt> 出全部 RAM，结果发现行不通，由此颇感失望。</p>
+
+  <p>其次，PAE 也不允许内核自身使用如此多的内存。用于描述每个页帧的 <tt>struct page</tt> 仍占 44 字节，并消耗 <tt>ZONE_NORMAL</tt> 中的内核虚拟地址空间。也就是说，描述 1 GiB 内存大约需要 11 MiB 内核内存。因此 16 GiB 物理内存约消耗 176 MiB，给 <tt>ZONE_NORMAL</tt> 带来很大压力。再加上诸如<em>页表项（PTE）</em>等使用 <tt>ZONE_NORMAL</tt> 的其它结构，即便很小，最坏情况下也需要约 16 MiB。因此 x86 上 Linux 可用物理内存的实际上限约为 16 GiB。如果需要更多内存，建议非常简单直接：购置一台 64 位机器。</p>
+
+  <h2 class="section">2.6　2.6 内核中的新变化</h2>
+
+  <h5>结点（Nodes）</h5>
+  <p>初看之下，物理内存的描述方式似乎没有太大改动，但这些看似细小的变化影响很广。结点描述符 <tt>pg_data_t</tt> 新增了若干字段：</p>
+  <ul>
+    <li><b>node_start_pfn</b>　替代 <tt>node_start_paddr</tt> 字段。唯一区别是新字段保存 PFN 而非物理地址。这一改动是因为 PAE 架构可寻址超过 32 位的内存，超过 4 GiB 起始的结点无法用旧字段表示；</li>
+    <li><b>kswapd_wait</b>　<b>kswapd</b> 的新等待队列。2.4 中只有一个全局换页守护进程等待队列；2.6 中每个结点都有一个 <b>kswapdN</b>（N 是结点 ID），每个都有自己的等待队列。</li>
+  </ul>
+  <p><tt>node_size</tt> 字段已被移除并替换为两个字段，以承认结点中可能存在没有物理内存的"空洞"。</p>
+  <ul>
+    <li><b>node_present_pages</b>　结点中实际存在的物理页总数；</li>
+    <li><b>node_spanned_pages</b>　结点所覆盖的总区域，包括其中存在的空洞。</li>
+  </ul>
+
+  <h5>Zone</h5>
+  <p>Zone 在 2.6 中差异显著。首先它不再叫 <tt>zone_t</tt>，而是直接用 <tt>struct zone</tt>。第二个重要变化是 LRU 链表。第 10 章会看到，2.4 内核中有一个全局链表决定页面释放或换出顺序，2.6 把这些链表放到了 <tt>struct zone</tt> 中。相关字段有：</p>
+  <ul>
+    <li><b>lru_lock</b>　本 zone LRU 链表的自旋锁。2.4 中是全局锁 <tt>pagemap_lru_lock</tt>；</li>
+    <li><b>active_list</b>　本 zone 的活跃链表。与第 10 章描述的相同，只是变为每 zone 而非全局；</li>
+    <li><b>inactive_list</b>　本 zone 的非活跃链表，2.4 中是全局的；</li>
+    <li><b>refill_counter</b>　一次扫描中从 <tt>active_list</tt> 移除的页数，仅在页面替换时关心；</li>
+    <li><b>nr_active</b>　<tt>active_list</tt> 上的页数；</li>
+    <li><b>nr_inactive</b>　<tt>inactive_list</tt> 上的页数；</li>
+    <li><b>all_unreclaimable</b>　若换页守护进程已两遍扫描完该 zone 全部页面仍无法释放足够内存，则置 1；</li>
+    <li><b>pages_scanned</b>　自上次批量回收以来扫描过的页数。2.6 中页面是成组释放的，而不像 2.4 一次释放一个；</li>
+    <li><b>pressure</b>　衡量该 zone 的扫描强度，是一种衰减平均值，影响扫描器回收页面的努力程度。</li>
+  </ul>
+  <p>另外三个新字段与 zone 大小相关：</p>
+  <ul>
+    <li><b>zone_start_pfn</b>　zone 的起始 PFN，替代 2.4 中的 <tt>zone_start_paddr</tt> 与 <tt>zone_start_mapnr</tt>；</li>
+    <li><b>spanned_pages</b>　zone 跨越的页数，包括某些架构中存在的空洞；</li>
+    <li><b>present_pages</b>　zone 中实际存在的页数。许多架构上与 <tt>spanned_pages</tt> 相同。</li>
+  </ul>
+  <p>另一个新增项是 <tt>struct per_cpu_pageset</tt>，用于为每个 CPU 维护页面链表，以减少自旋锁竞争。<tt>zone-&gt;pageset</tt> 是大小为 <tt>NR_CPU</tt> 的 <tt>struct per_cpu_pageset</tt> 数组，<tt>NR_CPU</tt> 是编译期的 CPU 数量上限。该 per-cpu 结构将在本节末讨论。</p>
+  <p>最后，<tt>struct zone</tt> 中新增了零填充。2.6 VM 的开发认识到某些自旋锁竞争非常激烈、获取非常频繁，且某些锁几乎总是成对获取，应尽量让它们位于不同的 cache line 上——这是常见的 cache 编程技巧 [Sea00]。这些填充使用 <tt>ZONE_PADDING()</tt> 宏标记，确保 <tt>zone-&gt;lock</tt>、<tt>zone-&gt;lru_lock</tt> 和 <tt>zone-&gt;pageset</tt> 字段使用不同的 cache line。</p>
+
+  <h5>Pages</h5>
+  <p>第一个显著变化是字段顺序的调整，使关联项尽量落到同一 cache line 中。字段本身基本相同，但新增了两项。第一是一个新 union，用于构建 PTE 链；PTE 链与页表管理相关，将在第 3 章末讨论。第二是 <tt>page-&gt;private</tt> 字段，包含与映射相关的私有信息。例如，若该页是缓冲区页，该字段保存指向 <tt>buffer_head</tt> 的指针。也因此移除了 <tt>page-&gt;buffers</tt> 字段。最后一个重要变化是：<tt>page-&gt;virtual</tt> 对高端内存支持不再必需，仅当架构明确要求时存在。高端内存页的支持详见第 9 章。</p>
+
+  <h5>每 CPU 页面链表（Per-CPU Page Lists）</h5>
+  <p>2.4 中只有 slab 分配器（见第 8 章）这一子系统主动维护对象的 per-cpu 链表。2.6 中此概念被广泛使用，并正式引入了"热页（hot）"和"冷页（cold）"的概念。</p>
+  <p>声明于 <tt>&lt;linux/mmzone.h&gt;</tt> 中的 <tt>struct per_cpu_pageset</tt> 只有一个字段，是一个含两个元素、类型为 <tt>per_cpu_pages</tt> 的数组。第 0 个元素用于热页，第 1 个用于冷页。"冷热"由该页当前在 cache 中的活跃程度决定。若已知页面短期内不会被引用（例如 IO 预读），就作为冷页分配。</p>
+  <p><tt>struct per_cpu_pages</tt> 维护链表当前的页数、决定批量补充或释放时机的高/低水位、单次分配的页块大小，以及实际的页面链表头。</p>
+  <p>在 per-cpu 页面链表之上还有 per-cpu 页面计数机制。<tt>struct page_state</tt> 保存若干计数变量，例如跟踪本 CPU 已分配页数的 <tt>pgalloc</tt> 字段以及跟踪 swap 读入次数的 <tt>pswpin</tt>。该结构在 <tt>&lt;linux/page-flags.h&gt;</tt> 中有详细注释。提供 <tt>mod_page_state()</tt> 用于更新当前 CPU 的 <tt>page_state</tt> 字段，以及三个辅助宏 <tt>inc_page_state()</tt>、<tt>dec_page_state()</tt> 和 <tt>sub_page_state()</tt>。</p>
+
+  <div class="notes">
+    <h3>译注</h3>
+    <ul>
+      <li>原书示例代码与函数名引用均保留英文，便于查阅源码。</li>
+      <li>"Zone"译为"区"或保留"Zone"原词；"Node"译为"结点"。</li>
+    </ul>
+  </div>
+
+  <nav>
+    [ <a href="understand004_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="understand006_zh.html">下一章 &raquo;</a> ]
+  </nav>
+</body>
+</html>

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>前言 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <div class="nav">
+    <a href="understand002_zh.html">« 上一节</a>
+    <a href="understand001_zh.html">↑ 目录</a>
+    <a href="understand004_zh.html">下一节 »</a>
+  </div>
+
+  <h1>前言（Preface）</h1>
+  <div class="meta">原文版本：Preface</div>
+
+  <p>Linux 的开发更强调实践而非理论。当有人提出新算法或对现有实现的修改建议时，通常会被要求提供相应的代码来支撑论点。虚拟内存（VM）系统中使用的许多算法最初由理论研究者设计，但其实现已经与理论产生了相当大的偏离。在某种程度上，Linux 确实遵循了从设计到实现的传统开发周期，但更常见的情况是：根据系统在"真实世界"中的表现以及开发者的直觉判断来进行修改。</p>
+
+  <p>这意味着 VM 在实践中表现优异，但除了少数网站上的一些不完整概述之外，几乎没有专门针对 VM 的文档可用——当然，包含本书早期草稿的那个网站除外！这导致了一种状况：只有少数核心开发者才能完全理解 VM。新开发者寻找有关其工作机制的信息时，通常被告知"去读源码"，而关于实现的理论基础几乎没有可用的资料。这就要求即使是一个普通的观察者也需要投入大量时间来阅读代码、研究内存管理领域。</p>
+
+  <p>本书详细介绍了 <tt>2.4.22</tt> 版本中实现的 Linux VM，并对 2.6 版本中可期待的内容做了坚实的入门介绍。除了讨论实现细节外，还将介绍其所基于的理论。本书并非一本内存管理理论书籍，但如果预先了解底层基础，通常会更容易理解 VM 为何以特定方式实现。</p>
+
+  <p>作为补充，附录包含了对 VM 中相当大比例代码的详细注释。这应能大幅减少开发者或研究人员理解 Linux VM 内部运作所需投入的时间。由于 VM 的实现即使在主要版本之间也往往遵循相似的代码模式，这意味着在深入理解 2.4 VM 的基础上，后来的 2.5 开发版 VM 和最终的 2.6 发布版将在数周内即可解读。</p>
+
+  <h2 class="section">目标读者（The Intended Audience）</h2>
+
+  <p>任何对 VM（一个核心内核子系统）如何工作感兴趣的人都能在本书中找到许多问题的答案。VM 比任何其他子系统都更能影响操作系统的整体性能。它也是 Linux 中最不被理解、文档最差的子系统之一，部分原因是它确实有太多内容。如果没有先建立对整个 VM 的强大概念模型，就很难孤立地理解代码的各个部分，因此本书旨在在阅读源码之前提供详细的描述。</p>
+
+  <p>这些材料应该对有兴趣将 VM 适配到自身需求的新开发者，以及仅仅想了解 VM 如何工作的读者最有价值。它也将有益于希望在与 VM 交互时充分利用它的其他子系统开发者，以及寻找现代操作系统中内存管理实现细节的操作系统研究人员。对于那些只是好奇想多了解一个备受讨论的子系统的读者，他们将找到易于阅读的 VM 功能描述，覆盖所有细节而无需翻阅源代码。</p>
+
+  <p>不过，本书假定读者在阅读前至少已读过一本通用操作系统书籍或一本 Linux 内核相关的通用书籍，并具有 C 语言的基本知识。虽然已尽一切努力使材料易于理解，但仍假设读者具备通用操作系统的基础知识。</p>
+
+  <h2 class="section">本书概览（Book Overview）</h2>
+
+  <p>在<a href="understand004_zh.html#htoc1">第一章</a>中，我们详细介绍了如何管理和解读源代码。将介绍三个用于分析、便捷浏览和管理代码的工具。主要工具是 <em>Linux 交叉引用（LXR）</em>工具——它允许以网页形式浏览源代码；以及 <em>CodeViz</em>——用于生成调用图，它是在研究本书期间开发的。最后一个工具 <em>PatchSet</em> 用于管理内核和应用补丁。手动应用补丁可能非常耗时，而使用诸如 CVS（<em>http://www.cvshome.org/</em>）或 BitKeeper（<em>http://www.bitmover.com</em>）这样的版本控制软件并非总是可行。借助这个工具，一个简单的规范文件即可确定使用什么源码、应用哪些补丁以及使用什么内核配置。</p>
+
+  <p>在后续章节中，将详细讨论 Linux VM 实现的各个部分，例如如何以体系结构无关的方式描述内存、进程如何管理其内存、特定分配器如何工作等等。每章都会引用最接近描述 Linux 行为的论文，并深入介绍实现细节、使用的函数及其调用图，使读者能清晰了解代码的组织结构。每章末尾会有一个"2.6 中的新变化"小节，介绍在 2.6 VM 中可期待的内容。</p>
+
+  <p>附录是对 VM 相当大比例代码的注释。它逐行描述了 VM 中一些更复杂的方面。VM 的代码风格即使在内核的主要版本之间也往往保持相当一致，因此对 2.4 VM 的深入理解将是理解 2.6 内核发布时的宝贵助力。</p>
+
+  <h2 class="section">2.6 中的新变化（What's New in 2.6）</h2>
+
+  <p>在撰写本文时，<tt>2.6.0-test4</tt> 刚刚发布，因此 <tt>2.6.0-final</tt> 预计"随时"发布，即 2003 年 12 月或 2004 年初。幸运的是，2.6 VM 在大多数方面与 2.4 相比仍然相当容易辨认。然而，2.6 中确实有一些新材料和概念，忽略它们未免可惜，因此本书增设了"2.6 中的新变化"部分。在某种程度上，这些部分假设你已阅读了本书的其余内容，因此在初次阅读时只需浏览一下即可。如果你决定开始阅读 2.5 和 2.6 的 VM 代码，"新变化"部分中对预期内容的基本描述应该会极大地帮助你的理解。需要注意的是，这些部分基于 <tt>2.6.0-test4</tt> 内核，在 2.6 发布前应该不会有重大变化。但由于仍有可能发生变化，你应将"新变化"部分视为指导方针而非确定事实。</p>
+
+  <h2 class="section">配套光盘（Companion CD）</h2>
+
+  <p>本书附带一张配套光盘，供安装了 GNU/Linux 的系统使用。按如下方式将光盘挂载到 <tt>/cdrom</tt>：</p>
+
+  <pre>root@joshua:/$ mount /dev/cdrom /cdrom -o exec</pre>
+
+  <p>光盘中包含一份已构建并配置好的 <b>Apache 1.3.27</b>（<em>http://www.apache.org/</em>），但它要求光盘挂载在 <tt>/cdrom/</tt>。要启动它，运行脚本 <b>/cdrom/start_server</b>。如果没有错误，输出应如下所示：</p>
+
+  <pre>mel@joshua:~$ /cdrom/start_server
+Starting CodeViz Server: done
+Starting Apache Server:  done
+
+The URL to access is http://localhost:10080/</pre>
+
+  <p>如果服务器启动成功，将浏览器指向 <em>http://localhost:10080</em> 即可使用光盘的 Web 服务。光盘包含的一些功能有：</p>
+
+  <ul>
+    <li>一个 Web 服务器，通过 <b>/cdrom/start_server</b> 启动。启动后访问的 URL 是 <em>http://localhost:10080</em>。已在 Red Hat 7.3 和 Debian Woody 上测试通过；</li>
+    <li>整本书以 HTML、PDF 和纯文本格式包含在 <tt>/cdrom/docs</tt> 中。其中包括一个可搜索的函数索引，可查找有注释的函数。如果搜索的函数没有注释，浏览器将自动重定向到 LXR；</li>
+    <li>借助 LXR 提供了可在网页中浏览的 Linux <tt>2.4.22</tt> 源代码；</li>
+    <li>使用 <b>CodeViz</b> 工具的在线版本生成调用图；</li>
+    <li><a href="understand004_zh.html#htoc1">第一章</a>中讨论的 <b>VM Regress</b>、<b>CodeViz</b> 和 <b>patchset</b> 软件包可在 <tt>/cdrom/software</tt> 中获得。还提供了 <b>gcc-3.0.4</b>，因为它是构建 <b>CodeViz</b> 所必需的。</li>
+  </ul>
+
+  <p>要关闭服务器，运行脚本 <b>/cdrom/stop_server</b>，之后即可卸载光盘。</p>
+
+  <h2 class="section">排版约定（Typographic Conventions）</h2>
+
+  <p>本文档中使用的约定很简单。新引入的概念以及 URL 使用<em>斜体</em>字体。二进制文件和软件包名称使用<b>粗体</b>。结构体、字段名、编译期定义和变量使用 <tt>等宽</tt> 字体。在讨论结构体中的字段时，有时会同时包含结构体和字段名，例如 <tt>page</tt>→<tt>list</tt>。文件名使用等宽字体，但包含文件使用尖括号，如 &lt;<tt>linux/mm.h</tt>&gt;，可在内核源码的 <tt>include/</tt> 目录中找到。</p>
+
+  <h2 class="section">致谢（Acknowledgments）</h2>
+
+  <p>编写本书并非一项简单的任务。本书是在公开的研究和开发过程中完成的，如果不提及在各个阶段帮助过我的一些人，那将是我的疏忽。如果遗漏了任何人，我在此致歉。</p>
+
+  <p>首先，我要感谢 John O'Gorman，他在本书资料研究期间不幸去世。正是他的经验和指导在很大程度上启发了本书的格式和品质。</p>
+
+  <p>其次，我要感谢 Prentice Hall PTR 的 Mark L. Taub 给予我出版本书的机会。这是一次有益的经历，使翻阅所有代码的辛苦变得值得。衷心感谢我的审阅者们，在我以为已经写完很久之后仍提供了清晰详细的反馈。最后，在出版方面，我要感谢 Bruce Perens 允许我在 Bruce Perens 开放图书系列（<em>http://www.perens.com/Books</em>）下出版。</p>
+
+  <p>在技术研究方面，许多人提供了宝贵的见解。Abhishek Nayani 在研究初期是鼓励与热情的来源。Ingo Oeser 早期友好地提供了关于数据如何从用户空间复制到内核空间的详细解释，包括一些有价值的历史背景，并友好地表示如果我在内核代码的迷宫中迷路可以向他求助。Scott Kaplan 对从非连续内存分配到页面替换策略等多个系统进行了大量修正。Jonathon Corbet 通过他为 Linux Weekly News 撰写的内核专栏提供了最详细的内核开发历史记录。Zack Brown，Kernel Traffic 背后的核心人物，是我没有被内核相关邮件淹没的唯一原因。IBM 作为 Equinox 项目的一部分提供了一台 xSeries 350，这对于在比我之前能使用的更大的机器上运行自己的测试内核非常宝贵。最后，Patrick Healy 对于确保本书对那些熟悉但并非精通 Linux 或内存管理的人保持一致性和可读性至关重要。</p>
+
+  <p>许多人帮助解决了较小的技术问题以及材料覆盖深度不足导致的一般性不一致。他们是 Muli Ben-Yehuda、Parag Sharma、Matthew Dobson、Roger Luethi、Brian Lowe 和 Scott Crosby。他们都对文档的不同部分发送了修正和疑问，确保了书中没有假设过多的先验知识。</p>
+
+  <p>Carl Spalletta 对本书早期在线版本的各个方面发送了大量疑问和修正。Steve Greenland 发送了大量语法修正。Philipp Marek 超越了普通的帮助范畴，发送了超过 90 条单独的修正和疑问。在我以为已经完成很久之后，Aris Sotiropoulos 发送了大量小修正和建议。最后一位——我已记不住名字，但是某杂志的一位编辑——对文档的早期版本发送了超过 140 条修正。你知道你是谁，谢谢。</p>
+
+  <p>有十一个人发送了一些虽然数量不多但仍被我自己多次检查所遗漏的修正。他们是 Marek Januszewski、Amit Shah、Adrian Stanciu、Andy Isaacson、Jean Francois Martinez、Glen Kaukola、Wolfgang Oertl、Michael Babcock、Kirk True、Chuck Luciano 和 David Wilson。</p>
+
+  <p>在 VM Regress 的开发中，有九个人帮助我保持项目的运转。Danny Faught 和 Paul Larson 都发送了许多错误报告，并帮助确保它能在各种不同内核上工作。来自 OSDL 实验室的 Cliff White 确保 VM Regress 有比我自己的测试机更广泛的应用。同样隶属于 OSDL 实验室的 Dave Olien 负责更新 VM Regress 以使其与 2.5.64 及更高版本内核兼容。Albert Cahalan 提供了所有我需要的信息，使其能与后来的 proc 工具配合使用。最后，Andrew Morton、Rik van Riel 和 Scott Kaplan 都提供了关于工具应朝什么方向开发才能既有效又有用的见解。</p>
+
+  <p>最后一长串名单是在不同时间给我发送鼓励和感谢的人。他们是 Martin Bligh、Paul Rolland、Mohamed Ghouse、Samuel Chessman、Ersin Er、Mark Hoy、Michael Martin、Martin Gallwey、Ravi Parimi、Daniel Codt、Adnan Shafi、Xiong Quanren、Dave Airlie、Der Herr Hofrat、Ida Hallgren、Manu Anand、Eugene Teo、Diego Calleja 和 Ed Cashin。谢谢，这些鼓励令人振奋。</p>
+
+  <p>最后，我要感谢一些没有他们我就无法完成此书的人。我要感谢我的父母，在我早该能赚足够的钱养活自己之后仍一直支持我。我要感谢我的女朋友 Karen，她耐心地听我抱怨、听技术术语连珠炮、为这本书焦虑，并确保我是拥有最好玩具的人。感谢那些定期把我从电脑前拖走、让我保持相对理智的朋友们，包括在我写下这段话时正在给我做饭的 Daren。最后，我要感谢多年来为 GNU、Linux 内核和其他自由软件项目做出贡献的数千名黑客，没有他们我就没有一个优秀的系统可以书写。六年前，当我终于弄明白 Linux 并非一个用于阅读电子邮件的 Windows 应用程序之后，开始在自己的 PC 上编程时，看到这样的奉献精神对我来说是一种激励。</p>
+
+  <div class="nav" style="margin-top: 2em;">
+    <a href="understand002_zh.html">« 上一节</a>
+    <a href="understand001_zh.html">↑ 目录</a>
+    <a href="understand004_zh.html">下一节 »</a>
+  </div>
+</body>
+</html>

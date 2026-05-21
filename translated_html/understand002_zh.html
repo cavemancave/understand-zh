@@ -1,0 +1,787 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+<META http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand_zh.css">
+<TITLE>代码注释目录</TITLE>
+</HEAD>
+<BODY>
+[ <A HREF="understand001_zh.html">&laquo; 上一节</A> ]
+[ <A HREF="index.html">&uarr; 目录</A> ]
+[ <A HREF="understand003_zh.html">下一节 &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter">代码注释目录 (Code Commentary Contents)</H1><P>
+</P>
+<UL CLASS="toc">
+<LI CLASS="li-toc"><A HREF="understand018_zh.html#htoc106">附录 A 引言 (Introduction)</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc107">附录 B 描述物理内存 (Describing Physical Memory)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019_zh.html#htoc108">B.1 初始化管理区 (Initialising Zones)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019_zh.html#htoc109">B.1.1 函数：setup_memory</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc110">B.1.2 函数：zone_sizes_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc111">B.1.3 函数：free_area_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc112">B.1.4 函数：free_area_init_node</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc113">B.1.5 函数：free_area_init_core</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc114">B.1.6 函数：build_zonelists</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc115">B.2 页操作 (Page Operations)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019_zh.html#htoc116">B.2.1 锁定页 (Locking Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019_zh.html#htoc117">B.2.1.1 函数：lock_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc118">B.2.1.2 函数：__lock_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc119">B.2.1.3 函数：sync_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc120">B.2.2 解锁页 (Unlocking Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019_zh.html#htoc121">B.2.2.1 函数：unlock_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc122">B.2.3 等待页 (Waiting on Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand019_zh.html#htoc123">B.2.3.1 函数：wait_on_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand019_zh.html#htoc124">B.2.3.2 函数：___wait_on_page</A>
+</LI></UL>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand020_zh.html#htoc125">附录 C 页表管理 (Page Table Management)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand020_zh.html#htoc126">C.1 页表初始化 (Page Table Initialisation)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand020_zh.html#htoc127">C.1.1 函数：paging_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand020_zh.html#htoc128">C.1.2 函数：pagetable_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand020_zh.html#htoc129">C.1.3 函数：fixrange_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand020_zh.html#htoc130">C.1.4 函数：kmap_init</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand020_zh.html#htoc131">C.2 页表遍历 (Page Table Walking)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand020_zh.html#htoc132">C.2.1 函数：follow_page</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc133">附录 D 进程地址空间 (Process Address Space)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc134">D.1 进程内存描述符 (Process Memory Descriptors)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc135">D.1.1 初始化描述符 (Initalising a Descriptor)</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc136">D.1.2 复制描述符 (Copying a Descriptor)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc137">D.1.2.1 函数：copy_mm</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc138">D.1.2.2 函数：mm_init</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc139">D.1.3 分配描述符 (Allocating a Descriptor)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc140">D.1.3.1 函数：allocate_mm</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc141">D.1.3.2 函数：mm_alloc</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc142">D.1.4 销毁描述符 (Destroying a Descriptor)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc143">D.1.4.1 函数：mmput</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc144">D.1.4.2 函数：mmdrop</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc145">D.1.4.3 函数：__mmdrop</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc146">D.2 创建内存区域 (Creating Memory Regions)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc147">D.2.1 创建一个内存区域 (Creating A Memory Region)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc148">D.2.1.1 函数：do_mmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc149">D.2.1.2 函数：do_mmap_pgoff</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc150">D.2.2 插入内存区域 (Inserting a Memory Region)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc151">D.2.2.1 函数：__insert_vm_struct</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc152">D.2.2.2 函数：find_vma_prepare</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc153">D.2.2.3 函数：vma_link</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc154">D.2.2.4 函数：__vma_link</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc155">D.2.2.5 函数：__vma_link_list</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc156">D.2.2.6 函数：__vma_link_rb</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc157">D.2.2.7 函数：__vma_link_file</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc158">D.2.3 合并相邻区域 (Merging Contiguous Regions)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc159">D.2.3.1 函数：vma_merge</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc160">D.2.3.2 函数：can_vma_merge</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc161">D.2.4 重新映射与移动内存区域 (Remapping and Moving a Memory Region)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc162">D.2.4.1 函数：sys_mremap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc163">D.2.4.2 函数：do_mremap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc164">D.2.4.3 函数：move_vma</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc165">D.2.4.4 函数：make_pages_present</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc166">D.2.4.5 函数：get_user_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc167">D.2.4.6 函数：move_page_tables</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc168">D.2.4.7 函数：move_one_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc169">D.2.4.8 函数：get_one_pte</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc170">D.2.4.9 函数：alloc_one_pte</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc171">D.2.4.10 函数：copy_one_pte</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc172">D.2.5 删除内存区域 (Deleting a memory region)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc173">D.2.5.1 函数：do_munmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc174">D.2.5.2 函数：unmap_fixup</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc175">D.2.6 删除所有内存区域 (Deleting all memory regions)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc176">D.2.6.1 函数：exit_mmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc177">D.2.6.2 函数：clear_page_tables</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc178">D.2.6.3 函数：free_one_pgd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc179">D.2.6.4 函数：free_one_pmd</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc180">D.3 搜索内存区域 (Searching Memory Regions)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc181">D.3.1 查找已映射的内存区域 (Finding a Mapped Memory Region)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc182">D.3.1.1 函数：find_vma</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc183">D.3.1.2 函数：find_vma_prev</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc184">D.3.1.3 函数：find_vma_intersection</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc185">D.3.2 查找空闲的内存区域 (Finding a Free Memory Region)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc186">D.3.2.1 函数：get_unmapped_area</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc187">D.3.2.2 函数：arch_get_unmapped_area</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc188">D.4 锁定与解锁内存区域 (Locking and Unlocking Memory Regions)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc189">D.4.1 锁定内存区域 (Locking a Memory Region)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc190">D.4.1.1 函数：sys_mlock</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc191">D.4.1.2 函数：sys_mlockall</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc192">D.4.1.3 函数：do_mlockall</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc193">D.4.1.4 函数：do_mlock</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc194">D.4.2 解锁区域 (Unlocking the region)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc195">D.4.2.1 函数：sys_munlock</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc196">D.4.2.2 函数：sys_munlockall</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc197">D.4.3 锁定/解锁后修正区域 (Fixing up regions after locking/unlocking)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc198">D.4.3.1 函数：mlock_fixup</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc199">D.4.3.2 函数：mlock_fixup_all</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc200">D.4.3.3 函数：mlock_fixup_start</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc201">D.4.3.4 函数：mlock_fixup_end</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc202">D.4.3.5 函数：mlock_fixup_middle</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc203">D.5 缺页中断 (Page Faulting)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc204">D.5.1 x86 缺页中断处理程序 (x86 Page Fault Handler)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc205">D.5.1.1 函数：do_page_fault</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc206">D.5.2 扩展栈 (Expanding the Stack)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc207">D.5.2.1 函数：expand_stack</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc208">D.5.3 与体系结构无关的缺页中断处理程序 (Architecture Independent Page Fault Handler)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc209">D.5.3.1 函数：handle_mm_fault</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc210">D.5.3.2 函数：handle_pte_fault</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc211">D.5.4 按需分配 (Demand Allocation)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc212">D.5.4.1 函数：do_no_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc213">D.5.4.2 函数：do_anonymous_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc214">D.5.5 按需调页 (Demand Paging)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc215">D.5.5.1 函数：do_swap_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc216">D.5.5.2 函数：can_share_swap_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc217">D.5.5.3 函数：exclusive_swap_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc218">D.5.6 写时复制 (Copy On Write，COW) 页面</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc219">D.5.6.1 函数：do_wp_page</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc220">D.6 与页面相关的磁盘 IO (Page-Related Disk IO)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc221">D.6.1 通用文件读取 (Generic File Reading)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc222">D.6.1.1 函数：generic_file_read</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc223">D.6.1.2 函数：do_generic_file_read</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc224">D.6.1.3 函数：generic_file_readahead</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc225">D.6.2 通用文件 <TT>mmap()</TT> (Generic File mmap)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc226">D.6.2.1 函数：generic_file_mmap</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc227">D.6.3 通用文件截断 (Generic File Truncation)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc228">D.6.3.1 函数：vmtruncate</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc229">D.6.3.2 函数：vmtruncate_list</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc230">D.6.3.3 函数：zap_page_range</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc231">D.6.3.4 函数：zap_pmd_range</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc232">D.6.3.5 函数：zap_pte_range</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc233">D.6.3.6 函数：truncate_inode_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc234">D.6.3.7 函数：truncate_list_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc235">D.6.3.8 函数：truncate_complete_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc236">D.6.3.9 函数：do_flushpage</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc237">D.6.3.10 函数：truncate_partial_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc238">D.6.4 为页缓存读取页 (Reading Pages for the Page Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc239">D.6.4.1 函数：filemap_nopage</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc240">D.6.4.2 函数：page_cache_read</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc241">D.6.5 <TT>nopage()</TT> 的文件预读 (File Readahead for nopage)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc242">D.6.5.1 函数：nopage_sequential_readahead</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc243">D.6.5.2 函数：read_cluster_nonblocking</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc244">D.6.6 与交换相关的预读 (Swap Related Read-Ahead)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand021_zh.html#htoc245">D.6.6.1 函数：swapin_readahead</A>
+</LI><LI CLASS="li-toc"><A HREF="understand021_zh.html#htoc246">D.6.6.2 函数：valid_swaphandles</A>
+</LI></UL>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc247">附录 E 引导内存分配器 (Boot Memory Allocator)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022_zh.html#htoc248">E.1 初始化引导内存分配器 (Initialising the Boot Memory Allocator)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022_zh.html#htoc249">E.1.1 函数：init_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc250">E.1.2 函数：init_bootmem_node</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc251">E.1.3 函数：init_bootmem_core</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc252">E.2 分配内存 (Allocating Memory)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022_zh.html#htoc253">E.2.1 保留大块内存区域 (Reserving Large Regions of Memory)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022_zh.html#htoc254">E.2.1.1 函数：reserve_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc255">E.2.1.2 函数：reserve_bootmem_node</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc256">E.2.1.3 函数：reserve_bootmem_core</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc257">E.2.2 在引导时分配内存 (Allocating Memory at Boot Time)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022_zh.html#htoc258">E.2.2.1 函数：alloc_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc259">E.2.2.2 函数：__alloc_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc260">E.2.2.3 函数：alloc_bootmem_node</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc261">E.2.2.4 函数：__alloc_bootmem_node</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc262">E.2.2.5 函数：__alloc_bootmem_core</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc263">E.3 释放内存 (Freeing Memory)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022_zh.html#htoc264">E.3.1 函数：free_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc265">E.3.2 函数：free_bootmem_core</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc266">E.4 退役引导内存分配器 (Retiring the Boot Memory Allocator)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand022_zh.html#htoc267">E.4.1 函数：mem_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc268">E.4.2 函数：free_pages_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc269">E.4.3 函数：one_highpage_init</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc270">E.4.4 函数：free_all_bootmem</A>
+</LI><LI CLASS="li-toc"><A HREF="understand022_zh.html#htoc271">E.4.5 函数：free_all_bootmem_core</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc272">附录 F 物理页分配 (Physical Page Allocation)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand023_zh.html#htoc273">F.1 分配页 (Allocating Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand023_zh.html#htoc274">F.1.1 函数：alloc_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc275">F.1.2 函数：_alloc_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc276">F.1.3 函数：__alloc_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc277">F.1.4 函数：rmqueue</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc278">F.1.5 函数：expand</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc279">F.1.6 函数：balance_classzone</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc280">F.2 分配辅助函数 (Allocation Helper Functions)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand023_zh.html#htoc281">F.2.1 函数：alloc_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc282">F.2.2 函数：__get_free_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc283">F.2.3 函数：__get_free_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc284">F.2.4 函数：__get_dma_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc285">F.2.5 函数：get_zeroed_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc286">F.3 释放页 (Free Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand023_zh.html#htoc287">F.3.1 函数：__free_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc288">F.3.2 函数：__free_pages_ok</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc289">F.4 释放辅助函数 (Free Helper Functions)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand023_zh.html#htoc290">F.4.1 函数：free_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc291">F.4.2 函数：__free_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand023_zh.html#htoc292">F.4.3 函数：free_page</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc293">附录 G 非连续内存分配 (Non-Contiguous Memory Allocation)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand024_zh.html#htoc294">G.1 分配非连续区域 (Allocating A Non-Contiguous Area)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand024_zh.html#htoc295">G.1.1 函数：vmalloc</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc296">G.1.2 函数：__vmalloc</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc297">G.1.3 函数：get_vm_area</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc298">G.1.4 函数：vmalloc_area_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc299">G.1.5 函数：__vmalloc_area_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc300">G.1.6 函数：alloc_area_pmd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc301">G.1.7 函数：alloc_area_pte</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc302">G.1.8 函数：vmap</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc303">G.2 释放非连续区域 (Freeing A Non-Contiguous Area)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand024_zh.html#htoc304">G.2.1 函数：vfree</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc305">G.2.2 函数：vmfree_area_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc306">G.2.3 函数：free_area_pmd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand024_zh.html#htoc307">G.2.4 函数：free_area_pte</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc308">附录 H Slab 分配器 (Slab Allocator)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc309">H.1 缓存操作 (Cache Manipulation)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc310">H.1.1 缓存创建 (Cache Creation)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc311">H.1.1.1 函数：kmem_cache_create</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc312">H.1.2 计算 Slab 上的对象数 (Calculating the Number of Objects on a Slab)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc313">H.1.2.1 函数：kmem_cache_estimate</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc314">H.1.3 缓存收缩 (Cache Shrinking)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc315">H.1.3.1 函数：kmem_cache_shrink</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc316">H.1.3.2 函数：__kmem_cache_shrink</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc317">H.1.3.3 函数：__kmem_cache_shrink_locked</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc318">H.1.4 缓存销毁 (Cache Destroying)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc319">H.1.4.1 函数：kmem_cache_destroy</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc320">H.1.5 缓存回收 (Cache Reaping)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc321">H.1.5.1 函数：kmem_cache_reap</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc322">H.2 Slabs</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc323">H.2.1 存储 Slab 描述符 (Storing the Slab Descriptor)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc324">H.2.1.1 函数：kmem_cache_slabmgmt</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc325">H.2.1.2 函数：kmem_find_general_cachep</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc326">H.2.2 Slab 创建 (Slab Creation)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc327">H.2.2.1 函数：kmem_cache_grow</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc328">H.2.3 Slab 销毁 (Slab Destroying)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc329">H.2.3.1 函数：kmem_slab_destroy</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc330">H.3 对象 (Objects)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc331">H.3.1 初始化 Slab 中的对象 (Initialising Objects in a Slab)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc332">H.3.1.1 函数：kmem_cache_init_objs</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc333">H.3.2 对象分配 (Object Allocation)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc334">H.3.2.1 函数：kmem_cache_alloc</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc335">H.3.2.2 函数：__kmem_cache_alloc (UP 情况)</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc336">H.3.2.3 函数：__kmem_cache_alloc (SMP 情况)</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc337">H.3.2.4 函数：kmem_cache_alloc_head</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc338">H.3.2.5 函数：kmem_cache_alloc_one</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc339">H.3.2.6 函数：kmem_cache_alloc_one_tail</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc340">H.3.2.7 函数：kmem_cache_alloc_batch</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc341">H.3.3 对象释放 (Object Freeing)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc342">H.3.3.1 函数：kmem_cache_free</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc343">H.3.3.2 函数：__kmem_cache_free (UP 情况)</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc344">H.3.3.3 函数：__kmem_cache_free (SMP 情况)</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc345">H.3.3.4 函数：kmem_cache_free_one</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc346">H.3.3.5 函数：free_block</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc347">H.3.3.6 函数：__free_block</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc348">H.4 尺寸缓存 (Sizes Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc349">H.4.1 初始化尺寸缓存 (Initialising the Sizes Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc350">H.4.1.1 函数：kmem_cache_sizes_init</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc351">H.4.2 <TT>kmalloc()</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc352">H.4.2.1 函数：kmalloc</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc353">H.4.3 <TT>kfree()</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc354">H.4.3.1 函数：kfree</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc355">H.5 每 CPU 对象缓存 (Per-CPU Object Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc356">H.5.1 启用每 CPU 缓存 (Enabling Per-CPU Caches)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc357">H.5.1.1 函数：enable_all_cpucaches</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc358">H.5.1.2 函数：enable_cpucache</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc359">H.5.1.3 函数：kmem_tune_cpucache</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc360">H.5.2 更新每 CPU 信息 (Updating Per-CPU Information)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc361">H.5.2.1 函数：smp_call_function_all_cpus</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc362">H.5.2.2 函数：do_ccupdate_local</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc363">H.5.3 排空每 CPU 缓存 (Draining a Per-CPU Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc364">H.5.3.1 函数：drain_cpu_caches</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc365">H.6 Slab 分配器初始化 (Slab Allocator Initialisation)</A>
+<UL CLASS="toc">
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc366">H.6.0.2 函数：kmem_cache_init</A>
+</LI></UL>
+</UL>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc367">H.7 与伙伴分配器对接 (Interfacing with the Buddy Allocator)</A>
+<UL CLASS="toc">
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand025_zh.html#htoc368">H.7.0.3 函数：kmem_getpages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand025_zh.html#htoc369">H.7.0.4 函数：kmem_freepages</A>
+</LI></UL>
+</UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc370">附录 I 高端内存管理 (High Memory Mangement)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026_zh.html#htoc371">I.1 映射高端内存页 (Mapping High Memory Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026_zh.html#htoc372">I.1.0.5 函数：kmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc373">I.1.0.6 函数：kmap_nonblock</A>
+</LI></UL>
+<A HREF="understand026_zh.html#htoc374">I.1.1 函数：__kmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc375">I.1.2 函数：kmap_high</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc376">I.1.3 函数：map_new_virtual</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc377">I.1.4 函数：flush_all_zero_pkmaps</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc378">I.2 原子地映射高端内存页 (Mapping High Memory Pages Atomically)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026_zh.html#htoc379">I.2.1 函数：kmap_atomic</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc380">I.3 解除页映射 (Unmapping Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026_zh.html#htoc381">I.3.1 函数：kunmap</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc382">I.3.2 函数：kunmap_high</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc383">I.4 原子地解除高端内存页映射 (Unmapping High Memory Pages Atomically)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026_zh.html#htoc384">I.4.1 函数：kunmap_atomic</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc385">I.5 弹回缓冲区 (Bounce Buffers)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026_zh.html#htoc386">I.5.1 创建弹回缓冲区 (Creating Bounce Buffers)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026_zh.html#htoc387">I.5.1.1 函数：create_bounce</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc388">I.5.1.2 函数：alloc_bounce_bh</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc389">I.5.1.3 函数：alloc_bounce_page</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc390">I.5.2 通过弹回缓冲区复制 (Copying via Bounce Buffers)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026_zh.html#htoc391">I.5.2.1 函数：bounce_end_io_write</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc392">I.5.2.2 函数：bounce_end_io_read</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc393">I.5.2.3 函数：copy_from_high_bh</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc394">I.5.2.4 函数：copy_to_high_bh_irq</A>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc395">I.5.2.5 函数：bounce_end_io</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand026_zh.html#htoc396">I.6 紧急内存池 (Emergency Pools)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand026_zh.html#htoc397">I.6.1 函数：init_emergency_pool</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc398">附录 J 页帧回收 (Page Frame Reclamation)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc399">J.1 页缓存操作 (Page Cache Operations)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc400">J.1.1 向页缓存添加页 (Adding Pages to the Page Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc401">J.1.1.1 函数：add_to_page_cache</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc402">J.1.1.2 函数：add_to_page_cache_unique</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc403">J.1.1.3 函数：__add_to_page_cache</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc404">J.1.1.4 函数：add_page_to_inode_queue</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc405">J.1.1.5 函数：add_page_to_hash_queue</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc406">J.1.2 从页缓存删除页 (Deleting Pages from the Page Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc407">J.1.2.1 函数：remove_inode_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc408">J.1.2.2 函数：__remove_inode_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc409">J.1.2.3 函数：remove_page_from_inode_queue</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc410">J.1.2.4 函数：remove_page_from_hash_queue</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc411">J.1.3 获取/释放页缓存页 (Acquiring/Releasing Page Cache Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc412">J.1.3.1 函数：page_cache_get</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc413">J.1.3.2 函数：page_cache_release</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc414">J.1.4 搜索页缓存 (Searching the Page Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc415">J.1.4.1 函数：find_get_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc416">J.1.4.2 函数：__find_get_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc417">J.1.4.3 函数：__find_page_nolock</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc418">J.1.4.4 函数：find_lock_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc419">J.1.4.5 函数：__find_lock_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc420">J.1.4.6 函数：__find_lock_page_helper</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc421">J.2 LRU 链表操作 (LRU List Operations)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc422">J.2.1 向 LRU 链表添加页 (Adding Pages to the LRU Lists)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc423">J.2.1.1 函数：lru_cache_add</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc424">J.2.1.2 函数：add_page_to_active_list</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc425">J.2.1.3 函数：add_page_to_inactive_list</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc426">J.2.2 从 LRU 链表删除页 (Deleting Pages from the LRU Lists)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc427">J.2.2.1 函数：lru_cache_del</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc428">J.2.2.2 函数：__lru_cache_del</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc429">J.2.2.3 函数：del_page_from_active_list</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc430">J.2.2.4 函数：del_page_from_inactive_list</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc431">J.2.3 激活页 (Activating Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc432">J.2.3.1 函数：mark_page_accessed</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc433">J.2.3.2 函数：activate_lock</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc434">J.2.3.3 函数：activate_page_nolock</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc435">J.3 填充 <TT>inactive_list</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc436">J.3.1 函数：refill_inactive</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc437">J.4 从 LRU 链表回收页 (Reclaiming Pages from the LRU Lists)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc438">J.4.1 函数：shrink_cache</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc439">J.5 收缩所有缓存 (Shrinking all caches)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc440">J.5.1 函数：shrink_caches</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc441">J.5.2 函数：try_to_free_pages</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc442">J.5.3 函数：try_to_free_pages_zone</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc443">J.6 换出进程页 (Swapping Out Process Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc444">J.6.1 函数：swap_out</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc445">J.6.2 函数：swap_out_mm</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc446">J.6.3 函数：swap_out_vma</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc447">J.6.4 函数：swap_out_pgd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc448">J.6.5 函数：swap_out_pmd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc449">J.6.6 函数：try_to_swap_out</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc450">J.7 页交换守护进程 (Page Swap Daemon)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc451">J.7.1 初始化 kswapd</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc452">J.7.1.1 函数：kswapd_init</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc453">J.7.2 kswapd 守护进程</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand027_zh.html#htoc454">J.7.2.1 函数：kswapd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc455">J.7.2.2 函数：kswapd_can_sleep</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc456">J.7.2.3 函数：kswapd_can_sleep_pgdat</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc457">J.7.2.4 函数：kswapd_balance</A>
+</LI><LI CLASS="li-toc"><A HREF="understand027_zh.html#htoc458">J.7.2.5 函数：kswapd_balance_pgdat</A>
+</LI></UL>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc459">附录 K 交换管理 (Swap Management)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc460">K.1 扫描空闲项 (Scanning for Free Entries)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc461">K.1.1 函数：get_swap_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc462">K.1.2 函数：scan_swap_map</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc463">K.2 交换缓存 (Swap Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc464">K.2.1 向交换缓存添加页 (Adding Pages to the Swap Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc465">K.2.1.1 函数：add_to_swap_cache</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc466">K.2.1.2 函数：swap_duplicate</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc467">K.2.2 从交换缓存删除页 (Deleting Pages from the Swap Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc468">K.2.2.1 函数：swap_free</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc469">K.2.2.2 函数：swap_entry_free</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc470">K.2.3 获取/释放交换缓存页 (Acquiring/Releasing Swap Cache Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc471">K.2.3.1 函数：swap_info_get</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc472">K.2.3.2 函数：swap_info_put</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc473">K.2.4 搜索交换缓存 (Searching the Swap Cache)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc474">K.2.4.1 函数：lookup_swap_cache</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc475">K.3 交换区 IO (Swap Area IO)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc476">K.3.1 读取后备存储 (Reading Backing Storage)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc477">K.3.1.1 函数：read_swap_cache_async</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc478">K.3.2 写入后备存储 (Writing Backing Storage)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc479">K.3.2.1 函数：swap_writepage</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc480">K.3.2.2 函数：remove_exclusive_swap_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc481">K.3.2.3 函数：free_swap_and_cache</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc482">K.3.3 块 IO (Block IO)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc483">K.3.3.1 函数：rw_swap_page</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc484">K.3.3.2 函数：rw_swap_page_base</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc485">K.3.3.3 函数：get_swaphandle_info</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc486">K.4 激活交换区 (Activating a Swap Area)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc487">K.4.1 函数：sys_swapon</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc488">K.4.2 函数：swap_setup</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc489">K.5 停用交换区 (Deactivating a Swap Area)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand028_zh.html#htoc490">K.5.1 函数：sys_swapoff</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc491">K.5.2 函数：try_to_unuse</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc492">K.5.3 函数：unuse_process</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc493">K.5.4 函数：unuse_vma</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc494">K.5.5 函数：unuse_pgd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc495">K.5.6 函数：unuse_pmd</A>
+</LI><LI CLASS="li-toc"><A HREF="understand028_zh.html#htoc496">K.5.7 函数：unuse_pte</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc497">附录 L 共享内存虚拟文件系统 (Shared Memory Virtual Filesystem)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc498">L.1 初始化 <TT>shmfs</TT></A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc499">L.1.1 函数：init_tmpfs</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc500">L.1.2 函数：shmem_read_super</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc501">L.1.3 函数：shmem_set_size</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc502">L.2 在 <TT>tmpfs</TT> 中创建文件 (Creating Files in tmpfs)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc503">L.2.1 函数：shmem_create</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc504">L.2.2 函数：shmem_mknod</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc505">L.2.3 函数：shmem_get_inode</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc506">L.3 <TT>tmpfs</TT> 中的文件操作 (File Operations in tmpfs)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc507">L.3.1 内存映射 (Memory Mapping)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc508">L.3.1.1 函数：shmem_mmap</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc509">L.3.2 读取文件 (Reading Files)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc510">L.3.2.1 函数：shmem_file_read</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc511">L.3.2.2 函数：do_shmem_file_read</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc512">L.3.2.3 函数：file_read_actor</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc513">L.3.3 写入 (Writing)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc514">L.3.3.1 函数：shmem_file_write</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc515">L.3.4 符号链接 (Symbolic Linking)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc516">L.3.4.1 函数：shmem_symlink</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc517">L.3.4.2 函数：shmem_readlink_inline</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc518">L.3.4.3 函数：shmem_follow_link_inline</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc519">L.3.4.4 函数：shmem_readlink</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc520">L.3.5 同步 (Synchronising)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc521">L.3.5.1 函数：shmem_sync_file</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc522">L.4 <TT>tmpfs</TT> 中的 Inode 操作 (Inode Operations in tmpfs)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc523">L.4.1 截断 (Truncating)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc524">L.4.1.1 函数：shmem_truncate</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc525">L.4.1.2 函数：shmem_truncate_indirect</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc526">L.4.1.3 函数：shmem_truncate_direct</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc527">L.4.1.4 函数：shmem_free_swp</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc528">L.4.2 链接 (Linking)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc529">L.4.2.1 函数：shmem_link</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc530">L.4.3 取消链接 (Unlinking)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc531">L.4.3.1 函数：shmem_unlink</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc532">L.4.4 创建目录 (Making Directories)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc533">L.4.4.1 函数：shmem_mkdir</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc534">L.4.5 删除目录 (Removing Directories)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc535">L.4.5.1 函数：shmem_rmdir</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc536">L.4.5.2 函数：shmem_empty</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc537">L.4.5.3 函数：shmem_positive</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc538">L.5 虚拟文件中的缺页中断 (Page Faulting within a Virtual File)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc539">L.5.1 缺页中断期间读取页 (Reading Pages during Page Fault)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc540">L.5.1.1 函数：shmem_nopage</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc541">L.5.1.2 函数：shmem_getpage</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc542">L.5.2 定位被换出的页 (Locating Swapped Pages)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc543">L.5.2.1 函数：shmem_alloc_entry</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc544">L.5.2.2 函数：shmem_swp_entry</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc545">L.6 与交换空间的交互 (Swap Space Interaction)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc546">L.6.1 函数：shmem_writepage</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc547">L.6.2 函数：shmem_unuse</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc548">L.6.3 函数：shmem_unuse_inode</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc549">L.6.4 函数：shmem_find_swp</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc550">L.7 设置共享区域 (Setting up Shared Regions)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc551">L.7.1 函数：shmem_zero_setup</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc552">L.7.2 函数：shmem_file_setup</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc553">L.8 System V IPC</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc554">L.8.1 创建 SYSV 共享区域 (Creating a SYSV shared region)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc555">L.8.1.1 函数：sys_shmget</A>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc556">L.8.1.2 函数：newseg</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand029_zh.html#htoc557">L.8.2 附加 SYSV 共享区域 (Attaching a SYSV Shared Region)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand029_zh.html#htoc558">L.8.2.1 函数：sys_shmat</A>
+</LI></UL>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand030_zh.html#htoc559">附录 M 内存不足管理 (Out of Memory Management)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand030_zh.html#htoc560">M.1 确定可用内存 (Determining Available Memory)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand030_zh.html#htoc561">M.1.1 函数：vm_enough_memory</A>
+</LI></UL>
+</LI><LI CLASS="li-toc"><A HREF="understand030_zh.html#htoc562">M.2 检测 OOM 与从 OOM 恢复 (Detecting and Recovering from OOM)</A>
+<UL CLASS="toc"><LI CLASS="li-toc">
+<A HREF="understand030_zh.html#htoc563">M.2.1 函数：out_of_memory</A>
+</LI><LI CLASS="li-toc"><A HREF="understand030_zh.html#htoc564">M.2.2 函数：oom_kill</A>
+</LI><LI CLASS="li-toc"><A HREF="understand030_zh.html#htoc565">M.2.3 函数：select_bad_process</A>
+</LI><LI CLASS="li-toc"><A HREF="understand030_zh.html#htoc566">M.2.4 函数：badness</A>
+</LI><LI CLASS="li-toc"><A HREF="understand030_zh.html#htoc567">M.2.5 函数：oom_kill_task</A>
+</LI></UL>
+</LI></UL>
+</LI><LI CLASS="li-toc">参考文献 (Reference)
+	</LI></UL>
+<P><HR>
+[ <A HREF="understand001_zh.html">&laquo; 上一节</A> ]
+[ <A HREF="index.html">&uarr; 目录</A> ]
+[ <A HREF="understand003_zh.html">下一节 &raquo;</A> ]
+</P></BODY>
+</HTML>

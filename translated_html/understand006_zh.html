@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第三章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand005_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="understand007_zh.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1>第三章　页表管理</h1>
+  <div class="meta">原文版本：Chapter 3 — Page Table Management</div>
+
+  <p>与其它操作系统相比，Linux 划分机器无关层与机器相关层的方式较为特别 [CP99]。其它操作系统通常使用一些专门的对象来管理底层物理页，例如 BSD 中的 <tt>pmap</tt> 对象。Linux 则不同——即便底层架构并不支持，它也在架构无关代码中保留<em>三级页表</em>的概念。这在概念上易于理解，但同时意味着不同类型页之间的区分非常模糊，页面类型往往不靠其所属对象来识别，而是靠其标志位或所在的链表来区分。</p>
+
+  <p>对于使用与三级页表不同方式管理其<em>内存管理单元（Memory Management Unit，MMU）</em>的架构，需要模拟出三级页表。例如，在未启用 PAE 的 x86 上只有两级页表，<em>页中间目录（Page Middle Directory，PMD）</em>被定义为大小为 1，并直接"折叠"回 <em>页全局目录（Page Global Directory，PGD）</em>，编译期就会被优化掉。不幸的是，对于不会自动管理其缓存或<em>地址翻译后备缓冲器（Translation Lookaside Buffer，TLB）</em>的架构，需要在代码中显式留出与机器相关的钩子，以便在必要时刷新 TLB 和 CPU 缓存——即便在某些架构（如 x86）上这些钩子是空操作。相关内容将在 3.8 节进一步讨论。</p>
+
+  <p>本章将首先介绍页表的组织方式，以及描述三级页表的类型，然后讲解如何将虚拟地址拆分为各级偏移以便遍历页表。随后讨论最底层的表项<em>页表项（Page Table Entry，PTE）</em>及硬件使用的位。之后介绍用于遍历页表、设置和检查属性的宏，接着讨论页表如何填充以及如何为页表分配和释放页。然后讨论初始化阶段：在系统引导过程中如何初始化页表。最后介绍 TLB 与 CPU 缓存的使用。</p>
+
+  <h2 class="section">3.1　描述页目录</h2>
+  <p>每个进程通过 <tt>mm_struct&rarr;pgd</tt> 拥有一个指向自己的<em>页全局目录（PGD）</em>的指针。PGD 是一个物理页帧，包含一组架构相关的 <tt>pgd_t</tt> 类型条目，<tt>pgd_t</tt> 定义在 <tt>&lt;asm/page.h&gt;</tt> 中。各架构加载页表的方式不同。在 x86 上，加载进程页表的方式是把 <tt>mm_struct&rarr;pgd</tt> 复制到 <tt>cr3</tt> 寄存器，这一操作的副作用是刷新 TLB。事实上，架构相关代码中 <tt>__flush_tlb()</tt> 就是这样实现的。</p>
+
+  <p>PGD 中每个有效条目指向一个包含 <tt>pmd_t</tt> 类型 PMD 条目数组的页帧；每个 PMD 条目又指向包含 <tt>pte_t</tt> 类型 PTE 的页帧；PTE 最终指向保存实际用户数据的页帧。如果页被换出到后备存储，PTE 中保存的是 swap 表项，缺页时 <tt>do_swap_page()</tt> 使用它找到保存页数据的 swap 表项。页表布局如图 3.1 所示。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html006.png" alt="图 3.1">
+    <div class="caption">图 3.1：页表布局</div>
+  </div>
+
+  <p>任意一个线性地址都可以拆分为三个页表层级中各自的偏移和页内偏移。为便于拆分，每个页表层级都提供一组三个宏：<tt>SHIFT</tt>、<tt>SIZE</tt> 和 <tt>MASK</tt>。<tt>SHIFT</tt> 指明每个页表级别所映射的位数，见图 3.2。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html007.png" alt="图 3.2">
+    <div class="caption">图 3.2：线性地址位长宏</div>
+  </div>
+
+  <p><tt>MASK</tt> 可与线性地址做按位与以屏蔽高位，经常用于判断地址是否在某级页表上对齐。<tt>SIZE</tt> 表明该级每个表项所映射的字节数。<tt>SIZE</tt> 与 <tt>MASK</tt> 的关系如图 3.3 所示。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html008.png" alt="图 3.3">
+    <div class="caption">图 3.3：线性地址 Size 与 Mask 宏</div>
+  </div>
+
+  <p>计算这三组宏时，只有 <tt>SHIFT</tt> 重要，其它两个都由它推算。例如，x86 上页一级的三组宏为：</p>
+  <pre>  5 #define PAGE_SHIFT      12
+  6 #define PAGE_SIZE       (1UL &lt;&lt; PAGE_SHIFT)
+  7 #define PAGE_MASK       (~(PAGE_SIZE-1))</pre>
+
+  <p><tt>PAGE_SHIFT</tt> 是线性地址中页内偏移部分的位数，x86 上为 12 位。页大小就是 2<sup><i>PAGE_SHIFT</i></sup>。最后掩码是 <tt>PAGE_SIZE-1</tt> 所占位的取反。若要把地址向上对齐到页边界，使用 <tt>PAGE_ALIGN()</tt> 宏：它先把地址加上 <tt>PAGE_SIZE-1</tt>，再与 <tt>PAGE_MASK</tt> 做按位与以清零页内偏移位。</p>
+
+  <p><tt>PMD_SHIFT</tt> 是线性地址中由第二级页表映射的位数。<tt>PMD_SIZE</tt> 与 <tt>PMD_MASK</tt> 的计算方式与上面类似。</p>
+
+  <p><tt>PGDIR_SHIFT</tt> 是顶级（第一级）页表所映射的位数，<tt>PGDIR_SIZE</tt> 与 <tt>PGDIR_MASK</tt> 的计算方式同上。</p>
+
+  <p>最后三个重要的宏是 <tt>PTRS_PER_x</tt>，决定页表每一级的表项数：<tt>PTRS_PER_PGD</tt> 是 PGD 中指针数（无 PAE 的 x86 上为 1024）；<tt>PTRS_PER_PMD</tt> 是 PMD 中指针数（无 PAE 的 x86 上为 1）；<tt>PTRS_PER_PTE</tt> 是最低一级表项数（x86 上为 1024）。</p>
+
+  <h2 class="section">3.2　描述页表项</h2>
+  <p>如前所述，PTE、PMD 和 PGD 分别由结构体 <tt>pte_t</tt>、<tt>pmd_t</tt> 和 <tt>pgd_t</tt> 描述。虽然这些类型通常就是无符号整数，但把它们定义为结构体有两个原因：一是类型保护，避免被误用；二是为了支持像 x86 PAE 这种需要额外 4 位以寻址超过 4 GiB 内存的特性。另外还定义了 <tt>pgprot_t</tt> 用于保存保护位，通常存放在页表项的低位。</p>
+
+  <p>在 <tt>asm/page.h</tt> 中提供 4 个类型转换宏，用于从上述类型中取出相应部分：<tt>pte_val()</tt>、<tt>pmd_val()</tt>、<tt>pgd_val()</tt> 和 <tt>pgprot_val()</tt>。反向转换则有 <tt>__pte()</tt>、<tt>__pmd()</tt>、<tt>__pgd()</tt> 和 <tt>__pgprot()</tt>。</p>
+
+  <p>保护位具体放在何处依架构而定。这里以未启用 PAE 的 x86 为例说明。此时 <tt>pte_t</tt> 就是一个结构体中的 32 位整数。每个 <tt>pte_t</tt> 指向一个页帧的地址，且保证页对齐，因此低 <tt>PAGE_SHIFT</tt>（12）位可用作页表项的状态位。表 3.1 列出了部分保护与状态位，具体位的含义因架构而异。</p>
+
+  <h4>表 3.1：页表项的保护和状态位</h4>
+  <table>
+    <tr><th>位</th><th>功能</th></tr>
+    <tr><td><tt>_PAGE_PRESENT</tt></td><td>页驻留在内存中，未被换出</td></tr>
+    <tr><td><tt>_PAGE_PROTNONE</tt></td><td>页驻留但不可访问</td></tr>
+    <tr><td><tt>_PAGE_RW</tt></td><td>置位表示页可写</td></tr>
+    <tr><td><tt>_PAGE_USER</tt></td><td>置位表示用户空间可访问</td></tr>
+    <tr><td><tt>_PAGE_DIRTY</tt></td><td>置位表示页被写过</td></tr>
+    <tr><td><tt>_PAGE_ACCESSED</tt></td><td>置位表示页被访问过</td></tr>
+  </table>
+
+  <p>这些位含义都很直观，仅 <tt>_PAGE_PROTNONE</tt> 需进一步说明。在 Pentium III 及以上 x86 上，这一位被称为<em>页属性表（Page Attribute Table，PAT）</em>位；更早的架构如 Pentium II 上这一位是保留位。PAT 位用于指示 PTE 引用的页大小。而在 PGD 表项中，同一位被称为<em>页大小异常（Page Size Exception，PSE）</em>位，显然这两位是配合使用的。</p>
+
+  <p>由于 Linux 不在用户页中使用 PSE 位，PTE 中的 PAT 位就可挪作他用。当某段内存需要驻留但禁止用户进程访问时（例如通过 <tt>mprotect()</tt> 配合 <tt>PROT_NONE</tt> 保护），就清除 <tt>_PAGE_PRESENT</tt> 并置位 <tt>_PAGE_PROTNONE</tt>。<tt>pte_present()</tt> 宏会检查这两位之一，因此内核仍然知道 PTE 是"存在"的，只是<em>用户空间</em>不可访问——这一点细微但重要。由于硬件位 <tt>_PAGE_PRESENT</tt> 被清除，访问该页会产生缺页异常，从而让 Linux 实现保护；同时内核仍然清楚该页驻留在内存中，在换出或进程退出时能正确处理。</p>
+
+  <h2 class="section">3.3　使用页表项</h2>
+  <p><tt>&lt;asm/pgtable.h&gt;</tt> 中定义了用于遍历和检查页表项的宏。对于页目录的遍历，提供了三个宏将线性地址拆解：<tt>pgd_offset()</tt> 接受一个地址和进程的 <tt>mm_struct</tt>，返回覆盖该地址的 PGD 表项；<tt>pmd_offset()</tt> 接受 PGD 表项和地址，返回相应的 PMD；<tt>pte_offset()</tt> 接受 PMD 和地址，返回相应的 PTE。线性地址其余部分就是页内偏移。它们之间的关系见图 3.1。</p>
+
+  <p>第二组宏判断页表项是否存在或可用：</p>
+  <ul>
+    <li><tt>pte_none()</tt>、<tt>pmd_none()</tt> 和 <tt>pgd_none()</tt>：对应表项不存在时返回 1；</li>
+    <li><tt>pte_present()</tt>、<tt>pmd_present()</tt> 和 <tt>pgd_present()</tt>：对应表项的 PRESENT 位置位时返回 1；</li>
+    <li><tt>pte_clear()</tt>、<tt>pmd_clear()</tt> 和 <tt>pgd_clear()</tt>：清除相应表项；</li>
+    <li><tt>pmd_bad()</tt> 和 <tt>pgd_bad()</tt>：用于将表项作为输入传给可能修改它的函数前做检查。返回 1 的条件因架构而异，但对那些实际实现该宏的架构来说，最关键的检查是确保该表项被标记为 present 和 accessed。</li>
+  </ul>
+
+  <p>VM 中很多代码会"走"页表，识别这类代码很重要。<tt>mm/memory.c</tt> 中的 <tt>follow_page()</tt> 是一个非常简单的例子。下面是其中与走页表相关的片段（无关部分省略）：</p>
+  <pre>407         pgd_t *pgd;
+408         pmd_t *pmd;
+409         pte_t *ptep, pte;
+410 
+411         pgd = pgd_offset(mm, address);
+412         if (pgd_none(*pgd) || pgd_bad(*pgd))
+413                 goto out;
+414 
+415         pmd = pmd_offset(pgd, address);
+416         if (pmd_none(*pmd) || pmd_bad(*pmd))
+417                 goto out;
+418 
+419         ptep = pte_offset(pmd, address);
+420         if (!ptep)
+421                 goto out;
+422 
+423         pte = *ptep;</pre>
+  <p>它就是用三个 offset 宏遍历页表，并用 <tt>_none()</tt> 与 <tt>_bad()</tt> 宏确保看到的页表项合法。</p>
+
+  <p>第三组宏用于检查和设置表项的权限。权限决定用户进程对该页的访问权——例如，用户进程永远无法读取内核页表项。</p>
+  <ul>
+    <li>读权限：<tt>pte_read()</tt> 检查，<tt>pte_mkread()</tt> 置位，<tt>pte_rdprotect()</tt> 清除；</li>
+    <li>写权限：<tt>pte_write()</tt> 检查，<tt>pte_mkwrite()</tt> 置位，<tt>pte_wrprotect()</tt> 清除；</li>
+    <li>执行权限：<tt>pte_exec()</tt> 检查，<tt>pte_mkexec()</tt> 置位，<tt>pte_exprotect()</tt> 清除。注意在 x86 上无法对页设置执行权限，因此这三个宏的行为与读相关宏相同；</li>
+    <li>可以用 <tt>pte_modify()</tt> 整体修改权限，但其使用几乎绝无仅有，仅在 <tt>mm/mprotect.c</tt> 中的 <tt>change_pte_range()</tt> 里出现过。</li>
+  </ul>
+
+  <p>第四组宏检查和设置表项状态。Linux 中只关心两位：dirty 和 accessed。检查使用 <tt>pte_dirty()</tt> 和 <tt>pte_young()</tt>，置位使用 <tt>pte_mkdirty()</tt> 和 <tt>pte_mkyoung()</tt>，清除使用 <tt>pte_mkclean()</tt> 和 <tt>pte_old()</tt>。</p>
+
+  <h2 class="section">3.4　转换与设置页表项</h2>
+  <p>这一组函数和宏处理地址、页与 PTE 之间的映射以及单个表项的设置。</p>
+
+  <p>宏 <tt>mk_pte()</tt> 接受 <tt>struct page</tt> 和保护位，组合得到一个可插入页表的 <tt>pte_t</tt>。类似的宏 <tt>mk_pte_phys()</tt> 接受物理页地址作为参数。</p>
+
+  <p>宏 <tt>pte_page()</tt> 返回 PTE 对应的 <tt>struct page</tt>；<tt>pmd_page()</tt> 返回包含一组 PTE 的 <tt>struct page</tt>。</p>
+
+  <p>宏 <tt>set_pte()</tt> 接受 <tt>mk_pte()</tt> 返回的那种 <tt>pte_t</tt>，将其放入进程页表；<tt>pte_clear()</tt> 是其逆操作。还有 <tt>ptep_get_and_clear()</tt>，它从进程页表中清除一项并返回 <tt>pte_t</tt>。当需要修改 PTE 保护位或 <tt>struct page</tt> 本身时它非常有用。</p>
+
+  <h2 class="section">3.5　分配与释放页表</h2>
+  <p>这组函数处理页表的分配与释放。页表本身就是包含表项数组的物理页，而物理页的分配与释放成本相对较高——分配过程中要禁中断且耗时较多。然而页表在三级中的任意一级都需要被频繁地分配和释放，因此操作必须尽可能快。</p>
+
+  <p>所以页表使用的页被缓存到一系列称为<em>快表（quicklists）</em>的链表中。各架构实现略有差异但原理一致。例如并非所有架构都缓存 PGD，因为 PGD 的分配与释放只在进程创建与退出时发生，相比这两个本来就昂贵的操作，多分配一页可忽略不计。</p>
+
+  <p>PGD、PMD 和 PTE 各有一对分配与释放函数，分别是 <tt>pgd_alloc()</tt>、<tt>pmd_alloc()</tt>、<tt>pte_alloc()</tt>，以及 <tt>pgd_free()</tt>、<tt>pmd_free()</tt>、<tt>pte_free()</tt>。</p>
+
+  <p>大体而言，这三类缓存分别叫 <tt>pgd_quicklist</tt>、<tt>pmd_quicklist</tt> 和 <tt>pte_quicklist</tt>。不同架构实现方式不同，一种典型做法是 LIFO：通常页表项指向其它页表或数据页；而被缓存时，链表首项用作指向下一个空闲页表的指针。分配时从链表弹出，释放时压入链表，并维护一个使用计数。</p>
+
+  <p>从 <tt>pgd_quicklist</tt> 快速分配的函数没有对外暴露，但 <tt>get_pgd_fast()</tt> 是常见的命名。PMD 和 PTE 的缓存分配函数则公开声明为 <tt>pmd_alloc_one_fast()</tt> 与 <tt>pte_alloc_one_fast()</tt>。</p>
+
+  <p>缓存中无可用页时，会走物理页分配器（见第 6 章），三级页表对应的函数分别是 <tt>get_pgd_slow()</tt>、<tt>pmd_alloc_one()</tt> 与 <tt>pte_alloc_one()</tt>。</p>
+
+  <p>缓存中可能积累大量页，因此还有修剪机制。缓存大小有高低两条水位，每次增长或缩减都会更新计数。<tt>check_pgt_cache()</tt> 在两个地方被调用以检查水位：当达到高水位时，从缓存中释放页直至降回低水位。它在 <tt>clear_page_tables()</tt> 之后（此时可能涉及大量页表）以及系统空闲任务中被调用。</p>
+
+  <h2 class="section">3.6　内核页表</h2>
+  <p>系统刚启动时分页未启用，因为页表不会自动初始化。各架构实现不同，这里只讨论 x86。页表初始化分为两阶段：自举阶段（bootstrap）只建立覆盖 8 MiB 的页表以便启用分页单元；第二阶段初始化其余页表。</p>
+
+  <h3>3.6.1　自举</h3>
+  <p>位于 <tt>arch/i386/kernel/head.S</tt> 的汇编函数 <tt>startup_32()</tt> 负责开启分页单元。虽然 <tt>vmlinuz</tt> 中的普通内核代码以 <tt>PAGE_OFFSET + 1MiB</tt> 为基址编译，但内核实际加载到物理 1 MiB（0x00100000）。前 1 MiB 中部分被设备用于与 BIOS 通信，所以跳过。此文件中的自举代码把 1 MiB 当作基址，方法是在分页启用之前从所有地址中减去 <tt>__PAGE_OFFSET</tt>。因此在分页启用之前，需要先建立一个映射，把 8 MiB 物理内存映射到虚拟地址 <tt>PAGE_OFFSET</tt>。</p>
+
+  <p>初始化以编译期静态定义一个数组 <tt>swapper_pg_dir</tt> 开始，链接器将其放置在 0x00101000。然后为 <tt>pg0</tt> 和 <tt>pg1</tt> 两个页建立页表项。若 CPU 支持<em>页大小扩展（PSE）</em>位则会置位，使转换的页大小为 4 MiB 而非通常的 4 KiB。<tt>pg0</tt> 和 <tt>pg1</tt> 的第一组指针覆盖 1&ndash;9 MiB；第二组指针位于 <tt>PAGE_OFFSET+1MiB</tt>。这样在启用分页后，无论使用物理地址还是虚拟地址，内核映像本身都能正确映射。其余内核页表由 <tt>paging_init()</tt> 初始化。</p>
+
+  <p>建立映射后，置位 <tt>cr0</tt> 寄存器中的相应位以启用分页单元，并立即跳转以确保<em>指令指针（EIP 寄存器）</em>正确。</p>
+
+  <h3>3.6.2　最终化</h3>
+  <p>负责完成页表初始化的函数是 <tt>paging_init()</tt>，其在 x86 上的调用图见图 3.4。</p>
+
+  <div class="figure">
+    <img src="../original_html/figures/understand-html009.png" alt="图 3.4">
+    <div class="caption">图 3.4：函数调用图：<tt>paging_init()</tt></div>
+  </div>
+
+  <p>该函数首先调用 <tt>pagetable_init()</tt>，初始化引用 <tt>ZONE_DMA</tt> 和 <tt>ZONE_NORMAL</tt> 中所有物理内存所需的页表。要注意 <tt>ZONE_HIGHMEM</tt> 中的高端内存不能直接引用，只能临时映射。对内核使用的每个 <tt>pgd_t</tt>，启动内存分配器（见第 5 章）会为 PMD 分配一页，若 CPU 支持则置 PSE 位，使用 4 MiB 的 TLB 表项；否则为每个 <tt>pmd_t</tt> 分配一页用于 PTE。如果 CPU 支持 PGE，也会置位，使页表项成为全局可见、对所有进程可见。</p>
+
+  <p>接着，<tt>pagetable_init()</tt> 调用 <tt>fixrange_init()</tt>，在虚拟地址空间末尾、从 <tt>FIXADDR_START</tt> 开始的位置建立固定地址空间映射。这些映射用于诸如本地 APIC 以及 <tt>kmap_atomic()</tt> 所需的 <tt>FIX_KMAP_BEGIN</tt> 到 <tt>FIX_KMAP_END</tt> 之间的原子 kmap。最后再次调用 <tt>fixrange_init()</tt> 来初始化 <tt>kmap()</tt> 普通高端内存映射所需的页表项。</p>
+
+  <p><tt>pagetable_init()</tt> 返回后，内核空间的页表已全部初始化完毕，便将静态 PGD（<tt>swapper_pg_dir</tt>）加载到 CR3 寄存器，使分页单元开始使用该静态表。</p>
+
+  <p><tt>paging_init()</tt> 的下一项任务是调用 <tt>kmap_init()</tt>，把每个 PTE 初始化为 <tt>PAGE_KERNEL</tt> 保护标志。最后调用 <tt>zone_sizes_init()</tt> 初始化所有 zone 结构。</p>
+
+  <h2 class="section">3.7　将地址映射到 <tt>struct page</tt></h2>
+  <p>Linux 需要一种快速的方式把虚拟地址转为物理地址，以及把 <tt>struct page</tt> 映射到其物理地址。为此 Linux 利用全局 <tt>mem_map</tt> 数组——它包含系统所有物理页的 <tt>struct page</tt> 指针——并知道它在虚拟与物理内存中的位置。各架构机制相似，下面仍以 x86 为例。本节先讲物理地址到内核虚拟地址的映射，再讨论对 <tt>mem_map</tt> 数组的意义。</p>
+
+  <h3>3.7.1　物理到内核虚拟地址的映射</h3>
+  <p>如 3.6 节所述，Linux 在 x86 上把物理地址 0 直接映射到虚拟地址 <tt>PAGE_OFFSET</tt>（3 GiB）。这样任意虚拟地址都可以通过减去 <tt>PAGE_OFFSET</tt> 得到物理地址，这正是 <tt>virt_to_phys()</tt> 函数与 <tt>__pa()</tt> 宏所做的：</p>
+  <pre>/* 来自 &lt;asm-i386/page.h&gt; */
+132 #define __pa(x)                 ((unsigned long)(x)-PAGE_OFFSET)
+
+/* 来自 &lt;asm-i386/io.h&gt; */
+ 76 static inline unsigned long virt_to_phys(volatile void * address)
+ 77 {
+ 78         return __pa(address);
+ 79 }</pre>
+  <p>反过来只需加上 <tt>PAGE_OFFSET</tt>，由 <tt>phys_to_virt()</tt> 与 <tt>__va()</tt> 完成。接下来看它如何帮助将 <tt>struct page</tt> 映射到物理地址。</p>
+
+  <h3>3.7.2　将 <tt>struct page</tt> 映射到物理地址</h3>
+  <p>如 3.6.1 节所述，内核映像加载在物理 1 MiB 处，即虚拟 <tt>PAGE_OFFSET + 0x00100000</tt>，并保留约 8 MiB（两个 PGD 可寻址）的虚拟区。这本会意味着可用的首个内存位于 <tt>0xC0800000</tt>，但实际上 Linux 试图为 <tt>ZONE_DMA</tt> 保留前 16 MiB，因此内核分配实际使用的第一个虚拟地址是 <tt>0xC1000000</tt>，全局 <tt>mem_map</tt> 通常就在这里。<tt>ZONE_DMA</tt> 仍会使用，但仅在必要时。</p>
+
+  <p>把物理地址当作 <tt>mem_map</tt> 数组的索引即可得到 <tt>struct page</tt>：将物理地址右移 <tt>PAGE_SHIFT</tt> 位得到 PFN，也就是 <tt>mem_map</tt> 的下标。这正是 <tt>virt_to_page()</tt> 宏（声明于 <tt>&lt;asm-i386/page.h&gt;</tt>）所做的：</p>
+  <pre>#define virt_to_page(kaddr) (mem_map + (__pa(kaddr) &gt;&gt; PAGE_SHIFT))</pre>
+  <p>它先用 <tt>__pa()</tt> 把虚拟地址 <tt>kaddr</tt> 转为物理地址，再右移 <tt>PAGE_SHIFT</tt> 位转为数组下标，加上 <tt>mem_map</tt> 即可。没有专门把 <tt>struct page</tt> 转回物理地址的宏，但此时其推导已显而易见。</p>
+
+  <h2 class="section">3.8　地址翻译后备缓冲器（TLB）</h2>
+  <p>最初，CPU 在把虚拟地址映射为物理地址时，必须遍历整张页目录搜索所需的 PTE。这通常意味着每条访问内存的指令都要进行若干次额外的内存引用以走页表 [Tan01]。为减少这一开销，架构利用程序通常表现出的<em>引用局部性</em>，即大量内存引用集中在少量页上。它们提供一种<em>地址翻译后备缓冲器（TLB）</em>——一种小型相联存储——缓存虚拟到物理页的翻译结果。</p>
+
+  <p>Linux 假定大多数架构支持某种 TLB，尽管架构无关代码并不关心其具体工作机制。架构相关钩子分散于 VM 代码中，在已知带 TLB 的硬件需要执行 TLB 相关操作的位置插入。例如，缺页处理完成、页表更新后，CPU 可能需要更新该虚拟地址映射的 TLB。</p>
+
+  <p>并非所有架构都需要这些操作，但因部分架构需要，钩子必须存在。若某架构不需要某项 TLB 操作，对应函数就是空操作，编译期会被优化掉。</p>
+
+  <p>TLB API 钩子大多声明在 <tt>&lt;asm/pgtable.h&gt;</tt>，列于表 3.2 与表 3.3，内核源代码 <tt>Documentation/cachetlb.txt</tt> [Mil00] 中有详细说明。原则上可以只用一个 TLB 刷新函数，但因为 TLB 刷新和填充都<em>非常</em>昂贵，应尽量避免不必要的刷新。例如上下文切换时，Linux 通过<em>惰性 TLB 刷新（Lazy TLB Flushing）</em>避免重新装载页表，相关内容详见 4.3 节。</p>
+
+  <h4>表 3.2：TLB 刷新 API</h4>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><tt>void flush_tlb_all(void)</tt></td><td>刷新系统所有 CPU 上的整个 TLB，是开销最大的 TLB 刷新操作。完成后所有页表修改对全局可见。当全局性质的内核页表被修改后需要调用，例如 <tt>vfree()</tt>（见第 7 章）完成后或 PKMap 被刷新后（见第 9 章）。</td></tr>
+    <tr><td><tt>void flush_tlb_mm(struct mm_struct *mm)</tt></td><td>刷新与给定 mm 上下文用户空间部分（即 <tt>PAGE_OFFSET</tt> 以下）相关的所有 TLB 项。某些架构（如 MIPS）需要在所有 CPU 上执行，但通常只在本地 CPU 上。仅在影响整个地址空间的操作之后调用，例如 <tt>dup_mmap()</tt>（fork 时复制地址映射）之后，或 <tt>exit_mmap()</tt>（删除所有内存映射）之后。</td></tr>
+    <tr><td><tt>void flush_tlb_range(struct mm_struct *mm, unsigned long start, unsigned long end)</tt></td><td>顾名思义，刷新 mm 上下文中给定用户空间范围内的所有项。在新区域被移动或修改后调用，例如 <tt>mremap()</tt> 移动区域或 <tt>mprotect()</tt> 修改权限时。<tt>munmap()</tt> 通过 <tt>tlb_finish_mmu()</tt> 间接使用它来高效刷新范围。该 API 为可快速移除一段 TLB 项的架构提供，避免逐页调用 <tt>flush_tlb_page()</tt>。</td></tr>
+  </table>
+
+  <h4>表 3.3：TLB 刷新 API（续）</h4>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><tt>void flush_tlb_page(struct vm_area_struct *vma, unsigned long addr)</tt></td><td>从 TLB 中刷新单个页。最常见的两种用法是页面缺页换入后或换出后刷新 TLB。</td></tr>
+    <tr><td><tt>void flush_tlb_pgtables(struct mm_struct *mm, unsigned long start, unsigned long end)</tt></td><td>当页表被销毁释放时调用。某些平台缓存最低一级页表，即实际保存表项的页帧，在删除这些页时需要刷新。区域被解除映射、页目录项被回收时调用。</td></tr>
+    <tr><td><tt>void update_mmu_cache(struct vm_area_struct *vma, unsigned long addr, pte_t pte)</tt></td><td>仅在缺页处理完成后调用。它告诉架构相关代码：现在地址 <tt>addr</tt> 对应一个新的翻译 <tt>pte</tt>。如何使用此信息因架构而异，例如 Sparc64 用它决定本 CPU 是否需要刷新其数据缓存或向远程 CPU 发送 IPI。</td></tr>
+  </table>
+
+  <h2 class="section">3.9　一级 CPU 缓存管理</h2>
+  <p>Linux 对 CPU Cache 的管理方式与 TLB 类似，本节介绍其使用与管理。CPU Cache 与 TLB 一样利用程序的引用局部性 [Sea00][CS98]：CPU 不会每次访问都从主存取数据，而是在 CPU Cache 中保存少量数据。Cache 通常分两级：L1 和 L2。L2 比 L1 大但慢，Linux 只关心 L1。</p>
+
+  <p>CPU Cache 以<em>行（line）</em>为单位组织，每行通常 32 字节，按其大小对齐——即 32 字节的 cache line 在 32 字节边界对齐。Linux 中 line 大小由 <tt>L1_CACHE_BYTES</tt> 定义，依架构而定。</p>
+
+  <p>地址到 cache line 的映射方式因架构而异，但大致分三种：<em>直接映射（direct mapping）</em>、<em>全相联映射（associative mapping）</em>和<em>组相联映射（set associative mapping）</em>。直接映射最简单——每块内存只能对应唯一一个 cache line。全相联映射允许任意内存块映射到任意 line。组相联映射是两者的混合——任意内存块只能映射到某个子集中的任意 line。不管哪种方式，邻近且按 cache 大小对齐的地址通常使用不同的 line。Linux 利用这一点最大化 cache 使用：</p>
+  <ul>
+    <li>频繁访问的结构体字段放在结构体起始位置，提高用一行就能容纳常用字段的概率；</li>
+    <li>结构体中无关字段应当尽量隔开一个 cache line，避免 CPU 间伪共享；</li>
+    <li>通用 cache 中的对象，如 <tt>mm_struct</tt> 缓存，应按 L1 cache 大小对齐以避免伪共享。</li>
+  </ul>
+
+  <p>CPU 引用的地址不在 cache 中时会产生<em>缓存未命中（cache miss）</em>，需要从主存取数据。这代价高昂：cache 访问通常少于 10 ns，而主存访问通常 100&ndash;200 ns。基本目标是尽可能多命中、少未命中。</p>
+
+  <p>同 TLB 一样，某些架构不自动管理 CPU Cache。钩子放在虚拟到物理映射变化的位置，例如页表更新时。CPU Cache 刷新应当先于 TLB 刷新，因为某些 CPU 在刷 cache 时仍需要虚拟到物理映射存在。需要严格顺序的三种操作见表 3.4。</p>
+
+  <h4>表 3.4：Cache 与 TLB 刷新顺序</h4>
+  <table>
+    <tr><th>刷整个 mm</th><th>刷范围</th><th>刷单页</th></tr>
+    <tr><td><tt>flush_cache_mm()</tt></td><td><tt>flush_cache_range()</tt></td><td><tt>flush_cache_page()</tt></td></tr>
+    <tr><td>改全部页表</td><td>改一段页表</td><td>改单个 PTE</td></tr>
+    <tr><td><tt>flush_tlb_mm()</tt></td><td><tt>flush_tlb_range()</tt></td><td><tt>flush_tlb_page()</tt></td></tr>
+  </table>
+
+  <p>刷新 cache 的 API 声明在 <tt>&lt;asm/pgtable.h&gt;</tt>，见表 3.5，与 TLB 刷新 API 很相似。</p>
+
+  <h4>表 3.5：CPU Cache 刷新 API</h4>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><tt>void flush_cache_all(void)</tt></td><td>刷新整个 CPU cache 系统，最严厉的刷新。修改全局性质的内核页表时使用。</td></tr>
+    <tr><td><tt>void flush_cache_mm(struct mm_struct mm)</tt></td><td>刷新与某地址空间相关的所有项。完成后没有 cache line 与 <tt>mm</tt> 相关。</td></tr>
+    <tr><td><tt>void flush_cache_range(struct mm_struct *mm, unsigned long start, unsigned long end)</tt></td><td>刷新一段地址范围对应的 line。与 TLB 版本类似，为能高效刷范围而非逐页的架构而设。</td></tr>
+    <tr><td><tt>void flush_cache_page(struct vm_area_struct *vma, unsigned long vmaddr)</tt></td><td>刷新单页大小的区域。传入 VMA 是因为可经 <tt>vma&rarr;vm_mm</tt> 拿到 <tt>mm_struct</tt>。此外通过测试 <tt>VM_EXEC</tt> 标志，架构可知该区域是否可执行——这对指令/数据 cache 分离的架构有意义。VMA 详见第 4 章。</td></tr>
+  </table>
+
+  <p>这还不算完。为避免虚拟别名问题（virtual aliasing）还需要第二组接口。问题在于某些 CPU 根据虚拟地址选择 line，导致同一物理地址出现在多条 line 上，从而引发一致性问题。带此问题的架构作为权宜之计会确保共享映射只使用某些地址，但也提供了正式 API 来解决，见表 3.6。</p>
+
+  <h4>表 3.6：CPU D-Cache 与 I-Cache 刷新 API</h4>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><tt>void flush_page_to_ram(unsigned long address)</tt></td><td>已废弃 API，不应再使用，2.6 中会被完全移除。仅为完整性与目前仍在使用而列。新物理页即将被放入进程地址空间时调用，作用是避免映射建立后内核空间的写入对用户空间不可见。</td></tr>
+    <tr><td><tt>void flush_dcache_page(struct page *page)</tt></td><td>当内核写入或从 page cache 页中复制时调用，因为这些页可能被多个进程映射。</td></tr>
+    <tr><td><tt>void flush_icache_range(unsigned long address, unsigned long endaddr)</tt></td><td>当内核把数据写入将被执行的地址时调用，例如内核模块加载后。</td></tr>
+    <tr><td><tt>void flush_icache_user_range(struct vm_area_struct *vma, struct page *page, unsigned long addr, int len)</tt></td><td>与 <tt>flush_icache_range()</tt> 类似，但作用于用户空间范围。目前仅 <tt>ptrace()</tt>（调试时）通过 <tt>access_process_vm()</tt> 访问地址空间时使用。</td></tr>
+    <tr><td><tt>void flush_icache_page(struct vm_area_struct *vma, struct page *page)</tt></td><td>page cache 页即将被映射时调用。是否需要刷 I-Cache 或 D-Cache 由架构根据 VMA 标志决定。</td></tr>
+  </table>
+
+  <h2 class="section">3.10　2.6 内核中的新变化</h2>
+  <p>2.6 中页表管理的整体机制基本未变，但引入的改动覆盖面较广、实现也较深。</p>
+
+  <h5>无 MMU 架构支持</h5>
+  <p>新增 <tt>mm/nommu.c</tt>，里面包含了对 <tt>mmap()</tt> 等假设 MMU 存在的函数的替代实现，以支持通常为微控制器、没有 MMU 的架构。这部分工作主要来自 uCLinux 项目（<em>http://www.uclinux.org</em>）。</p>
+
+  <h5>反向映射（Reverse Mapping）</h5>
+  <p>页表管理最重大的改动是引入了<em>反向映射（Reverse Mapping，rmap）</em>。这里使用 "rmap" 是有意的，它是该缩写的常用形式，不应与 Rik van Riel 维护的 -rmap 分支混淆，后者除反向映射外对原版 VM 还有许多其它修改。</p>
+
+  <p>一句话概括：rmap 让我们仅凭一个 <tt>struct page</tt> 就能定位映射该页的所有 PTE。在 2.4 中，要找到所有映射某共享页（如内存映射的共享库）的 PTE，唯一办法是线性遍历所有进程的所有页表，代价过高。Linux 通过使用 swap cache（见 11.4 节）来规避——这意味着对于很多共享页，Linux 可能不得不换出整个进程，而不顾页面年龄和使用模式。2.6 则让每个 <tt>struct page</tt> 关联一条 <em>PTE 链</em>，可遍历它从所有引用它的页表中移除该页。这样 LRU 中的页可被聪明地换出，而无需换出整个进程。</p>
+
+  <p>读者大概能想到，简单概念背后的实现不无复杂。理解的第一步是 <tt>struct page</tt> 中的 <tt>union pte</tt> 字段。这个 union 有两个字段：指向 <tt>struct pte_chain</tt> 的指针 <tt>chain</tt>，以及 <tt>pte_addr_t</tt> 类型的 <tt>direct</tt>。这是一种优化——只有一个 PTE 映射该页时使用 <tt>direct</tt> 节省内存，否则使用 chain。<tt>pte_addr_t</tt> 因架构而异，但无论什么类型，都可用来定位一个 PTE，下面简单视为 <tt>pte_t</tt>。</p>
+
+  <p><tt>struct pte_chain</tt> 稍复杂。结构本身简单，但<em>紧凑</em>：字段被复用，开发者在缩小尺寸、提高效率方面下了功夫。所幸还可读懂。</p>
+
+  <p>首先 <tt>struct pte_chain</tt> 由 slab 分配器分配和管理——这正是 slab 擅长的。每个 <tt>struct pte_chain</tt> 最多可容纳 <tt>NRPTE</tt> 个 PTE 指针；用满后再分配新的并加入链。</p>
+
+  <p><tt>struct pte_chain</tt> 有两个字段。第一个 <tt>unsigned long next_and_idx</tt> 有双重用途：与 <tt>NRPTE</tt> 做按位与，得到当前 <tt>pte_chain</tt> 中的 PTE 数量、指出下一个空槽；与 ~<tt>NRPTE</tt> 做按位与，得到链中下一个 <tt>pte_chain</tt> 的指针<sup><a href="#note9">1</a></sup>。这就是 PTE 链的基本实现。</p>
+
+  <p>下面简单举例感受 rmap 的细节。当一个新 PTE 需要映射某页时，基本流程是：调用方先用 <tt>pte_chain_alloc()</tt> 分配一个 <tt>pte_chain</tt>，然后把它连同 <tt>struct page</tt> 与 PTE 传给 <tt>page_add_rmap()</tt>。若该页已关联的 PTE 链中还有空槽，就使用之，并将刚才分配的 <tt>pte_chain</tt> 返回给调用方；若没有空槽，就把分配的 <tt>pte_chain</tt> 接到链中并返回 NULL。</p>
+
+  <p>rmap 还有相当庞大的 API，用于创建链、增删 PTE 等，完整列举超出本节范围。这部分代码集中在 <tt>mm/rmap.c</tt> 且注释充足，意图较明确。</p>
+
+  <p>反向映射带来两大好处，都与换页相关。其一是页表的建立与撤销：如 11.4 节所述，被换出的页放入 swap cache，PTE 中写入再次定位它所需的信息，导致页被放入 swap cache 后又被进程访问而频发轻量缺页。rmap 让 PTE 的建立与移除变成原子操作。其二是换页时，找到引用某页的所有 PTE 成了简单操作；2.4 中这并不实际可行，所以才有了 swap cache。</p>
+
+  <p>反向映射并非没有代价：首先是 PTE 链的额外空间需求；其次有 CPU 开销，但其影响尚未被证明显著。值得注意的是，只有当换页频繁时反向映射才划算；若负载下换页不多或内存充足，反向映射就是纯开销少益处。撰文时关于 rmap 的利弊讨论仍在进行。</p>
+
+  <h5>基于对象的反向映射（Object-Based Reverse Mapping）</h5>
+  <p>每页的反向映射可能需要相当大的空间。雪上加霜的是，一个 VMA 内众多被反向映射的页本质上是相同的。一种思路是按 VMA 而非按页做反向映射——即每页不再单独记录反向映射，而是遍历映射该页的所有 VMA 并将其各自解除映射。注意这里的 object 指 VMA，不是面向对象意义上的 object<sup><a href="#note10">2</a></sup>。撰文时该特性尚未合并，最后一次出现在 2.5.68-mm1，但只要其问题能解决，加入它的动力很强。极感兴趣的读者可参考此版本仅对文件/设备型 objrmap 的 patch<sup><a href="#note11">3</a></sup>。</p>
+
+  <p>有两种任务需要遍历映射某页的所有 PTE。第一个是 <tt>page_referenced()</tt>，检查所有映射该页的 PTE 看看最近是否被引用。第二个是 <tt>try_to_unmap()</tt> 把页从所有进程中解除映射。更复杂的是要反向映射的有两类：文件/设备后备的与匿名的。两者基本目标都是遍历所有映射该页的 VMA，再走该 VMA 的页表得到 PTE，区别只在于实现方式。文件后备的情况最简单也最先实现，先讲它。下面以 <tt>page_referenced()</tt> 的实现为例。</p>
+
+  <p><tt>page_referenced()</tt> 调用 <tt>page_referenced_obj()</tt>，这是查找映射该页的 VMA 内所有 PTE 的顶层函数。由于页是文件或设备后备的，<tt>page&rarr;mapping</tt> 指向有效的 <tt>address_space</tt>。<tt>address_space</tt> 通过 <tt>i_mmap</tt> 和 <tt>i_mmap_shared</tt> 两条链表保存所有使用该映射的 VMA。对每个 VMA，调用 <tt>page_referenced_obj_one()</tt>，传入 VMA 与 page。<tt>page_referenced_obj_one()</tt> 先检查该页是否在该 VMA 所管理的地址中，若是则使用该 VMA（<tt>vma&rarr;vm_mm</tt>）走页表直到找到对应该 <tt>mm_struct</tt> 中映射该页的 PTE。</p>
+
+  <p>匿名页跟踪要复杂得多，分阶段实现。它只短暂出现，又在 2.5.65-mm4 被移除，因为与其它一些改动冲突。第一阶段是用 <tt>page&rarr;mapping</tt> 与 <tt>page&rarr;index</tt> 跟踪 <tt>mm_struct</tt> 与地址对。此前这两个字段用来存指向 <tt>swapper_space</tt> 的指针与 <tt>swp_entry_t</tt>（见第 11 章）。具体如何处理超出本节范围，简而言之 <tt>swp_entry_t</tt> 改存于 <tt>page&rarr;private</tt>。</p>
+
+  <p><tt>try_to_unmap_obj()</tt> 类似工作，但所有引用该页的 PTE 都不再需要对单页做反向映射。该方案有个严重的搜索复杂度问题阻碍其合并：设 100 个进程各有 100 个 VMA 映射同一文件，按对象反向映射卸载<em>单一</em>页需要搜索 10,000 个 VMA，绝大多数是多余的；按页反向映射只需考察 100 个 <tt>pte_chain</tt> 槽——每个进程一个。引入了按虚拟地址在 <tt>address_space</tt> 内排序 VMA 的优化，但卸载单页的搜索代价仍过高，objrmap 因此尚未合并。</p>
+
+  <h5>高端内存中的 PTE</h5>
+  <p>2.4 中 PTE 位于 <tt>ZONE_NORMAL</tt>，因为内核在走页表时需要直接寻址它们。在高端内存机器上这变得不可接受——三级 PTE 大量占用 <tt>ZONE_NORMAL</tt>。明显的对策就是把 PTE 放到高端内存，这正是 2.6 所做。</p>
+
+  <p>如第 9 章所述，访问高端内存中的信息并非免费，因此把 PTE 放入高端内存是一个编译期选项。问题在于内核必须先把高端页映射到低端地址空间才能使用，而可用的映射槽位非常有限，形成瓶颈。然而对 PTE 量大的应用，这几乎是唯一选择。撰文时有人提议引入<em>用户内核虚拟区域（UKVA）</em>——一个对每个进程私有的内核空间区域，但能否在 2.6 中合并尚不确定。</p>
+
+  <p>为支持高端内存映射，2.4 的 <tt>pte_offset()</tt> 宏在 2.6 中被替换为 <tt>pte_offset_map()</tt>。若 PTE 在低端内存，行为同 <tt>pte_offset()</tt>，返回 PTE 地址；若在高端内存，先用 <tt>kmap_atomic()</tt> 映射到低端供内核使用。使用完毕应尽快用 <tt>pte_unmap()</tt> 解除映射。</p>
+
+  <p>这意味着走页表的代码会有所不同。找到给定地址的 PTE 现在大致为（取自 <tt>mm/memory.c</tt>）：</p>
+  <pre>640         ptep = pte_offset_map(pmd, address);
+641         if (!ptep)
+642                 goto out;
+643 
+644         pte = *ptep;
+645         pte_unmap(ptep);</pre>
+
+  <p>PTE 分配 API 也变了：原来的 <tt>pte_alloc()</tt> 替换为两个函数——用于内核 PTE 映射的 <tt>pte_alloc_kernel()</tt> 与用于用户空间映射的 <tt>pte_alloc_map()</tt>。主要差别是 <tt>pte_alloc_kernel()</tt> 不会使用高端内存作 PTE。</p>
+
+  <p>就内存管理而言，从高端内存映射 PTE 的开销不容忽视。每 CPU 同时只能映射一个 PTE，第二个可用 <tt>pte_offset_map_nested()</tt>。当需要遍历全部 PTE 时（如 <tt>zap_page_range()</tt> 解除给定范围内所有 PTE），代价不小。</p>
+
+  <p>撰文时已有补丁用基本相同的机制把 PMD 也放到高端内存，预计会被合并。</p>
+
+  <h5>大页 TLB 文件系统（Huge TLB Filesystem）</h5>
+  <p>多数现代架构支持多种页大小。例如许多 x86 架构可使用 4 KiB 或 4 MiB 页。传统上 Linux 只在映射内核映像时使用大页，其它地方一律不用。TLB 槽稀缺，所以在大内存机器上能利用大页很有意义。</p>
+
+  <p>2.6 允许进程使用"大页（huge pages）"，大小由 <tt>HPAGE_SIZE</tt> 决定。系统管理员通过 <tt>/proc/sys/vm/nr_hugepages</tt>（最终调用 <tt>set_hugetlb_mem_size()</tt>）设置可用的大页数量。能否成功依赖物理连续内存是否充足，所以应在系统启动期间分配。</p>
+
+  <p>实现的核心是<em>大页 TLB 文件系统（hugetlbfs）</em>，是一个在 <tt>fs/hugetlbfs/inode.c</tt> 中实现的伪文件系统。该文件系统中每个文件由一个大页支撑。初始化时 <tt>init_hugetlbfs_fs()</tt> 注册该文件系统并通过 <tt>kern_mount()</tt> 挂为内部文件系统。</p>
+
+  <p>进程访问大页有两种方式：一是用 <tt>shmget()</tt> 建立由大页支撑的共享区域；二是对在大页文件系统中打开的文件调用 <tt>mmap()</tt>。</p>
+
+  <p>用大页支撑共享内存区域时，进程应在 <tt>shmget()</tt> 中以 <tt>SHM_HUGETLB</tt> 作为标志之一。这会调用 <tt>hugetlb_zero_setup()</tt> 在内部 hugetlb 文件系统根目录下创建一个文件，文件名由原子计数器 <tt>hugetlbfs_counter</tt> 决定，每次新建共享区域时递增。</p>
+
+  <p>若要创建由大页支撑的文件，先由系统管理员挂载 hugetlbfs 文件系统（操作详见 <tt>Documentation/vm/hugetlbpage.txt</tt>）。挂载后即可用 <tt>open()</tt> 创建文件。对该文件调用 <tt>mmap()</tt> 时，<tt>file_operations</tt> 结构 <tt>hugetlbfs_file_operations</tt> 会调用 <tt>hugetlbfs_file_mmap()</tt> 正确建立区域。</p>
+
+  <p>大页拥有自己专属的页表管理、地址空间操作与文件系统操作函数，其名称与"普通"页等价物相似，可在 <tt>&lt;linux/hugetlb.h&gt;</tt> 看到；其实现就在普通页对应函数附近，易于查找。</p>
+
+  <h5>Cache 刷新管理</h5>
+  <p>此处改动很少：API <tt>flush_page_to_ram()</tt> 被完全移除，新增 <tt>flush_dcache_range()</tt>。</p>
+
+  <hr>
+  <div class="notes">
+    <h3>脚注</h3>
+    <ol>
+      <li id="note9">说过它紧凑吧。</li>
+      <li id="note10">别怪我，名字不是我起的。事实上引入这一特性的原始 patch 的注释是"From Dave. Crappy name"。</li>
+      <li id="note11"><em>ftp://ftp.kernel.org/pub/linux/kernel/people/akpm/patches/2.5/2.5.68/2.5.68-mm2/experimental</em></li>
+    </ol>
+  </div>
+
+  <div class="notes">
+    <h3>译注</h3>
+    <ul>
+      <li>"页表（page table）"分三级：PGD（页全局目录）、PMD（页中间目录）、PTE（页表项）。</li>
+      <li>"反向映射（reverse mapping，rmap）"：从 <tt>struct page</tt> 反查所有映射它的 PTE。</li>
+      <li>函数名、结构体名、宏名均保留英文，便于查阅源码。</li>
+    </ul>
+  </div>
+
+  <nav>
+    [ <a href="understand005_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="understand007_zh.html">下一章 &raquo;</a> ]
+  </nav>
+</body>
+</html>

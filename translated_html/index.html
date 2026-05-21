@@ -1,0 +1,62 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML lang="zh-CN">
+<HEAD>
+<META http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand_zh.css">
+<TITLE>深入理解 Linux 虚拟内存管理</TITLE>
+</HEAD>
+<BODY>
+
+<H1 CLASS="titlemain">深入理解 Linux 虚拟内存管理</H1>
+<P CLASS="author"><B>Mel Gorman</B> 著 &middot; LLM 中文翻译</P>
+<P><EM>基于 Linux 内核 <TT>2.4.22</TT>，并对 2.6 做了介绍。</EM></P>
+
+<HR>
+
+<H2 CLASS="section">前置内容</H2>
+<UL CLASS="toc">
+<LI CLASS="li-toc"><A HREF="understand001_zh.html">目录 (Contents)</A></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">代码注释目录 (Code Commentary Contents) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">前言 (Preface) &mdash; 待翻译</SPAN></LI>
+</UL>
+
+<H2 CLASS="section">正文章节</H2>
+<UL CLASS="toc">
+<LI CLASS="li-toc"><A HREF="understand004_zh.html">第一章 引言 (Introduction)</A></LI>
+<LI CLASS="li-toc"><A HREF="understand005_zh.html">第 2 章 描述物理内存 (Describing Physical Memory)</A></LI>
+<LI CLASS="li-toc"><A HREF="understand006_zh.html">第 3 章 页表管理 (Page Table Management)</A></LI>
+<LI CLASS="li-toc"><A HREF="understand007_zh.html">第 4 章 进程地址空间 (Process Address Space)</A></LI>
+<LI CLASS="li-toc"><A HREF="understand008_zh.html">第 5 章 启动内存分配器 (Boot Memory Allocator)</A></LI>
+<LI CLASS="li-toc"><A HREF="understand009_zh.html">第 6 章 物理页面分配 (Physical Page Allocation)</A></LI>
+<LI CLASS="li-toc"><A HREF="understand010_zh.html">第 7 章 非连续内存分配 (Non-Contiguous Memory Allocation)</A></LI>
+<LI CLASS="li-toc"><A HREF="understand011_zh.html">第 8 章 Slab 分配器 (Slab Allocator)</A></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">第 9 章 高端内存管理 (High Memory Management) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">第 10 章 页帧回收 (Page Frame Reclamation) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">第 11 章 交换管理 (Swap Management) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">第 12 章 共享内存虚拟文件系统 (Shared Memory Virtual Filesystem) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">第 13 章 内存耗尽管理 (Out Of Memory Management) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">第 14 章 结语 (The Final Word) &mdash; 待翻译</SPAN></LI>
+</UL>
+
+<H2 CLASS="section">代码注释（附录）</H2>
+<UL CLASS="toc">
+<LI CLASS="li-toc"><SPAN style="color:#888">附录 A 引言 (Introduction) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">附录 B 描述物理内存 (Describing Physical Memory) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">附录 C 页表管理 (Page Table Management) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">附录 D 进程地址空间 (Process Address Space) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">附录 E 启动内存分配器 (Boot Memory Allocator) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">附录 F 物理页面分配 (Physical Page Allocation) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">附录 G 非连续内存分配 (Non-Contiguous Memory Allocation) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">附录 H Slab 分配器 (Slab Allocator) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">附录 I 高端内存管理 (High Memory Management) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">附录 J 页帧回收 (Page Frame Reclamation) &mdash; 待翻译</SPAN></LI>
+<LI CLASS="li-toc"><SPAN style="color:#888">附录 K 交换管理 (Swap Management) &mdash; 待翻译</SPAN></LI>
+</UL>
+
+<HR>
+<P><SMALL>原文：<A HREF="../original_html/index.html">English original</A> &middot; 来源：<A HREF="https://www.kernel.org/doc/gorman/">https://www.kernel.org/doc/gorman/</A></SMALL></P>
+
+</BODY>
+</HTML>

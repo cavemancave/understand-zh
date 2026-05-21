@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第一章 引言 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <div class="nav">
+    <a href="understand003_zh.html">« 上一节</a>
+    <a href="index.html">↑ 目录</a>
+    <a href="understand005_zh.html">下一节 »</a>
+  </div>
+
+  <h1><a name="htoc1">第一章</a>  引言（Introduction）</h1>
+  <div class="meta">原文版本：Chapter 1 Introduction</div>
+
+  <p>Linux 是一个相对年轻的操作系统，已开始受到商业界、学术界和自由软件界的广泛关注。随着操作系统的成熟，其特性集、能力和性能都在增长，但出于必要，其规模和复杂度也在增长。下表展示了内核源代码中 <tt>mm/</tt> 部分的字节数和代码行数。这不包括与机器相关的代码或任何缓冲区管理代码，也不宣称是衡量复杂度的精确指标，但仍可作为一个粗略的参考。</p>
+
+  <div style="text-align:center;">
+    <table>
+      <tr>
+        <th>版本</th><th>发布日期</th><th>总大小</th><th>mm/ 大小</th><th>行数</th>
+      </tr>
+      <tr><td>1.0</td><td>1992 年 3 月 13 日</td><td>5.9MiB</td><td>96KiB</td><td>3109</td></tr>
+      <tr><td>1.2.13</td><td>1995 年 2 月 8 日</td><td>11MiB</td><td>136KiB</td><td>4531</td></tr>
+      <tr><td>2.0.39</td><td>2001 年 1 月 9 日</td><td>35MiB</td><td>204KiB</td><td>6792</td></tr>
+      <tr><td>2.2.22</td><td>2002 年 9 月 16 日</td><td>93MiB</td><td>292KiB</td><td>9554</td></tr>
+      <tr><td>2.4.22</td><td>2003 年 8 月 25 日</td><td>181MiB</td><td>436KiB</td><td>15724</td></tr>
+      <tr><td>2.6.0-test4</td><td>2003 年 8 月 22 日</td><td>261MiB</td><td>604KiB</td><td>21714</td></tr>
+    </table>
+    <div class="caption">表 1.1：以内核大小作为复杂度的指标</div>
+  </div>
+
+  <p>正如开源开发者们通常的习惯，当新开发者提出问题时，有时会被告知直接去看源代码，并附上"礼貌"的缩写 RTFS<sup><a href="#note1">1</a></sup>，或者被引导至 kernel newbies 邮件列表（<em>http://www.kernelnewbies.org</em>）。对于 Linux 虚拟内存（VM）管理器而言，这种回应过去是合适的——因为理解 VM 所需的时间可以以"周"为单位衡量，而当时可用的书籍中关于内存管理章节的篇幅足以使那段相对较小的代码易于浏览。</p>
+
+  <p>描述操作系统的书籍，例如 <em>Understanding the Linux Kernel</em> [<cite>BC00</cite>] [<cite>BC03</cite>]，倾向于覆盖整个内核而不是单一主题；驱动程序方面的书籍 [<cite>RC01</cite>] 是一个明显的例外。这些书籍——尤其是 <em>Understanding the Linux Kernel</em>——为理解内核内部提供了无价的洞察，但它们错过了 VM 中那些缺乏普遍兴趣的细节。例如，本书详细解释了为什么 <tt>ZONE_NORMAL</tt> 恰好是 896MiB，以及每 CPU 缓存究竟是如何实现的。其他不为一般内核读者所关注的 VM 部分，例如启动内存分配器和虚拟内存文件系统，也将在本书中讲述。</p>
+
+  <p>越来越多的情况下，要全面了解内核的运作方式，需要逐行阅读源代码。本书专注于 VM，使得理解它所需投入的时间可以以周而非月来衡量。本书主体部分未涉及的细节将通过代码注释补足。</p>
+
+  <p>在本章中，将非正式地介绍如何获取开源项目的信息，以及一些管理、浏览和理解代码的方法。如果你不打算阅读实际的源代码，可以直接跳到<a href="understand005_zh.html">第 2 章</a>。</p>
+
+  <h2 class="section"><a name="htoc2">1.1</a>  入门（Getting Started）</h2>
+
+  <p>理解代码的最大初始障碍之一是决定从哪里开始，以及如何方便地管理、浏览并对整体代码结构形成概览。如果在邮件列表中询问，人们会给出一些如何着手的建议，但除了"继续读源码直到读懂"之类的建议外，鲜有完整的方法论。在接下来的几节中，将介绍一些理解开源代码的实用经验法则，并具体说明它们如何应用于内核。</p>
+
+  <h3>1.1.1  配置和构建</h3>
+
+  <p>对于任何开源项目，第一步都是下载源码并阅读安装文档。按照惯例，源码会在源树顶层有一个 <tt>README</tt> 或 <tt>INSTALL</tt> 文件 [<cite>FF02</cite>]。事实上，某些自动化构建工具（如 <b>automake</b>）要求 install 文件必须存在。这些文件中包含配置和安装软件包的说明，或会指引去哪里查找更多信息。Linux 也不例外，它包含一个 <tt>README</tt>，描述了如何配置和构建内核。</p>
+
+  <p>第二步是构建软件。在早期，许多项目要求手工编辑 <tt>Makefile</tt>，但现在很少这样了。自由软件通常至少使用 <b>autoconf</b><sup><a href="#note2">2</a></sup> 自动测试构建环境，并使用 <b>automake</b><sup><a href="#note3">3</a></sup> 简化 <tt>Makefile</tt> 的生成，因此构建通常简单到：</p>
+
+  <pre>mel@joshua: project $ ./configure &amp;&amp; make</pre>
+
+  <p>一些较老的项目（如 Linux 内核）使用自己的配置工具，一些大型项目（如 Apache 网络服务器）有大量配置选项，但通常 configure 脚本就是起点。对于内核而言，配置由 <tt>Makefile</tt> 及其辅助工具处理。最简单的配置方法是：</p>
+
+  <pre>mel@joshua: linux-2.4.22 $ make config</pre>
+
+  <p>这会提出一长串问题，询问应构建哪种类型的内核。回答完所有问题后，编译内核只需：</p>
+
+  <pre>mel@joshua: linux-2.4.22 $ make bzImage &amp;&amp; make modules</pre>
+
+  <p>关于配置和编译内核的全面指南可在 Kernel HOWTO<sup><a href="#note4">4</a></sup> 中找到，本书不再详述。目前，我们假设你已经完整地构建好一个内核，接下来该开始弄清楚这个新内核实际是如何工作的了。</p>
+
+  <h3>1.1.2  信息来源</h3>
+
+  <p>开源项目通常会有一个主页，尤其是有了 <em>http://www.sourceforge.net</em> 这样的免费项目托管站点之后。主站会包含可用文档的链接，以及如何加入邮件列表（如果有的话）的说明。某种形式的文档总会存在，即使只是一个简单的 <tt>README</tt>，所以请阅读所有可用的资料。如果项目历史悠久且规模相当大，网站上通常会有一个<em>常见问题（FAQ）</em>。</p>
+
+  <p>接下来，加入开发邮件列表并"潜水"——意思是订阅邮件列表并阅读但不发帖。邮件列表是开发者首选的沟通方式，其次是<em>互联网中继聊天（IRC）</em>和在线新闻组（通常称为 <em>UseNet</em>），但这两者使用得较少。由于邮件列表通常包含关于实现细节的讨论，至少阅读最近一个月的存档非常重要，以便了解开发社区的氛围和当前的活动。如果你有关于实现的问题且现有文档未涵盖，邮件列表存档应是首要搜索之处。如果你需要向开发者提问，请花时间研究问题并以"正确的方式"提问 [<cite>RM01</cite>]。虽然有些人会回答"显而易见"的问题，但不断提问那些一周前刚被回答过或文档中明确写过的问题，对你的信誉毫无帮助。</p>
+
+  <p>那么，这些如何应用于 Linux？首先是文档。源码树顶层有一个 <tt>README</tt>，<tt>Documentation/</tt> 目录里有大量可用信息。还有许多关于 UNIX 设计 [<cite>Vah96</cite>]、专门关于 Linux [<cite>BC00</cite>] 的书籍，当然还有本书来解释代码中预期会看到的内容。</p>
+
+  <p>关于内核开发的最佳在线信息源之一是 <em>Linux Weekly News（http://www.lwn.net）</em>每周版中的"Kernel Page"。它还报道广泛的 Linux 相关话题，值得定期阅读。内核本身没有所谓的主页，但最接近的等价物是 <em>http://www.kernelnewbies.org</em>，那里有大量关于内核的信息，对新手和有经验的人都很宝贵。</p>
+
+  <p><em>Linux 内核邮件列表（LKML）</em>的 FAQ 在 <em>http://www.tux.org/lkml/</em> 上可用，涵盖了从内核开发流程到如何加入列表本身等各种问题。该列表在许多站点都有归档，常被引用的一个是 <em>http://marc.theaimsgroup.com/?l=linux-kernel</em>。请注意，该邮件列表的流量非常大，阅读起来很令人生畏，但 <em>Kernel Traffic</em> 网站（<em>http://kt.zork.net/kernel-traffic/</em>）会提供每周摘要。</p>
+
+  <p>上述站点和资源包含一般性的内核信息，但也有专门针对内存管理的资源。Linux-MM 网站 <em>http://www.linux-mm.org</em> 包含内存管理专门文档的链接和一个 linux-mm 邮件列表。与主列表相比，该列表流量较小，归档在 <em>http://mail.nl.linux.org/linux-mm/</em>。</p>
+
+  <p>最后一个值得查阅的站点是 <em>Kernel Trap</em>（<em>http://www.kerneltrap.org</em>）。该网站包含许多关于内核的有用文章。它不专门针对 Linux，但确实有许多 Linux 相关文章以及对内核开发者的访谈。</p>
+
+  <p>显然，在求助于代码之前，可以查阅的信息量是巨大的。有了足够的经验后，最终直接看源码会更快，但在起步阶段，请先查阅其他信息来源。</p>
+
+  <h2 class="section"><a name="htoc3">1.2</a>  管理源代码（Managing the Source）</h2>
+
+  <p>主线或正式（stock）内核主要以压缩的 tape archive（.tar.bz）文件形式分发，可从离你最近的内核源码镜像获取，对爱尔兰而言是 <em>ftp://ftp.ie.kernel.org/</em>。正式内核始终指由树维护者发布的版本。例如，在撰写本文时，2.2.x 的正式内核由 Alan Cox<sup><a href="#note5">5</a></sup> 发布，2.4.x 由 Marcelo Tosatti 发布，2.5.x 由 Linus Torvalds 发布。每次发布时，除了完整的 tar 文件外，还会提供一个较小的<em>补丁（patch）</em>，包含两个发布版之间的差异。出于带宽考虑，打补丁是首选的升级方式。对内核的贡献几乎总以补丁的形式提交，这些补丁是由 GNU 工具 <b>diff</b> 生成的<em>统一 diff（unified diffs）</em>。</p>
+
+  <h4>为什么使用补丁</h4>
+
+  <p>最初将补丁发送到邮件列表听起来很笨拙，但在内核开发环境中它非常高效。补丁的主要优点是：比起并排比较两个完整版本的文件，阅读补丁所做的更改要容易得多。熟悉代码的开发者可以很容易地看出更改将带来什么影响，并判断是否应合并。此外，引用包含补丁的邮件并询问更多信息也非常容易。</p>
+
+  <h4>子树</h4>
+
+  <p>各个有影响力的开发者可能不时拥有他们自己版本的内核，以针对主树的大补丁形式发布。这些子树通常包含尚未合并到主线或仍在测试中的特性或清理工作。两个著名的子树是由长期且具有影响力的 VM 开发者 Rik Van Riel 维护的 <em>-rmap</em> 树，以及由当时正式开发版 VM 的维护者 Andrew Morton 维护的 <em>-mm</em> 树。-rmap 树包含一大组由于各种原因未进入主线的特性，深受 FreeBSD VM 的影响，与正式 VM 有许多重要差异。-mm 树与 -rmap 相当不同——它是一棵测试树，包含在合并到正式内核之前进行测试的补丁。</p>
+
+  <h4>BitKeeper</h4>
+
+  <p>近期，一些开发者开始使用名为 BitKeeper（<em>http://www.bitmover.com</em>）的源代码控制系统，这是一个以 Linux 为主要考虑设计的专有版本控制系统。BitKeeper 允许开发者拥有自己的分布式版本的代码树，其他用户可以从彼此的树中"拉取（pull）"称为<em>变更集（changesets）</em>的补丁组。这种分布式特性是与依赖中心服务器的传统版本控制软件的一个重要区别。</p>
+
+  <p>BitKeeper 允许将注释与每个补丁关联，这些注释作为每个内核版本发布信息的一部分显示。对 Linux 来说，这意味着原始提交补丁的邮件得以保留，使得内核开发的进展和不同补丁的含义更加透明。发布时，会发布每位开发者的补丁标题列表，以及所有包含补丁的详细列表。</p>
+
+  <p>由于 BitKeeper 是专有产品，邮件和补丁仍被视为讨论代码变更的唯一方式。事实上，某些补丁在主邮件列表上未先经过讨论就不会被考虑接受，因为代码质量被认为与同行评审的数量直接相关 [<cite>Ray02</cite>]。由于 BitKeeper 维护的源代码树以 CVS 等开源工具可访问的格式导出，补丁仍是首选的讨论方式。这意味着没有开发者必须使用 BitKeeper 才能为内核做贡献，但开发者仍应了解这个工具。</p>
+
+  <h3>1.2.1  Diff 与 Patch</h3>
+
+  <p>用于创建和应用补丁的两个工具是 <b>diff</b> 和 <b>patch</b>，二者都是 GNU 实用程序，可从 GNU 网站<sup><a href="#note6">6</a></sup>获取。<b>diff</b> 用于生成补丁，<b>patch</b> 用于应用补丁。虽然这两个工具有大量选项，但有一种"推荐用法"。</p>
+
+  <p>用 <b>diff</b> 生成的补丁应始终是<em>统一 diff（unified diff）</em>、包含受更改影响的 C 函数，并从内核源码根目录的上一级目录生成。统一 diff 比仅包含两行之间差异的信息更多。它以一个两行的头部开始，包含 <b>diff</b> 正在比较的两个文件的名称和创建日期。之后，"diff"将由一个或多个"hunk（块）"组成。每个 hunk 的起始处用以 <tt>@@</tt> 开头的一行标记，其中包括源代码中的起始行号以及 hunk 应用前后的行数。hunk 包含"上下文"行，用于显示更改上下的内容以帮助人类阅读。每行以 <tt>+</tt>、<tt>-</tt> 或空格开头。如果标记是 <tt>+</tt>，则该行是新增的；如果是 <tt>-</tt>，则该行被删除；空格表示该行保持不变，仅用于提供上下文。从内核根目录上一级生成补丁的原因是：可以很容易地看出补丁是针对哪个版本的；如果每个补丁都以相同方式生成，则补丁应用的脚本化也更容易。</p>
+
+  <p>以一个例子来说，假设对 <tt>mm/page_alloc.c</tt> 做了一个非常简单的更改，添加了一小段注释。补丁按以下方式生成。注意此命令应在一行中输入（去掉反斜杠）。</p>
+
+  <pre>mel@joshua: kernels/ $ diff -up                    \
+                linux-2.4.22-clean/mm/page_alloc.c \
+                linux-2.4.22-mel/mm/page_alloc.c   &gt; example.patch</pre>
+
+  <p>这会在两个文件之间生成统一上下文 diff（-u 开关），并将补丁放入 <tt>example.patch</tt>，如图 1.1 所示。它还显示受影响的 C 函数的名称。</p>
+
+  <div style="text-align:center;">
+    <pre style="text-align:left; display:inline-block;">--- linux-2.4.22-clean/mm/page_alloc.c Thu Sep  4 03:53:15 2003
++++ linux-2.4.22-mel/mm/page_alloc.c Thu Sep  3 03:54:07 2003
+@@ -76,8 +76,23 @@
+  * triggers coalescing into a block of larger size.            
+  *
+  * -- wli
++ *  
++ *  There is a brief explanation of how a buddy algorithm works at
++ *  http://www.memorymanagement.org/articles/alloc.html . A better idea
++ *  is to read the explanation from a book like UNIX Internals by
++ *  Uresh Vahalia
++ *  
+  */
+ 
++/** 
++ *
++ * __free_pages_ok - Returns pages to the buddy allocator
++ * @page: The first page of the block to be freed
++ * @order: 2^order number of pages are freed
++ *
++ * This function returns the pages allocated by __alloc_pages and tries to 
++ * merge buddies if possible. Do not call directly, use free_pages()
++ **/
+ static void FASTCALL(__free_pages_ok (struct page *page, unsigned int order));
+ static void __free_pages_ok (struct page *page, unsigned int order)
+ {</pre>
+    <div class="caption">图 1.1：示例补丁</div>
+  </div>
+
+  <p>从这个补丁中可以一眼看出哪些文件受影响（<tt>page_alloc.c</tt>）、起始行号（76），新增的行用 + 清晰地标记。在一个补丁中，可能有多个"hunk"，每个 hunk 以 @@ 开头的一行标记。打补丁时每个 hunk 会被分别处理。</p>
+
+  <p>大致上，补丁有两种形式：发送到邮件列表的纯文本补丁（如上例），以及用 <b>gzip</b>（.gz 扩展名）或 <b>bzip2</b>（.bz2 扩展名）压缩的补丁。通常可以安全地假设补丁是在内核源码树根目录的上一级目录生成的。这意味着虽然补丁在上一级目录生成，但当前目录处于内核源码树根目录时，可使用 <tt>-p1</tt> 选项应用补丁。大致来说，对一个干净的源码树应用纯文本补丁可以这样简单地进行：</p>
+
+  <pre>mel@joshua: kernels/ $ cd linux-2.4.22-clean/
+mel@joshua: linux-2.4.22-clean/ $ patch -p1 &lt; ../example.patch
+patching file mm/page_alloc.c
+mel@joshua: linux-2.4.22-clean/ $ </pre>
+
+  <p>应用压缩补丁只需先把补丁解压到标准输出（stdout）：</p>
+
+  <pre>mel@joshua: linux-2.4.22-mel/ $ gzip -dc ../example.patch.gz | patch -p1</pre>
+
+  <p>如果一个 hunk 可以被应用但行号不同，hunk 号和需要的行号偏移量会被输出。这些通常是安全的警告，可以忽略。如果上下文略有不同，hunk 会被应用并打印出"模糊度（fuzziness）"水平，应当复查。如果某个 hunk 应用失败，它会被保存到 <tt>filename.c.rej</tt>，原文件会被保存到 <tt>filename.c.orig</tt>，需手动应用。</p>
+
+  <h3>1.2.2  使用 <b>PatchSet</b> 进行基本的源代码管理</h3>
+
+  <p>解压源码、管理补丁和构建内核起初有趣，但很快就会令人厌烦。为减少补丁管理的繁琐，本书撰写过程中开发了一个名为 <b>PatchSet</b> 的简单工具，旨在便捷地管理内核源码和补丁，消除大量繁琐工作。它有完整文档，可从 <em>http://www.csn.ul.ie/~mel/projects/patchset/</em> 及配套光盘免费获取。</p>
+
+  <h4>下载</h4>
+  <p>下载内核和补丁本身就相当繁琐，所以提供了脚本来简化这项任务。首先应编辑配置文件 <tt>etc/patchset.conf</tt>，更新 <tt>KERNEL_MIRROR</tt> 参数为你本地的 <em>http://www.kernel.org/</em> 镜像。完成后，使用脚本 <b>download</b> 下载补丁和内核源码。简单的使用方式如下：</p>
+
+  <pre>mel@joshua: patchset/ $ download 2.4.18
+# 将下载 2.4.18 内核源码
+
+mel@joshua: patchset/ $ download -p 2.4.19
+# 将下载 2.4.19 的补丁
+
+mel@joshua: patchset/ $ download -p -b 2.4.20
+# 将下载 2.4.20 的 bzip2 补丁</pre>
+
+  <p>下载好相关源码或补丁后，就可以配置内核构建了。</p>
+
+  <h4>配置构建</h4>
+  <p>名为<em>集合配置文件（set configuration files）</em>的文件用于指定使用哪个内核源码 tar 包、要应用哪些补丁、使用什么内核配置（由 <b>make config</b> 生成），以及生成的内核命名是什么。一个用于构建 <tt>2.4.20-rmap15f</tt> 内核的示例规范文件如下：</p>
+
+  <pre>linux-2.4.18.tar.gz
+2.4.20-rmap15f
+config_generic
+
+1 patch-2.4.19.gz
+1 patch-2.4.20.bz2
+1 2.4.20-rmap15f</pre>
+
+  <p>第一行表示解压一个以 <tt>linux-2.4.18.tar.gz</tt> 开头的源码树。第二行指定内核名为 <tt>2.4.20-rmap15f</tt>。此处选用 <tt>2.4.20</tt> 是因为撰写时尚没有针对更晚的稳定版本的 rmap 补丁。要查看更新的 rmap 补丁，请见 <em>http://surriel.com/patches/</em>。第三行指定编译时使用哪个内核 <tt>.config</tt> 文件。之后的每行都有两部分。第一部分指定 patch 深度，即使用 <tt>-p</tt> 选项的数字。如前面 1.2.1 节所讨论的，在源码目录中应用补丁时通常是 1。第二部分是存储在 patches 目录中的补丁名称。上面的例子会先应用两个补丁将内核从 <tt>2.4.18</tt> 更新到 <tt>2.4.20</tt>，然后构建 <tt>2.4.20-rmap15f</tt> 内核树。</p>
+
+  <p>如果所需的内核配置文件非常简单，则可以使用 <b>createset</b> 脚本生成 set 文件。它只需以内核版本号作为参数，根据可用的源码和补丁猜测如何构建。</p>
+
+  <pre>mel@joshua: patchset/ $ createset 2.4.20</pre>
+
+  <h4>构建内核</h4>
+  <p>软件包附带三个脚本。第一个 <b>make-kernel.sh</b> 会将内核解压到 <tt>kernels/</tt> 目录，并按需构建。如果目标发行版是 Debian，还可以通过指定 <tt>-d</tt> 选项创建 Debian 包以便简易安装。第二个 <b>make-gengraph.sh</b> 会解压内核，但不构建可安装的内核，而是生成使用 <b>CodeViz</b>（下一节讨论）创建调用图所需的文件。最后一个 <tt>make-lxr.sh</tt> 会将内核安装好以便与 LXR 一起使用。</p>
+
+  <h4>生成 Diff</h4>
+  <p>最终，你会需要查看两棵树中文件之间的差异，或生成你自己所做更改的"diff"。提供了三个小脚本来简化此任务。第一个是 <b>setclean</b>，用于设置作为比较起点的源码树。第二个是 <b>setworking</b>，用于设置你正在与之比较或正在工作的内核树的路径。第三个是 <b>difftree</b>，可针对两棵树中的文件或目录生成 diff。要生成图 1.1 所示的 diff，可以这样做：</p>
+
+  <pre>mel@joshua: patchset/ $ setclean linux-2.4.22-clean
+mel@joshua: patchset/ $ setworking linux-2.4.22-mel
+mel@joshua: patchset/ $ difftree mm/page_alloc.c</pre>
+
+  <p>生成的 diff 是包含 C 函数上下文的统一 diff，符合 <b>diff</b> 的推荐用法。还有另外两个非常有用的脚本可用于跟踪两棵树之间的更改，它们是 <b>diffstruct</b> 和 <b>difffunc</b>，用于打印单个结构体和函数的差异。首次使用时必须使用 <tt>-f</tt> 选项记录该结构体或函数是在哪个源文件中声明的，但仅首次需要。</p>
+
+  <h2 class="section"><a name="htoc4">1.3</a>  浏览代码（Browsing the Code）</h2>
+
+  <p>当代码量小而可控时，浏览代码并不特别困难，因为相关操作通常聚集在同一文件中，模块间耦合不多。可惜内核并非如此。感兴趣的函数可能分散在多个文件中，或者作为内联函数存在于头文件中。更糟糕的是，关心的文件可能埋藏在依赖体系结构的目录之下，使追踪它们既耗时又费力。</p>
+
+  <p>一种便于浏览代码的方案是 <b>ctags</b>（<em>http://ctags.sourceforge.net/</em>），它能从一组源文件生成 tag 文件。这些 tag 可用于通过 <b>Vi</b>、<b>Emacs</b> 等编辑器跳转到声明标识符的 C 文件和行。如果同一 tag 有多处实例（如同名的多个函数），可从列表中选择正确的那个。这种方法在编辑代码时效果最好，因为它允许在一个终端窗口内非常快速地浏览代码。</p>
+
+  <p>更友好的浏览方式是 <em>Linux Cross-Referencing（LXR）</em>工具，托管于 <em>http://lxr.linux.no/</em>。该工具能将源码呈现为可浏览的网页。全局变量、宏和函数等标识符成为超链接。点击后会显示其定义位置及所有引用该定义的文件和行。这使得代码导航非常方便，在首次阅读代码时几乎是必不可少的。</p>
+
+  <p>该工具非常容易安装，本书附带的光盘中可浏览的 <tt>2.4.22</tt> 内核源码版本已经可用。书中所有代码摘录都基于 LXR 的输出，以便摘录中能清晰看到行号。</p>
+
+  <h3>1.3.1  分析代码流</h3>
+
+  <p>由于不同模块跨多个 C 文件共享代码，不通过手动逐行追踪，很难看出某条代码路径会影响哪些函数。对于规模较大或调用很深的代码路径，回答一个本应简单的问题可能极为耗时。</p>
+
+  <p>一个简单但有效的工具是 <b>CodeViz</b>，这是一个调用图生成器，已包含在光盘中。它使用经过修改的 C 或 C++ 编译器来收集生成调用图所需的信息。该工具托管于 <em>http://www.csn.ul.ie/~mel/projects/codeviz/</em>。</p>
+
+  <p>使用修改后的编译器编译时，会为每个 C 文件生成 <tt>.cdep</tt> 扩展名的文件，包含该 C 文件中所有的函数声明和调用。这些文件通过一个名为 <b>genfull</b> 的程序汇总，生成整个源代码的完整调用图，最后可用 <b>GraphViz</b> 项目（<em>http://www.graphviz.org/</em>）中的 <b>dot</b> 工具进行渲染。</p>
+
+  <p>在本书所写的计算机上编译的内核里，由 <b>genfull</b> 生成的 <tt>full.graph</tt> 文件共有 40,165 条条目。这份调用图由于太大本身已无实用价值，因此提供了第二个工具 <b>gengraph</b>。该程序在基础用法下，将一个或多个函数名作为参数，并生成以请求的函数作为根节点的调用图 postscript 文件。postscript 文件可用 <b>ghostview</b> 或 <b>gv</b> 查看。</p>
+
+  <p>生成的图可能深度过深或显示用户不感兴趣的函数，因此提供了三种图生成限制选项。第一种按深度限制，调用链中深度大于 <tt>N</tt> 层的函数会被忽略。第二种是完全忽略某个函数，它不会出现在调用图中，它所调用的函数也不会出现。第三种是显示某个函数但不向下遍历，当该函数在另一张调用图中有覆盖，或它是已知 API、其实现暂不感兴趣时，这很方便。</p>
+
+  <p>本书所示的所有调用图都用 <b>CodeViz</b> 工具生成，因为有调用图时常常更易于一眼理解一个子系统。它已在多个其他基于 C 的开源项目中测试过，应用范围不仅限于内核。</p>
+
+  <h3>1.3.2  简单的图生成</h3>
+
+  <p>如果同时安装了 <b>PatchSet</b> 和 <b>CodeViz</b>，本书中第一张调用图（见<a href="understand006_zh.html#fig: paging_init">图 3.4</a>）可通过以下命令集生成和查看。为简洁起见，省略了命令输出：</p>
+
+  <pre>mel@joshua: patchset $ download 2.4.22
+mel@joshua: patchset $ createset 2.4.22
+mel@joshua: patchset $ make-gengraph.sh 2.4.22
+mel@joshua: patchset $ cd kernels/linux-2.4.22
+mel@joshua: linux-2.4.22 $ gengraph -t -s "alloc_bootmem_low_pages \
+                                   zone_sizes_init" -f paging_init
+mel@joshua: linux-2.4.22 $ gv paging_init.ps</pre>
+
+  <h2 class="section"><a name="htoc5">1.4</a>  阅读代码（Reading the Code）</h2>
+
+  <p>当新开发者或研究人员询问该如何开始阅读代码时，他们常被建议从初始化代码开始入手。但这未必适合所有人，因为初始化非常依赖体系结构，需要详细的硬件知识才能解读。它也几乎不能展示 VM 这样的子系统是如何工作的，因为正是在初始化的后期阶段，内存才被设置为运行时系统所看到的样子。</p>
+
+  <p>理解 VM 的最佳起点是本书及代码注释。它描述的 VM 相当全面但又不至于过于复杂。后来的 VM 更为复杂，但本质上是此处所述 VM 的扩展。</p>
+
+  <p>当不得不重新从代码角度切入研究后来的 VM 时，最好从一个依赖最少的孤立区域开始。对 VM 而言，最佳起点是位于 <tt>mm/oom_kill.c</tt> 中的<em>内存耗尽（OOM）管理器</em>。它温和地介绍了 VM 的一个角落——在系统内存不足时选择某个进程被杀死。正因为它涉及 VM 的众多不同方面，所以本书放在最后一章讨论！第二个值得研究的子系统是位于 <tt>mm/vmalloc.c</tt> 中的非连续内存分配器，在<a href="understand010_zh.html">第 7 章</a>讨论，因为它合理地集中在一个文件内。第三个系统应是位于 <tt>mm/page_alloc.c</tt> 中的物理页分配器，在<a href="understand009_zh.html">第 6 章</a>讨论，原因相似。第四个感兴趣的系统是进程的 VMA 和内存区创建，在<a href="understand007_zh.html">第 4 章</a>讨论。这几个系统涵盖了贯穿整个内核代码的主要代码模式，使得解读如页面替换策略或缓冲区 IO 等更复杂的系统变得容易得多。</p>
+
+  <p>有经验的开发者给出的第二个建议是对 VM 进行基准测试和测试。可用的基准程序很多，但常用的有 <b>ConTest</b>（<em>http://members.optusnet.com.au/ckolivas/contest/</em>）、<b>SPEC</b>（<em>http://www.specbench.org/</em>）、<b>lmbench</b>（<em>http://www.bitmover.com/lmbench/</em>）和 <b>dbench</b>（<em>http://freshmeat.net/projects/dbench/</em>）。在许多场景下，这些基准程序能够满足需求。</p>
+
+  <p>遗憾的是，难以精确地仅对 VM 进行测试，对它进行基准测试通常依赖于内核编译之类的任务计时。一个名为 <b>VM Regress</b> 的工具可在 <em>http://www.csn.ul.ie/~mel/vmregress/</em> 获取，为构建一个成熟的 VM 测试、回归和基准测试工具奠定了基础。它结合内核模块和用户空间工具，以可重现的方式测试 VM 的各个小部分，并提供了一个使用大型引用串测试页面替换策略的基准。它旨在作为开发测试实用程序的框架，提供了一些 Perl 库和辅助内核模块来完成大部分工作，但目前仍处于早期开发阶段，使用时请谨慎。</p>
+
+  <h2 class="section"><a name="htoc6">1.5</a>  提交补丁（Submitting Patches）</h2>
+
+  <p><tt>Documentation/</tt> 目录中有两个文件——<tt>SubmittingPatches</tt> 和 <tt>CodingStyle</tt>——涵盖了重要的基础知识。但描述如何让补丁被合并的文档非常少。本节将简要介绍补丁通常是如何被管理的。</p>
+
+  <p>首要的是必须遵循内核的代码风格，因为与主内核不一致的风格无论技术价值如何都会成为合并的障碍。一旦补丁开发完成，第一个问题是决定把它发给谁。内核开发有一种明确但不显而易见的处理补丁的层级结构，以及如何提交它们。以 2.5.x 开发为例进行说明。</p>
+
+  <p>首先检查补丁是否非常小或微不足道。如果是，将它发到主内核邮件列表。如果没有负面反应，可以将其投给所谓的 <em>Trivial Patch Monkey</em><sup><a href="#note7">7</a></sup>。Trivial Patch Monkey 正如其名，它接收小补丁并将其批量送给正确的人。这最适合文档、注释或单行补丁。</p>
+
+  <p>补丁通过一种可以宽松地称为"环"的层级管理，其最中心是 Linus，他对什么进入主树有最终决定权。Linus 除极少例外只接受来自他称为"中尉（lieutenants）"的约 10 人小组的补丁，他信任这些人为他"喂送"正确的代码。中尉的一个例子是撰写本文时的 VM 维护者 Andrew Morton。任何对 VM 的修改在到达 Linus 之前都必须经 Andrew 接受。这些人通常是某个特定系统的维护者，但有时会"喂送"他来自其他子系统的补丁——如果他们觉得足够重要。</p>
+
+  <p>每位中尉都是某些子系统的活跃开发者。与 Linus 类似，他们也有一小群他们信任、对其发送补丁内容有充分了解的开发者，但也会更主动地接收影响其子系统的补丁。视子系统而定，他们所信任的人选名单很大程度上受 <tt>MAINTAINERS</tt> 文件中维护者名单的影响。第二个主要影响来源是子系统专属邮件列表（如果有）。VM 没有维护者列表，但有一个邮件列表<sup><a href="#note8">8</a></sup>。</p>
+
+  <p>维护者和中尉对补丁的接受至关重要。Linus 大致上似乎不希望仅靠对重要补丁的优劣进行辩论说服，更愿意从一个中尉那里听取意见——考虑到补丁的数量，这是可以理解的。</p>
+
+  <p>总而言之，一个新补丁应该用邮件发给子系统的邮件列表，并抄送主列表以引发讨论。如果没有反应，应当将其发给该代码区域的维护者（如有），否则发给中尉。一旦被维护者或中尉接手，被合并的可能性就很大。关键在于补丁和想法必须尽早并频繁地发布，让开发者在它还可控时有机会查看。有一些著名案例是补丁因长时间沉寂、缺乏讨论而难以合并到主树。最近一个例子是 Linux Kernel Crash Dump 项目，至今仍未合并到主线，因为缺乏来自中尉的足够积极反馈或厂商的强力支持。</p>
+
+  <div class="footnotes">
+    <p><a name="note1">1</a>. RTFS：Read The Flaming Source（"读那该死的源码"）。"F"实际上并非真指 Flaming，但毕竟可能有小孩在看。</p>
+    <p><a name="note2">2</a>. <em>http://www.gnu.org/software/autoconf/</em></p>
+    <p><a name="note3">3</a>. <em>http://www.gnu.org/software/automake/</em></p>
+    <p><a name="note4">4</a>. http://www.tldp.org/HOWTO/Kernel-HOWTO/index.html</p>
+    <p><a name="note5">5</a>. 最后一刻更新：Alan 刚刚宣布将休假，不再维护 2.2.x 树。当前无人维护。</p>
+    <p><a name="note6">6</a>. <em>http://www.gnu.org</em></p>
+    <p><a name="note7">7</a>. <em>http://www.kernel.org/pub/linux/kernel/people/rusty/trivial/</em></p>
+    <p><a name="note8">8</a>. <em>http://www.linux-mm.org/mailinglists.shtml</em></p>
+  </div>
+
+  <div class="nav" style="margin-top: 2em;">
+    <a href="understand003_zh.html">« 上一节</a>
+    <a href="index.html">↑ 目录</a>
+    <a href="understand005_zh.html">下一节 »</a>
+  </div>
+</body>
+</html>
