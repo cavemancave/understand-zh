@@ -202,7 +202,7 @@ MAX_SWAP_BADPAGES = (PAGE_SIZE - 1024 - 512 - 10) / sizeof(long)
 </p>
 
 <p>
-每种体系结构都必须能够判断一个 PTE 是处于&ldquo;present&rdquo;状态还是已被换出。下面我们以 x86 为例说明其实现方式。在 <tt>swp_entry_t</tt> 中始终保留两位：x86 上的第 0 位用于 <tt>_PAGE_PRESENT</tt> 标志，第 7 位用于 <tt>_PAGE_PROTNONE</tt>。这两位的必要性已在<a href="understand006.html#sec: Describing a Page Table Entry">第 3.2 节</a>中说明。第 1&ndash;6 位用于<em>type</em>，即在 <tt>swap_info</tt> 数组中的下标，由 <tt>SWP_TYPE()</tt> 宏返回。
+每种体系结构都必须能够判断一个 PTE 是处于&ldquo;present&rdquo;状态还是已被换出。下面我们以 x86 为例说明其实现方式。在 <tt>swp_entry_t</tt> 中始终保留两位：x86 上的第 0 位用于 <tt>_PAGE_PRESENT</tt> 标志，第 7 位用于 <tt>_PAGE_PROTNONE</tt>。这两位的必要性已在<a href="understand006_zh.html#sec: Describing a Page Table Entry">第 3.2 节</a>中说明。第 1&ndash;6 位用于<em>type</em>，即在 <tt>swap_info</tt> 数组中的下标，由 <tt>SWP_TYPE()</tt> 宏返回。
 </p>
 
 <p>
