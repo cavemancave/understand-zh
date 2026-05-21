@@ -9,7 +9,7 @@
   <nav>
     [ <a href="understand015_zh.html">&laquo; 上一章</a> ]
     [ <a href="index.html">&uarr; 返回目录</a> ]
-    [ <a href="../original_html/understand017.html">下一章 &raquo;</a> ]
+    [ <a href="understand017_zh.html">下一章 &raquo;</a> ]
   </nav>
 
   <h1 id="chap-oom-management">第十三章　内存耗尽管理</h1>
@@ -45,7 +45,7 @@ VM 子系统中我们要讨论的最后一个部分，是&ldquo;内存耗尽&rdq
 <h2 id="sec-determining-oom-status">13.2　判定 OOM 状态</h2>
 
 <p>
-当机器内存吃紧时，旧的页帧会被回收（见<a href="../original_html/understand013.html#chap: Page Frame Reclamation">第 10 章</a>）；但即使在以最高优先级进行扫描的情况下，回收过程也可能无法释放出足够多的页来满足请求。当确实无法释放出页帧时，会调用 <tt>out_of_memory()</tt> 来判断系统是否已经耗尽内存、是否需要杀死一个进程。
+当机器内存吃紧时，旧的页帧会被回收（见<a href="understand013_zh.html#chap: Page Frame Reclamation">第 10 章</a>）；但即使在以最高优先级进行扫描的情况下，回收过程也可能无法释放出足够多的页来满足请求。当确实无法释放出页帧时，会调用 <tt>out_of_memory()</tt> 来判断系统是否已经耗尽内存、是否需要杀死一个进程。
 </p>
 
 <div class="figure" id="fig-out-of-memory">
@@ -98,7 +98,7 @@ sqrt(sqrt(cpu_time_in_minutes)))</pre>
 <h2 id="sec-whats-new-in-2-6">13.6　2.6 版的新变化</h2>
 
 <p>
-在 2.6 中，OOM 管理的大部分内容基本保持不变，主要新增的是&ldquo;VM 计入对象&rdquo;（VM accounted objects）。这类 VMA 会被打上 <tt>VM_ACCOUNT</tt> 标志，<a href="../original_html/understand007.html#new: Process Address Space">4.8 节</a>中曾首次提到。在对带有该标志的 VMA 进行操作时，会做额外的检查，以确保有足够的可用内存。引入这一复杂度的主要动机，是为了尽量避免动用 OOM 杀手。
+在 2.6 中，OOM 管理的大部分内容基本保持不变，主要新增的是&ldquo;VM 计入对象&rdquo;（VM accounted objects）。这类 VMA 会被打上 <tt>VM_ACCOUNT</tt> 标志，<a href="understand007_zh.html#new: Process Address Space">4.8 节</a>中曾首次提到。在对带有该标志的 VMA 进行操作时，会做额外的检查，以确保有足够的可用内存。引入这一复杂度的主要动机，是为了尽量避免动用 OOM 杀手。
 </p>
 
 <p>
@@ -131,9 +131,9 @@ Linux 通过 <tt>vm_acct_memory()</tt> 来记账：每当为这些 VMA 提交内
 <nav>
   [ <a href="understand015_zh.html">&laquo; 上一章</a> ]
   [ <a href="index.html">&uarr; 返回目录</a> ]
-  [ <a href="../original_html/understand017.html">下一章 &raquo;</a> ]
+  [ <a href="understand017_zh.html">下一章 &raquo;</a> ]
 </nav>
 
-<p><small>原文来源：<a href="../original_html/understand016.html">understand016.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
+<p><small>原文来源：<a href="understand017_zh.html">understand016.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
 </body>
 </html>
