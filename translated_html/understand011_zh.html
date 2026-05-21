@@ -881,7 +881,69 @@ size-32              850   2712     32   24   24    1 :  252  126
 </p>
 
 <div class="figure" id="fig-__kmem-cache-shrink">
-  <img src="../original_html/figures/understand-html042.png" alt="图 8.6：调用关系图：__kmem_cache_shrink()">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 320" width="760" role="img" aria-labelledby="fig042-title fig042-desc" font-family="sans-serif" font-size="12">
+    <title id="fig042-title">图 8.6：__kmem_cache_shrink() 的调用关系图</title>
+    <desc id="fig042-desc">__kmem_cache_shrink 分别调用 drain_cpu_caches 和 __kmem_cache_shrink_locked。drain_cpu_caches 通过 free_block（内部为 __free_block）将 per-CPU 缓存中的对象归还给 slab。__kmem_cache_shrink_locked 则调用 kmem_slab_destroy 销毁 slabs_free 中的 slab，进而通过 kmem_freepages（最终由 free_pages 完成）释放页面，并在 slab 描述符为离片存放时调用 kmem_cache_free 释放描述符。</desc>
+    <defs>
+      <marker id="arr042" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+      </marker>
+    </defs>
+
+    <text x="380" y="22" text-anchor="middle" font-size="13" font-weight="bold">__kmem_cache_shrink() 调用关系图</text>
+
+    <g font-family="monospace" font-size="12" text-anchor="middle">
+      <!-- root -->
+      <rect x="280" y="40" width="200" height="32" fill="#eef5ff" stroke="#1f4e8a"/>
+      <text x="380" y="60">__kmem_cache_shrink</text>
+
+      <!-- level 1 -->
+      <rect x="80"  y="110" width="180" height="32" fill="#eef" stroke="#333"/>
+      <text x="170" y="130">drain_cpu_caches</text>
+
+      <rect x="460" y="110" width="240" height="32" fill="#eef" stroke="#333"/>
+      <text x="580" y="130">__kmem_cache_shrink_locked</text>
+
+      <!-- level 2 -->
+      <rect x="80"  y="175" width="180" height="32" fill="#eef" stroke="#333"/>
+      <text x="170" y="195">free_block</text>
+
+      <rect x="480" y="175" width="200" height="32" fill="#eef" stroke="#333"/>
+      <text x="580" y="195">kmem_slab_destroy</text>
+
+      <!-- level 3 (under free_block) -->
+      <rect x="80"  y="235" width="180" height="32" fill="#eef" stroke="#333"/>
+      <text x="170" y="255">__free_block</text>
+
+      <!-- level 3 (under kmem_slab_destroy) -->
+      <rect x="360" y="235" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="440" y="255">kmem_freepages</text>
+
+      <rect x="560" y="235" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="640" y="255">kmem_cache_free</text>
+
+      <!-- level 4 (under kmem_freepages) -->
+      <rect x="360" y="280" width="160" height="32" fill="#eef" stroke="#333"/>
+      <text x="440" y="300">free_pages</text>
+    </g>
+
+    <g stroke="#333" stroke-width="1.4" fill="none" marker-end="url(#arr042)">
+      <!-- root -> level 1 -->
+      <line x1="340" y1="72" x2="200" y2="110"/>
+      <line x1="420" y1="72" x2="560" y2="110"/>
+      <!-- drain_cpu_caches -> free_block -->
+      <line x1="170" y1="142" x2="170" y2="175"/>
+      <!-- free_block -> __free_block -->
+      <line x1="170" y1="207" x2="170" y2="235"/>
+      <!-- __kmem_cache_shrink_locked -> kmem_slab_destroy -->
+      <line x1="580" y1="142" x2="580" y2="175"/>
+      <!-- kmem_slab_destroy -> kmem_freepages / kmem_cache_free -->
+      <line x1="540" y1="207" x2="470" y2="235"/>
+      <line x1="620" y1="207" x2="630" y2="235"/>
+      <!-- kmem_freepages -> free_pages -->
+      <line x1="440" y1="267" x2="440" y2="280"/>
+    </g>
+  </svg>
   <div class="caption">图 8.6：调用关系图：<tt>__kmem_cache_shrink()</tt></div>
 </div>
 
