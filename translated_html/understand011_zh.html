@@ -1061,7 +1061,54 @@ size-32              850   2712     32   24   24    1 :  252  126
 </p>
 
 <div class="figure" id="fig-page-cache-slab">
-  <img src="../original_html/figures/understand-html044.png" alt="图 8.8：页面与缓存、slab 的关系">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 260" width="640" role="img" aria-labelledby="fig044-title fig044-desc" font-family="sans-serif" font-size="12">
+    <title id="fig044-title">图 8.8：页面与缓存、slab 的关系</title>
+    <desc id="fig044-desc">每个被 slab 分配器管理的物理页都对应一个 struct page；slab 分配器借用 page-&gt;list.next 与 page-&gt;list.prev 字段，分别指向该页所属的 kmem_cache_t（缓存描述符）和 slab_t（slab 描述符），同时在 page-&gt;flags 中置 PG_slab 标志。</desc>
+    <defs>
+      <marker id="arr044" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+      </marker>
+    </defs>
+
+    <text x="320" y="22" text-anchor="middle" font-size="13" font-weight="bold">页面与缓存、slab 的关系</text>
+
+    <!-- struct page on the left -->
+    <g>
+      <rect x="30" y="60" width="200" height="150" fill="#eef5ff" stroke="#1f4e8a"/>
+      <text x="130" y="80" text-anchor="middle" font-family="monospace" font-weight="bold">struct page</text>
+      <line x1="30" y1="90" x2="230" y2="90" stroke="#1f4e8a"/>
+
+      <rect x="40" y="100" width="180" height="28" fill="#fff" stroke="#333"/>
+      <text x="50" y="118" font-family="monospace">page-&gt;list.next</text>
+
+      <rect x="40" y="136" width="180" height="28" fill="#fff" stroke="#333"/>
+      <text x="50" y="154" font-family="monospace">page-&gt;list.prev</text>
+
+      <rect x="40" y="172" width="180" height="28" fill="#fff" stroke="#333"/>
+      <text x="50" y="190" font-family="monospace">flags: PG_slab</text>
+    </g>
+
+    <!-- kmem_cache_t on the upper right -->
+    <g>
+      <rect x="430" y="60" width="180" height="60" fill="#eef" stroke="#333"/>
+      <text x="520" y="84" text-anchor="middle" font-family="monospace" font-weight="bold">kmem_cache_t</text>
+      <text x="520" y="104" text-anchor="middle">缓存描述符</text>
+    </g>
+
+    <!-- slab_t on the lower right -->
+    <g>
+      <rect x="430" y="150" width="180" height="60" fill="#eef" stroke="#333"/>
+      <text x="520" y="174" text-anchor="middle" font-family="monospace" font-weight="bold">slab_t</text>
+      <text x="520" y="194" text-anchor="middle">slab 描述符</text>
+    </g>
+
+    <!-- arrows from page fields to right-side boxes -->
+    <line x1="220" y1="114" x2="430" y2="90" stroke="#333" marker-end="url(#arr044)"/>
+    <text x="325" y="96" text-anchor="middle" fill="#1f4e8a">SET_PAGE_CACHE() / GET_PAGE_CACHE()</text>
+
+    <line x1="220" y1="150" x2="430" y2="180" stroke="#333" marker-end="url(#arr044)"/>
+    <text x="325" y="170" text-anchor="middle" fill="#1f4e8a">SET_PAGE_SLAB() / GET_PAGE_SLAB()</text>
+  </svg>
   <div class="caption">图 8.8：页面与缓存、slab 的关系</div>
 </div>
 
