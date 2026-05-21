@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>第八章 译文 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand010_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand012.html">下一章 &raquo;</a> ]
+  </nav>
+
+  <h1>第八章　Slab 分配器</h1>
+  <div class="meta">原文版本：Chapter 8 — Slab Allocator</div>
+
+<p id="chap-slab-allocator">
+本章描述通用分配器。它是一个 slab 分配器，在许多方面与 Solaris 中使用的通用内核分配器十分相似 [MM01]。Linux 的实现主要基于 Bonwick 关于 slab 分配器的第一篇论文 [Bon94]，并加入了许多与他后续论文 [BA01] 中所描述思想非常接近的改进。我们先对该分配器做一个简要概览，随后描述其使用的各种结构体，最后再深入介绍它所负责的每项任务。
+</p>
+
+<p>
+slab 分配器的基本思想是：让内核常用对象保持一份已初始化好的缓存，随时可用。如果没有这种基于对象的分配器，内核就会花费大量时间反复地分配、初始化和释放同一种对象。slab 分配器的目标是缓存被释放的对象，使其基本结构在多次使用之间得以保留 [Bon94]。
+</p>
+
+<p>
+slab 分配器由若干个数量可变的缓存组成，这些缓存通过一个名为<em>缓存链（cache chain）</em>的双向循环链表连接起来。在 slab 分配器的语境中，一个<em>缓存（cache）</em>是某种特定类型对象（如 <tt>mm_struct</tt> 或 <tt>fs_cache</tt>）的管理器，由 <tt>struct kmem_cache_s</tt> 管理（稍后详细讨论）。各个缓存通过缓存结构体中的 <tt>next</tt> 字段相互链接。
+</p>
+
+<p>
+每个缓存维护若干块物理上连续的内存页，称为 <em>slab</em>，这些 slab 被切分成小块用于存放该缓存所管理的数据结构和对象。这些不同结构之间的关系如<a href="#fig-slab-layout">图 8.1</a> 所示。
+</p>
+
+<div class="figure" id="fig-slab-layout">
+  <img src="../original_html/figures/understand-html037.png" alt="图 8.1：Slab 分配器的整体结构">
+  <div class="caption">图 8.1：Slab 分配器的整体结构</div>
+</div>
+
+<p>slab 分配器有三个主要目标：</p>
+<ul>
+  <li>分配小块内存，以消除伙伴系统造成的内部碎片；</li>
+  <li>缓存常用对象，使系统不必反复花时间分配、初始化和销毁对象。在 Solaris 上的基准测试表明，启用 slab 分配器后分配性能有显著提升 [Bon94]；</li>
+  <li>通过将对象与 L1 或 L2 缓存对齐，更好地利用硬件高速缓存。</li>
+</ul>
+
+<p>
+为了减少二进制伙伴分配器通常会造成的内部碎片，slab 分配器维护了两组小内存缓冲区缓存，大小范围从 2<sup>5</sup>（32）字节到 2<sup>17</sup>（131072）字节。其中一组适用于 DMA 设备。这些缓存被称为 size-N 和 size-N(DMA)，其中 <i>N</i> 为分配的字节数。<tt>kmalloc()</tt>（见<a href="#sec8-4-1">第 8.4.1 节</a>）函数用于从中分配内存。这样一来，底层页面分配器最大的不足之处也就得到了解决。各 sizes 缓存将在 <a href="#sec8-4">第 8.4 节</a>中进一步讨论。
+</p>
+
+<p>
+slab 分配器的第二项任务是维护常用对象的缓存。对内核中很多结构体而言，初始化一个对象所需的时间与为它分配空间的时间相当，甚至更长。当新的 slab 被创建时，会在其中打包若干对象，如果提供了构造函数还会使用构造函数对其进行初始化。当对象被释放时，它保持已初始化的状态，以便下次分配能够更快。
+</p>
+
+<p>
+slab 分配器的第三项任务是改善硬件缓存利用率。如果对象在 slab 中打包后还有剩余空间，剩余部分会被用于对 slab 进行<em>着色（color）</em>。Slab 着色是一种让不同 slab 中的对象使用 CPU 缓存中不同行的方案。通过让对象在 slab 内以不同的起始偏移开始，能够使来自不同 slab 的对象落入 CPU 缓存的不同行，从而减少同一 slab 缓存中的对象在 CPU 缓存中相互冲刷的可能性。借助这种方案，本来会被浪费掉的空间被赋予了新的用途。<a href="#fig-slab-l1-aligned">图 8.2</a> 展示了从伙伴分配器获得的一个页面如何使用着色来将其上存储的对象对齐到 L1 CPU 缓存。
+</p>
+
+<div class="figure" id="fig-slab-l1-aligned">
+  <img src="../original_html/figures/understand-html038.png" alt="图 8.2：包含对齐到 L1 CPU 缓存的对象的 slab 页">
+  <div class="caption">图 8.2：包含对齐到 L1 CPU 缓存的对象的 slab 页</div>
+</div>
+
+<p>
+Linux 并不像 [Kes91] 那样根据物理地址对页面分配进行着色，也不像 [GAV95] 对数据段或 [HK97] 对代码段所描述的那样对对象放置顺序进行调整，但这种方案确实有助于提高缓存行的利用率。缓存着色（cache colouring）在<a href="#sec8-1-5">第 8.1.5 节</a>中会进一步讨论。在 SMP 系统上，为了进一步提高缓存利用率，每个缓存还为每个 CPU 保留了一个小的对象数组，这一点将在<a href="#sec8-5">第 8.5 节</a>中讨论。
+</p>
+
+<p>
+如果在编译时设置了 <tt>CONFIG_SLAB_DEBUG</tt> 选项，slab 分配器还提供 slab 调试功能。提供了两种调试特性，分别称为<em>红区（red zoning）</em>和<em>对象毒化（object poisoning）</em>。启用红区时，会在对象的两端各放置一个标记。如果该标记被破坏，分配器就能据此判断哪个对象发生了缓冲区溢出并报告之。对对象进行毒化是指，在 slab 创建时以及对象被释放后，用一个预定义位模式（在 <tt>mm/slab.c</tt> 中定义为 <tt>0x5A</tt>）填充对象。在分配对象时会检查该模式，若发生改变，分配器就能据此判断该对象在被分配之前已被使用过，并将其标记出来。
+</p>
+
+<p>
+该分配器对外公开的 API 虽小但功能强大，列于<a href="#tab-slab-api">表 8.1</a>。
+</p>
+
+<div class="table" id="tab-slab-api">
+  <table border="1" cellspacing="0" cellpadding="4">
+    <tr><td><tt>kmem_cache_t * kmem_cache_create(const char *name, size_t size, size_t offset, unsigned long flags,<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;void (*ctor)(void*, kmem_cache_t *, unsigned long),<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;void (*dtor)(void*, kmem_cache_t *, unsigned long))</tt></td></tr>
+    <tr><td>创建一个新缓存并将其加入缓存链</td></tr>
+    <tr><td>&nbsp;</td></tr>
+    <tr><td><tt>int kmem_cache_reap(int gfp_mask)</tt></td></tr>
+    <tr><td>最多扫描 <tt>REAP_SCANLEN</tt> 个缓存，并从中选择一个收割（reap）：释放其所有 per-CPU 对象和空闲 slab。在内存紧张时调用</td></tr>
+    <tr><td>&nbsp;</td></tr>
+    <tr><td><tt>int kmem_cache_shrink(kmem_cache_t *cachep)</tt></td></tr>
+    <tr><td>删除某缓存中所有 per-CPU 对象，并删除 <tt>slabs_free</tt> 链表中的所有 slab。返回被释放的页面数</td></tr>
+    <tr><td>&nbsp;</td></tr>
+    <tr><td><tt>void * kmem_cache_alloc(kmem_cache_t *cachep, int flags)</tt></td></tr>
+    <tr><td>从缓存中分配一个对象并返回给调用者</td></tr>
+    <tr><td>&nbsp;</td></tr>
+    <tr><td><tt>void kmem_cache_free(kmem_cache_t *cachep, void *objp)</tt></td></tr>
+    <tr><td>释放一个对象并将其归还给缓存</td></tr>
+    <tr><td>&nbsp;</td></tr>
+    <tr><td><tt>void * kmalloc(size_t size, int flags)</tt></td></tr>
+    <tr><td>从某个 sizes 缓存中分配一块内存</td></tr>
+    <tr><td>&nbsp;</td></tr>
+    <tr><td><tt>void kfree(const void *objp)</tt></td></tr>
+    <tr><td>释放由 <tt>kmalloc</tt> 分配的一块内存</td></tr>
+    <tr><td>&nbsp;</td></tr>
+    <tr><td><tt>int kmem_cache_destroy(kmem_cache_t * cachep)</tt></td></tr>
+    <tr><td>销毁所有 slab 中的所有对象，释放与之关联的所有内存，然后将缓存从链中移除</td></tr>
+  </table>
+  <div class="caption">表 8.1：slab 分配器面向缓存的 API</div>
+</div>
+
+<h2 class="section" id="sec8-1">8.1　缓存</h2>
+
+<p>
+每种需要被缓存的对象类型对应一个缓存。要查看运行中系统上所有可用缓存的完整列表，可以执行 <tt>cat /proc/slabinfo</tt>。该文件给出了缓存的一些基本信息。该文件输出的一段摘录如下：
+</p>
+
+<pre class="verbatim">slabinfo - version: 1.1 (SMP)
+kmem_cache            80     80    248    5    5    1 :  252  126
+urb_priv               0      0     64    0    0    1 :  252  126
+tcp_bind_bucket       15    226     32    2    2    1 :  252  126
+inode_cache         5714   5992    512  856  856    1 :  124   62
+dentry_cache        5160   5160    128  172  172    1 :  252  126
+mm_struct            240    240    160   10   10    1 :  252  126
+vm_area_struct      3911   4480     96  112  112    1 :  252  126
+size-64(DMA)           0      0     64    0    0    1 :  252  126
+size-64              432   1357     64   23   23    1 :  252  126
+size-32(DMA)          17    113     32    1    1    1 :  252  126
+size-32              850   2712     32   24   24    1 :  252  126
+</pre>
+
+<p>
+其中每一列都对应 <tt>struct kmem_cache_s</tt> 结构体中的一个字段。上述摘录中各列的含义如下：
+</p>
+
+<dl>
+  <dt><strong>cache-name</strong></dt><dd>缓存的可读名称，例如 &ldquo;tcp_bind_bucket&rdquo;；</dd>
+  <dt><strong>num-active-objs</strong></dt><dd>当前正在使用的对象数；</dd>
+  <dt><strong>total-objs</strong></dt><dd>缓存中总共可用的对象数（包括未使用的）；</dd>
+  <dt><strong>obj-size</strong></dt><dd>每个对象的大小，通常很小；</dd>
+  <dt><strong>num-active-slabs</strong></dt><dd>包含活跃对象的 slab 数；</dd>
+  <dt><strong>total-slabs</strong></dt><dd>当前存在的 slab 总数；</dd>
+  <dt><strong>num-pages-per-slab</strong></dt><dd>构造一个 slab 所需的页面数，通常为 1。</dd>
+</dl>
+
+<p>
+如示例中那样启用了 SMP 时，冒号后还会再多两列，对应于<a href="#sec8-5">第 8.5 节</a>中描述的 per-CPU 缓存，分别是：
+</p>
+
+<dl>
+  <dt><strong>limit</strong></dt><dd>每 CPU 池中允许的空闲对象上限：当其超过该值时，会将一半对象交还给全局空闲池；</dd>
+  <dt><strong>batchcount</strong></dt><dd>当 per-CPU 缓存空闲对象耗尽时，为该 CPU 一次性批量分配的对象数。</dd>
+</dl>
+
+<p>
+为加速对象与 slab 的分配和释放，它们被组织在三个链表中：<tt>slabs_full</tt>、<tt>slabs_partial</tt> 和 <tt>slabs_free</tt>。<tt>slabs_full</tt> 中所有对象都已被分配；<tt>slabs_partial</tt> 中有空闲对象，因此是分配对象的首选；<tt>slabs_free</tt> 中没有已分配的对象，因此是销毁 slab 的首选。
+</p>
+
+<h3 id="sec8-1-1">8.1.1　缓存描述符</h3>
+
+<p>
+描述缓存的所有信息存储在 <tt>mm/slab.c</tt> 中声明的 <tt>struct kmem_cache_s</tt> 中。该结构体非常大，因此将分段介绍。
+</p>
+
+<pre class="verbatim">190 struct kmem_cache_s {
+193     struct list_head        slabs_full;
+194     struct list_head        slabs_partial;
+195     struct list_head        slabs_free;
+196     unsigned int            objsize;
+197     unsigned int            flags;
+198     unsigned int            num;
+199     spinlock_t              spinlock;
+200 #ifdef CONFIG_SMP
+201     unsigned int            batchcount;
+202 #endif
+203 
+</pre>
+
+<p>这一部分字段大多与对象分配和释放相关。</p>
+
+<dl>
+  <dt><strong>slabs_*</strong></dt><dd>上一节中描述的三个 slab 链表；</dd>
+  <dt><strong>objsize</strong></dt><dd>打包到 slab 中的每个对象的大小；</dd>
+  <dt><strong>flags</strong></dt><dd>这些标志决定分配器在处理该缓存时各部分的行为，参见<a href="#sec8-1-2">第 8.1.2 节</a>；</dd>
+  <dt><strong>num</strong></dt><dd>每个 slab 中包含的对象数；</dd>
+  <dt><strong>spinlock</strong></dt><dd>用于保护结构体免受并发访问的自旋锁；</dd>
+  <dt><strong>batchcount</strong></dt><dd>上一节中描述的 per-CPU 缓存批量分配对象的数量。</dd>
+</dl>
+
+<pre class="verbatim">206     unsigned int            gfporder;
+209     unsigned int            gfpflags;
+210 
+211     size_t                  colour;
+212     unsigned int            colour_off;
+213     unsigned int            colour_next;
+214     kmem_cache_t            *slabp_cache;
+215     unsigned int            growing;
+216     unsigned int            dflags;
+217 
+219     void (*ctor)(void *, kmem_cache_t *, unsigned long);
+222     void (*dtor)(void *, kmem_cache_t *, unsigned long);
+223 
+224     unsigned long           failures;
+225 
+</pre>
+
+<p>这一部分字段主要与从缓存分配或释放 slab 相关。</p>
+
+<dl>
+  <dt><strong>gfporder</strong></dt><dd>slab 以页为单位的大小。每个 slab 消耗 2<sup><i>gfporder</i></sup> 个页面，因为这是伙伴分配器提供的分配粒度；</dd>
+  <dt><strong>gfpflags</strong></dt><dd>调用伙伴分配器分配页面时使用的 GFP 标志，参见<a href="understand009_zh.html#sec6-4">第 6.4 节</a>中的完整列表；</dd>
+  <dt><strong>colour</strong></dt><dd>每个 slab 尽可能将对象放置在不同的缓存行中。缓存着色将在<a href="#sec8-1-5">第 8.1.5 节</a>中进一步讨论；</dd>
+  <dt><strong>colour_off</strong></dt><dd>slab 的字节对齐量，例如 size-X 缓存的 slab 是按 L1 缓存对齐的；</dd>
+  <dt><strong>colour_next</strong></dt><dd>下一次要使用的着色行。该值在到达 <tt>colour</tt> 时会回绕到 0；</dd>
+  <dt><strong>growing</strong></dt><dd>用于标识缓存是否正在增长。若正在增长，则在内存压力下被选中收割空闲 slab 的可能性较低；</dd>
+  <dt><strong>dflags</strong></dt><dd>在缓存生命周期内会发生变化的动态标志，参见<a href="#sec8-1-3">第 8.1.3 节</a>；</dd>
+  <dt><strong>ctor</strong></dt><dd>对于复杂对象，可选地提供一个构造函数，用于初始化每个新对象。该字段是指向该函数的指针，可以为 NULL；</dd>
+  <dt><strong>dtor</strong></dt><dd>与构造函数相对应的析构函数，可以为 NULL；</dd>
+  <dt><strong>failures</strong></dt><dd>除被初始化为 0 之外，该字段未在代码中其他任何位置被使用。</dd>
+</dl>
+
+<pre class="verbatim">227     char                    name[CACHE_NAMELEN];
+228     struct list_head        next;
+</pre>
+
+<p>这些字段在缓存创建时被设置。</p>
+<dl>
+  <dt><strong>name</strong></dt><dd>缓存的可读名称；</dd>
+  <dt><strong>next</strong></dt><dd>缓存链上的下一个缓存。</dd>
+</dl>
+
+<pre class="verbatim">229 #ifdef CONFIG_SMP
+231     cpucache_t              *cpudata[NR_CPUS];
+232 #endif
+</pre>
+
+<dl>
+  <dt><strong>cpudata</strong></dt><dd>per-CPU 数据，在<a href="#sec8-5">第 8.5 节</a>中进一步讨论。</dd>
+</dl>
+
+<pre class="verbatim">233 #if STATS
+234     unsigned long           num_active;
+235     unsigned long           num_allocations;
+236     unsigned long           high_mark;
+237     unsigned long           grown;
+238     unsigned long           reaped;
+239     unsigned long           errors;
+240 #ifdef CONFIG_SMP
+241     atomic_t                allochit;
+242     atomic_t                allocmiss;
+243     atomic_t                freehit;
+244     atomic_t                freemiss;
+245 #endif
+246 #endif
+247 };
+</pre>
+
+<p>
+这些数据仅在编译时设置了 <tt>CONFIG_SLAB_DEBUG</tt> 选项时才可用。它们都只是计数器，并无一般意义上的用途。<tt>/proc/slabinfo</tt> 中的统计信息是由其他进程读取该 proc 项时通过遍历每个缓存使用的每个 slab 来计算得到的，并不依赖这些字段。
+</p>
+
+<dl>
+  <dt><strong>num_active</strong></dt><dd>缓存中当前活跃对象数；</dd>
+  <dt><strong>num_allocations</strong></dt><dd>缓存中迄今为止已分配对象的累计数；</dd>
+  <dt><strong>high_mark</strong></dt><dd><tt>num_active</tt> 迄今为止达到过的最大值；</dd>
+  <dt><strong>grown</strong></dt><dd><tt>kmem_cache_grow()</tt> 被调用的次数；</dd>
+  <dt><strong>reaped</strong></dt><dd>该缓存被收割的次数；</dd>
+  <dt><strong>errors</strong></dt><dd>该字段从未被使用；</dd>
+  <dt><strong>allochit</strong></dt><dd>从 per-CPU 缓存命中的分配次数；</dd>
+  <dt><strong>allocmiss</strong></dt><dd>与 <tt>allochit</tt> 相对，未命中 per-CPU 缓存的分配次数；</dd>
+  <dt><strong>freehit</strong></dt><dd>对象被释放并放入 per-CPU 缓存的次数；</dd>
+  <dt><strong>freemiss</strong></dt><dd>对象被释放并归还给全局池的次数。</dd>
+</dl>
+
+<h3 id="sec8-1-2">8.1.2　缓存静态标志</h3>
+
+<p>
+一些标志在缓存创建时被设置，并在缓存的整个生命周期内保持不变。它们影响 slab 的结构以及对象在其中的存放方式。所有标志都以位掩码形式存储在缓存描述符的 <tt>flags</tt> 字段中。完整的可用标志列表声明在 &lt;<tt>linux/slab.h</tt>&gt; 中。
+</p>
+
+<p>
+主要分为三组。第一组是内部标志，仅由 slab 分配器自身设置，列于<a href="#tab-internal-flags">表 8.2</a>。这组中唯一相关的标志是 <tt>CFGS_OFF_SLAB</tt>，它决定 slab 描述符存放的位置。
+</p>
+
+<div class="table" id="tab-internal-flags">
+  <table border="1" cellspacing="0" cellpadding="4">
+    <tr><th>标志</th><th>说明</th></tr>
+    <tr><td><tt>CFGS_OFF_SLAB</tt></td><td>表示该缓存的 slab 管理器存放在 slab 之外（off-slab），参见<a href="#sec8-2-1">第 8.2.1 节</a></td></tr>
+    <tr><td><tt>CFLGS_OPTIMIZE</tt></td><td>该标志被设置但从未被使用</td></tr>
+  </table>
+  <div class="caption">表 8.2：内部缓存静态标志</div>
+</div>
+
+<p>
+第二组由缓存创建者设置，决定分配器如何对待 slab 以及如何存放对象。列于<a href="#tab-creator-flags">表 8.3</a>。
+</p>
+
+<div class="table" id="tab-creator-flags">
+  <table border="1" cellspacing="0" cellpadding="4">
+    <tr><th>标志</th><th>说明</th></tr>
+    <tr><td><tt>SLAB_HWCACHE_ALIGN</tt></td><td>将对象按 L1 CPU 缓存对齐</td></tr>
+    <tr><td><tt>SLAB_MUST_HWCACHE_ALIGN</tt></td><td>即使非常浪费空间或启用了 slab 调试，仍强制按 L1 CPU 缓存对齐</td></tr>
+    <tr><td><tt>SLAB_NO_REAP</tt></td><td>从不收割该缓存中的 slab</td></tr>
+    <tr><td><tt>SLAB_CACHE_DMA</tt></td><td>使用 <tt>ZONE_DMA</tt> 中的内存分配 slab</td></tr>
+  </table>
+  <div class="caption">表 8.3：由调用者设置的缓存静态标志</div>
+</div>
+
+<p>
+最后一组只在编译选项 <tt>CONFIG_SLAB_DEBUG</tt> 被设置时才可用。它们决定对 slab 和对象进行哪些额外检查，主要在开发新缓存时才有意义。
+</p>
+
+<div class="table" id="tab-debug-flags">
+  <table border="1" cellspacing="0" cellpadding="4">
+    <tr><th>标志</th><th>说明</th></tr>
+    <tr><td><tt>SLAB_DEBUG_FREE</tt></td><td>在释放时执行代价较高的检查</td></tr>
+    <tr><td><tt>SLAB_DEBUG_INITIAL</tt></td><td>在释放时调用构造函数作为验证器，确保对象仍处于正确的已初始化状态</td></tr>
+    <tr><td><tt>SLAB_RED_ZONE</tt></td><td>在对象两端放置标记，以捕获溢出</td></tr>
+    <tr><td><tt>SLAB_POISON</tt></td><td>使用已知模式毒化对象，以捕获对未分配或未初始化对象的修改</td></tr>
+  </table>
+  <div class="caption">表 8.4：缓存静态调试标志</div>
+</div>
+
+<p>
+为防止调用者使用错误的标志，<tt>mm/slab.c</tt> 中定义了一个 <tt>CREATE_MASK</tt>，由所有允许使用的标志组成。在创建缓存时，会把请求的标志与 <tt>CREATE_MASK</tt> 比较，若使用了非法标志则报告为 bug。
+</p>
+
+<h3 id="sec8-1-3">8.1.3　缓存动态标志</h3>
+
+<p>
+<tt>dflags</tt> 字段只有一个标志 <tt>DFLGS_GROWN</tt>，但很重要。该标志在 <tt>kmem_cache_grow()</tt> 中被设置，目的是让 <tt>kmem_cache_reap()</tt> 不太会选中该缓存进行收割。当 <tt>kmem_cache_reap()</tt> 发现某缓存设置了该标志时，会跳过该缓存并清除该标志。
+</p>
+
+<h3 id="sec8-1-4">8.1.4　缓存分配标志</h3>
+
+<p>
+这些标志与用于为 slab 分配页面的 GFP 页标志相对应。调用者有时会使用 <tt>SLAB_*</tt> 标志，有时也会使用 <tt>GFP_*</tt> 标志，但其实应只使用 <tt>SLAB_*</tt>。它们直接对应于<a href="understand009_zh.html#sec6-4">第 6.4 节</a>中描述的标志，此处不再赘述。这些标志的存在大概是为了使代码意图更清晰，并便于 slab 分配器在需要时对特定标志做出不同响应；但实际上目前并无差异。
+</p>
+
+<div class="table" id="tab-alloc-flags">
+  <table border="1" cellspacing="0" cellpadding="4">
+    <tr><th>标志</th><th>说明</th></tr>
+    <tr><td><tt>SLAB_ATOMIC</tt></td><td>等价于 <tt>GFP_ATOMIC</tt></td></tr>
+    <tr><td><tt>SLAB_DMA</tt></td><td>等价于 <tt>GFP_DMA</tt></td></tr>
+    <tr><td><tt>SLAB_KERNEL</tt></td><td>等价于 <tt>GFP_KERNEL</tt></td></tr>
+    <tr><td><tt>SLAB_NFS</tt></td><td>等价于 <tt>GFP_NFS</tt></td></tr>
+    <tr><td><tt>SLAB_NOFS</tt></td><td>等价于 <tt>GFP_NOFS</tt></td></tr>
+    <tr><td><tt>SLAB_NOHIGHIO</tt></td><td>等价于 <tt>GFP_NOHIGHIO</tt></td></tr>
+    <tr><td><tt>SLAB_NOIO</tt></td><td>等价于 <tt>GFP_NOIO</tt></td></tr>
+    <tr><td><tt>SLAB_USER</tt></td><td>等价于 <tt>GFP_USER</tt></td></tr>
+  </table>
+  <div class="caption">表 8.5：缓存分配标志</div>
+</div>
+
+<p>
+另外还有少量可以传给构造函数和析构函数的标志，列于<a href="#tab-ctor-flags">表 8.6</a>。
+</p>
+
+<div class="table" id="tab-ctor-flags">
+  <table border="1" cellspacing="0" cellpadding="4">
+    <tr><th>标志</th><th>说明</th></tr>
+    <tr><td><tt>SLAB_CTOR_CONSTRUCTOR</tt></td><td>对于将同一个函数同时用作构造函数和析构函数的缓存，当该函数作为构造函数被调用时置此标志</td></tr>
+    <tr><td><tt>SLAB_CTOR_ATOMIC</tt></td><td>表示构造函数不能睡眠</td></tr>
+    <tr><td><tt>SLAB_CTOR_VERIFY</tt></td><td>表示构造函数只需验证对象是否被正确初始化</td></tr>
+  </table>
+  <div class="caption">表 8.6：缓存构造函数标志</div>
+</div>
+
+<h3 id="sec8-1-5">8.1.5　缓存着色</h3>
+
+<p>
+为了更好地利用硬件缓存，slab 分配器会根据 slab 中剩余空间的多少，将不同 slab 中的对象偏移不同的字节数。偏移以 <tt>BYTES_PER_WORD</tt> 为单位；当设置了 <tt>SLAB_HWCACHE_ALIGN</tt> 时，则以 <tt>L1_CACHE_BYTES</tt> 为单位，以对齐到 L1 硬件缓存。
+</p>
+
+<p>
+在缓存创建过程中，会计算每个 slab 可以容纳多少个对象（见<a href="#sec8-2-7">第 8.2.7 节</a>），以及会浪费多少字节。根据浪费量，会为缓存描述符计算出两个值：
+</p>
+
+<dl>
+  <dt><strong>colour</strong></dt><dd>可使用的不同偏移数；</dd>
+  <dt><strong>colour_off</strong></dt><dd>slab 中每个对象偏移量的步长。</dd>
+</dl>
+
+<p>
+对象被偏移之后，会使用关联硬件缓存中的不同缓存行，因此来自不同 slab 的对象在内存中相互覆盖的可能性变小。
+</p>
+
+<p>
+最好通过一个例子来理解。假设为方便起见，slab 的 <tt>s_mem</tt>（即第一个对象的地址）为 0，slab 中浪费了 100 字节，且按 32 字节对齐到 Pentium II 的 L1 硬件缓存。
+</p>
+
+<p>
+在此情景下，创建的第一个 slab 的对象从 0 开始，第二个从 32 开始，第三个从 64 开始，第四个从 96 开始，第五个则又从 0 开始。这样一来，来自各 slab 的对象不会命中 CPU 上的同一硬件缓存行。<tt>colour</tt> 的值为 3，<tt>colour_off</tt> 的值为 32。
+</p>
+
+<h3 id="sec8-1-6">8.1.6　缓存创建</h3>
+
+<p>
+<tt>kmem_cache_create()</tt> 函数负责创建新缓存并将其加入缓存链。创建缓存所需要完成的任务包括：
+</p>
+<ul>
+  <li>进行基本的合法性检查，防止误用；</li>
+  <li>如果设置了 <tt>CONFIG_SLAB_DEBUG</tt>，则执行调试检查；</li>
+  <li>从 <tt>cache_cache</tt> slab 缓存中分配一个 <tt>kmem_cache_t</tt>；</li>
+  <li>将对象大小按字长对齐；</li>
+  <li>计算每个 slab 能容纳多少个对象；</li>
+  <li>将对象大小按硬件缓存对齐；</li>
+  <li>计算着色偏移量；</li>
+  <li>初始化缓存描述符中其余字段；</li>
+  <li>将新缓存加入缓存链。</li>
+</ul>
+
+<p>
+<a href="#fig-kmem-cache-create">图 8.3</a> 给出了创建缓存相关的调用关系图；每个函数的详细说明请参阅源码注释。
+</p>
+
+<div class="figure" id="fig-kmem-cache-create">
+  <img src="../original_html/figures/understand-html039.png" alt="图 8.3：调用关系图：kmem_cache_create()">
+  <div class="caption">图 8.3：调用关系图：<tt>kmem_cache_create()</tt></div>
+</div>
+
+<h3 id="sec8-1-7">8.1.7　缓存收割</h3>
+
+<p>
+当一个 slab 被释放时，它会被放到 <tt>slabs_free</tt> 链表上以备将来使用。缓存不会自动收缩，因此当 <b>kswapd</b> 注意到内存紧张时，会调用 <tt>kmem_cache_reap()</tt> 来释放一些内存。该函数负责选择一个需要收缩内存占用的缓存。值得注意的是，缓存收割并不考虑哪个内存节点或哪个区（zone）正承受压力。这意味着在 NUMA 或包含高端内存的机器上，内核可能会花费大量时间去释放并不存在内存压力区域的内存；但对于像 x86 这样只有一个内存区段的架构来说，这并不是问题。
+</p>
+
+<div class="figure" id="fig-kmem-cache-reap">
+  <img src="../original_html/figures/understand-html040.png" alt="图 8.4：调用关系图：kmem_cache_reap()">
+  <div class="caption">图 8.4：调用关系图：<tt>kmem_cache_reap()</tt></div>
+</div>
+
+<p>
+<a href="#fig-kmem-cache-reap">图 8.4</a> 中的调用关系图看似简单，但选择合适缓存进行收割的过程其实相当冗长。当系统中存在大量缓存时，每次调用最多只检查 <tt>REAP_SCANLEN</tt>（当前定义为 10）个缓存。上次扫描到的最后一个缓存存储在 <tt>clock_searchp</tt> 中，以避免反复检查同样的缓存。对于每个被扫描到的缓存，收割器会执行如下操作：
+</p>
+<ul>
+  <li>检查标志中是否含有 <tt>SLAB_NO_REAP</tt>，若是则跳过；</li>
+  <li>如果缓存正在增长，跳过它；</li>
+  <li>如果缓存近期增长过或正在增长，<tt>DFLGS_GROWN</tt> 会被设置。若该标志已设，跳过此 slab 但清除该标志，使其下次成为候选；</li>
+  <li>统计 <tt>slabs_free</tt> 中空闲 slab 的数量，并在变量 <tt>pages</tt> 中算出可释放的页面数；</li>
+  <li>如果该缓存有构造函数或 slab 较大，对 <tt>pages</tt> 做相应调整，降低其被选中的概率；</li>
+  <li>如果可释放的页面数超过 <tt>REAP_PERFECT</tt>，则释放 <tt>slabs_free</tt> 中一半的 slab；</li>
+  <li>否则继续扫描其余缓存，选择能释放最多页面的那个，释放其 <tt>slabs_free</tt> 中一半的 slab。</li>
+</ul>
+
+<h3 id="sec8-1-8">8.1.8　缓存收缩</h3>
+
+<p>当一个缓存被选中进行收缩时，所采取的步骤简单而粗暴：</p>
+<ul>
+  <li>删除 per-CPU 缓存中的所有对象；</li>
+  <li>除非 growing 标志被设置，否则删除 <tt>slabs_free</tt> 中的所有 slab。</li>
+</ul>
+<p>Linux 一点都不含蓄。</p>
+
+<div class="figure" id="fig-kmem-cache-shrink">
+  <img src="../original_html/figures/understand-html041.png" alt="图 8.5：调用关系图：kmem_cache_shrink()">
+  <div class="caption">图 8.5：调用关系图：<tt>kmem_cache_shrink()</tt></div>
+</div>
+
+<p>
+有两个名字非常相近、容易混淆的收缩函数。<tt>kmem_cache_shrink()</tt> 删除 <tt>slabs_free</tt> 中所有 slab，并返回因此释放的页面数。这是给 slab 分配器使用者使用的主要导出函数。
+</p>
+
+<div class="figure" id="fig-__kmem-cache-shrink">
+  <img src="../original_html/figures/understand-html042.png" alt="图 8.6：调用关系图：__kmem_cache_shrink()">
+  <div class="caption">图 8.6：调用关系图：<tt>__kmem_cache_shrink()</tt></div>
+</div>
+
+<p>
+另一个函数 <tt>__kmem_cache_shrink()</tt> 也会释放 <tt>slabs_free</tt> 中所有 slab，然后验证 <tt>slabs_partial</tt> 和 <tt>slabs_full</tt> 为空。这是仅供内部使用的函数，在销毁缓存时尤为重要：此时关心的不是释放了多少页面，而是缓存是否已经为空。
+</p>
+
+<h3 id="sec8-1-9">8.1.9　缓存销毁</h3>
+
+<p>
+当一个模块被卸载时，它负责通过 <tt>kmem_cache_destroy()</tt> 销毁其所创建的缓存。正确销毁缓存非常重要，因为不允许存在两个同名（可读名称相同）的缓存。核心内核代码通常不操心销毁其缓存，因为这些缓存的生命周期与系统相同。销毁缓存所采取的步骤为：
+</p>
+<ul>
+  <li>从缓存链中删除该缓存；</li>
+  <li>收缩缓存以删除所有 slab；</li>
+  <li>释放所有 per-CPU 缓存（<tt>kfree()</tt>）；</li>
+  <li>从 <tt>cache_cache</tt> 中删除该缓存描述符。</li>
+</ul>
+
+<div class="figure" id="fig-kmem-cache-destroy">
+  <img src="../original_html/figures/understand-html043.png" alt="图 8.7：调用关系图：kmem_cache_destroy()">
+  <div class="caption">图 8.7：调用关系图：<tt>kmem_cache_destroy()</tt></div>
+</div>
+
+<h2 class="section" id="sec8-2">8.2　Slab</h2>
+
+<p>
+本节描述 slab 的结构和管理方式。描述 slab 的结构体比缓存描述符要简单得多，但 slab 的内部布局则要复杂得多。其定义如下：
+</p>
+
+<pre class="verbatim">typedef struct slab_s {
+    struct list_head        list;
+    unsigned long           colouroff;
+    void                    *s_mem;
+    unsigned int            inuse;
+    kmem_bufctl_t           free;
+} slab_t;
+</pre>
+
+<p>该结构体中各字段的含义如下：</p>
+
+<dl>
+  <dt><strong>list</strong></dt><dd>slab 所属的链表，可能是缓存管理器中 <tt>slab_full</tt>、<tt>slab_partial</tt> 或 <tt>slab_free</tt> 之一；</dd>
+  <dt><strong>colouroff</strong></dt><dd>slab 中第一个对象相对于基地址的着色偏移。第一个对象的地址为 <tt>s_mem + colouroff</tt>；</dd>
+  <dt><strong>s_mem</strong></dt><dd>slab 中第一个对象的起始地址；</dd>
+  <dt><strong>inuse</strong></dt><dd>slab 中活跃对象的数量；</dd>
+  <dt><strong>free</strong></dt><dd>一个 <tt>bufctl</tt> 数组，用于存放空闲对象的位置。详见<a href="#sec8-2-3">第 8.2.3 节</a>。</dd>
+</dl>
+
+<p>
+读者会注意到：给定一个 slab 管理器或其中的某个对象，似乎并没有显而易见的办法来判断它们属于哪个 slab 或哪个缓存。这一问题通过使用 <tt>struct page</tt> 中的 <tt>list</tt> 字段来解决。<tt>SET_PAGE_CACHE()</tt> 和 <tt>SET_PAGE_SLAB()</tt> 使用 <tt>page</tt>→<tt>list</tt> 的 <tt>next</tt> 和 <tt>prev</tt> 字段来记录对象所属的缓存和 slab。要从 page 中取出对应的描述符，可以使用宏 <tt>GET_PAGE_CACHE()</tt> 和 <tt>GET_PAGE_SLAB()</tt>。这一关系如<a href="#fig-page-cache-slab">图 8.8</a> 所示。
+</p>
+
+<div class="figure" id="fig-page-cache-slab">
+  <img src="../original_html/figures/understand-html044.png" alt="图 8.8：页面与缓存、slab 的关系">
+  <div class="caption">图 8.8：页面与缓存、slab 的关系</div>
+</div>
+
+<p>
+最后一个问题是 slab 管理结构体存放在哪里。slab 管理器既可以放在 slab 内（<tt>CFLGS_OFF_SLAB</tt> 未在静态标志中设置），也可以放在 slab 外。放置位置由缓存创建时对象的大小决定。值得注意的是，<a href="#fig-page-cache-slab">图 8.8</a> 中 <tt>struct slab_t</tt> 实际上可以存放在页帧的开头，尽管图中看上去 <tt>struct slab_</tt> 与页帧是分开的。
+</p>
+
+<h3 id="sec8-2-1">8.2.1　存放 slab 描述符</h3>
+
+<p>
+如果对象大小超过某个阈值（在 x86 上为 512 字节），则会在缓存标志中设置 <tt>CFGS_OFF_SLAB</tt>，<em>slab 描述符</em>被存放在某个 sizes 缓存（参见<a href="#sec8-4">第 8.4 节</a>）中。选中的 sizes 缓存足以容纳 <tt>struct slab_t</tt>，<tt>kmem_cache_slabmgmt()</tt> 会按需从中分配。这会限制 slab 上可存放的对象数，因为留给 <tt>bufctl</tt> 的空间有限；但这并不重要，因为这种情况下对象较大，单个 slab 中本来也不会有太多对象。
+</p>
+
+<div class="figure" id="fig-slab-on-slab">
+  <img src="../original_html/figures/understand-html045.png" alt="图 8.9：描述符放在 slab 内的 slab">
+  <div class="caption">图 8.9：描述符放在 slab 内的 slab</div>
+</div>
+
+<p>
+另一种情况是，slab 管理器保留在 slab 起始处。当存放在 slab 内时，slab 起始处保留有足够的空间，同时存放 <tt>slab_t</tt> 和 <tt>kmem_bufctl_t</tt>——后者是一个无符号整型数组。该数组用于跟踪下一个可用对象的索引，详见<a href="#sec8-2-3">第 8.2.3 节</a>。实际对象存放在 <tt>kmem_bufctl_t</tt> 数组之后。
+</p>
+
+<p>
+<a href="#fig-slab-on-slab">图 8.9</a> 有助于理解描述符放在 slab 内的 slab 形态，而<a href="#fig-slab-off-slab">图 8.10</a> 则展示了当描述符放在 slab 之外时，缓存如何借助 sizes 缓存来存放 slab 描述符。
+</p>
+
+<div class="figure" id="fig-slab-off-slab">
+  <img src="../original_html/figures/understand-html046.png" alt="图 8.10：描述符放在 slab 外的 slab">
+  <div class="caption">图 8.10：描述符放在 slab 外的 slab</div>
+</div>
+
+<h3 id="sec8-2-2">8.2.2　Slab 创建</h3>
+
+<div class="figure" id="fig-kmem-cache-grow">
+  <img src="../original_html/figures/understand-html047.png" alt="图 8.11：调用关系图：kmem_cache_grow()">
+  <div class="caption">图 8.11：调用关系图：<tt>kmem_cache_grow()</tt></div>
+</div>
+
+<p>
+至此我们已经看到了缓存是如何创建的；不过创建之时，缓存是空的：<tt>slab_full</tt>、<tt>slab_partial</tt>、<tt>slabs_free</tt> 三个链表都为空。新的 slab 通过调用 <tt>kmem_cache_grow()</tt> 加入缓存。这一过程常被称为&ldquo;缓存增长（cache growing）&rdquo;，发生在 <tt>slabs_partial</tt> 中没有可用对象、<tt>slabs_free</tt> 中也没有 slab 的情况下。它执行的任务包括：
+</p>
+<ul>
+  <li>进行基本的合法性检查，防止误用；</li>
+  <li>为该 slab 中的对象计算着色偏移；</li>
+  <li>为 slab 分配内存并获取一个 slab 描述符；</li>
+  <li>按<a href="#sec8-2">第 8.2 节</a>所述将 slab 使用的页面链接到 slab 描述符和缓存描述符；</li>
+  <li>初始化 slab 中的对象；</li>
+  <li>将 slab 加入缓存。</li>
+</ul>
+
+<h3 id="sec8-2-3">8.2.3　跟踪空闲对象</h3>
+
+<p>
+slab 分配器必须有一种快速而简单的方式来跟踪部分填充的 slab 上空闲对象的位置。它通过为每个 slab 管理器关联一个名为 <tt>kmem_bufctl_t</tt> 的无符号整型数组来实现这一点——显然，由 slab 管理器自己来记住其空闲对象所在的位置。
+</p>
+
+<p>
+从历史上看，根据描述 slab 分配器的论文 [Bon94]，<tt>kmem_bufctl_t</tt> 原本是一个对象链表。在 Linux 2.2.x 中，该结构体是一个三选一的联合体：指向下一个空闲对象的指针、指向 slab 管理器的指针，或指向对象本身的指针，具体使用哪个取决于对象的状态。
+</p>
+
+<p>
+今天，对象所属的 slab 与缓存是通过 <tt>struct page</tt> 来确定的，<tt>kmem_bufctl_t</tt> 仅仅是一个对象索引的整数数组。该数组的元素数与 slab 上对象数相同。
+</p>
+
+<pre class="verbatim">141 typedef unsigned int kmem_bufctl_t;
+</pre>
+
+<p>
+该数组紧跟在 slab 描述符之后，并没有直接的指针指向其首元素，因此提供了一个辅助宏 <tt>slab_bufctl()</tt>。
+</p>
+
+<pre class="verbatim">163 #define slab_bufctl(slabp) \
+164         ((kmem_bufctl_t *)(((slab_t*)slabp)+1))
+</pre>
+
+<p>
+这个看似晦涩的宏拆开来看其实很简单。参数 <tt>slabp</tt> 是指向 slab 管理器的指针。表达式 <tt>((slab_t*)slabp)+1</tt> 把 <tt>slabp</tt> 视为 <tt>slab_t</tt> 类型并加 1，得到的指针正好指向 <tt>kmem_bufctl_t</tt> 数组的开头。<tt>(kmem_bufctl_t *)</tt> 将其转换为所需的类型。因此 <tt>slab_bufctl(slabp)[i]</tt> 的含义就是：&ldquo;取 slab 描述符的指针，用 <tt>slab_bufctl()</tt> 偏移到 <tt>kmem_bufctl_t</tt> 数组的开头，然后返回数组的第 <i>i</i> 个元素。&rdquo;
+</p>
+
+<p>
+slab 中下一个空闲对象的索引存放在 <tt>slab_t</tt>→<tt>free</tt> 中，从而无需用链表来跟踪空闲对象。在分配或释放对象时，会根据 <tt>kmem_bufctl_t</tt> 数组中的信息更新该指针。
+</p>
+
+<h3 id="sec8-2-4">8.2.4　初始化 <tt>kmem_bufctl_t</tt> 数组</h3>
+
+<p>
+当一个缓存增长时，slab 上的所有对象和 <tt>kmem_bufctl_t</tt> 数组都会被初始化。数组用每个对象的索引填充，从 1 开始，以标记 <tt>BUFCTL_END</tt> 结束。对于含有 5 个对象的 slab，数组各元素如<a href="#fig-bufctl-init">图 8.12</a> 所示。
+</p>
+
+<div class="figure" id="fig-bufctl-init">
+  <img src="../original_html/figures/understand-html048.png" alt="图 8.12：已初始化的 kmem_bufctl_t 数组">
+  <div class="caption">图 8.12：已初始化的 <tt>kmem_bufctl_t</tt> 数组</div>
+</div>
+
+<p>
+值 0 被存放在 <tt>slab_t</tt>→<tt>free</tt> 中，因为第 0 个对象将是第一个被分配的空闲对象。其思想是：对于给定的对象 <em>n</em>，下一个空闲对象的索引存放在 <tt>kmem_bufctl_t[n]</tt> 中。在上图中，0 之后的下一个空闲对象是 1；1 之后是 2，以此类推。在使用过程中，这种排列方式使得该数组充当了一个空闲对象的 LIFO 栈。
+</p>
+
+<h3 id="sec8-2-5">8.2.5　查找下一个空闲对象</h3>
+
+<p>
+在分配对象时，<tt>kmem_cache_alloc()</tt> 通过调用 <tt>kmem_cache_alloc_one_tail()</tt> 来完成更新 <tt>kmem_bufctl_t</tt> 数组的&ldquo;实际&rdquo;工作。<tt>slab_t</tt>→<tt>free</tt> 字段保存了第一个空闲对象的索引；下一个空闲对象的索引存放在 <tt>kmem_bufctl_t[</tt><tt>slab_t</tt>→<tt>free</tt><tt>]</tt> 处。对应代码如下：
+</p>
+
+<pre class="verbatim">1253     objp = slabp-&gt;s_mem + slabp-&gt;free*cachep-&gt;objsize;
+1254     slabp-&gt;free=slab_bufctl(slabp)[slabp-&gt;free];
+</pre>
+
+<p>
+<tt>slabp</tt>→<tt>s_mem</tt> 是指向 slab 中第一个对象的指针；<tt>slabp</tt>→<tt>free</tt> 是要分配的对象的索引，因此需要乘以对象大小。
+</p>
+
+<p>
+下一个空闲对象的索引保存在 <tt>kmem_bufctl_t[</tt><tt>slabp</tt>→<tt>free</tt><tt>]</tt> 处。由于没有指向该数组的直接指针，因此使用辅助宏 <tt>slab_bufctl()</tt>。注意 <tt>kmem_bufctl_t</tt> 数组在分配过程中并不会被修改，只是那些已分配出去的对应元素不再可达。例如，在两次分配之后，<tt>kmem_bufctl_t</tt> 数组中索引 0 和 1 的元素就不再被其他元素指向了。
+</p>
+
+<h3 id="sec8-2-6">8.2.6　更新 <tt>kmem_bufctl_t</tt></h3>
+
+<p>
+<tt>kmem_bufctl_t</tt> 链表只在 <tt>kmem_cache_free_one()</tt> 中释放对象时才会更新。代码如下：
+</p>
+
+<pre class="verbatim">1451     unsigned int objnr = (objp-slabp-&gt;s_mem)/cachep-&gt;objsize;
+1452 
+1453     slab_bufctl(slabp)[objnr] = slabp-&gt;free;
+1454     slabp-&gt;free = objnr;
+</pre>
+
+<p>
+指针 <tt>objp</tt> 指向即将被释放的对象，<tt>objnr</tt> 是它的索引。<tt>kmem_bufctl_t[objnr]</tt> 被更新为 <tt>slabp</tt>→<tt>free</tt> 的当前值，从而把原先由 <tt>free</tt> 指向的对象挂到这条&ldquo;伪链表&rdquo;上。<tt>slabp</tt>→<tt>free</tt> 则被更新为正在释放的对象，使其成为下次分配的对象。
+</p>
+
+<h3 id="sec8-2-7">8.2.7　计算 slab 上的对象数</h3>
+
+<p>
+在缓存创建期间，会调用 <tt>kmem_cache_estimate()</tt> 来计算一个 slab 可以存放多少对象，并将 slab 描述符是放在 slab 内还是 slab 外、以及用于标记对象是否空闲的 <tt>kmem_bufctl_t</tt> 大小都纳入考虑。它返回可存放的对象数和被浪费的字节数。如果要使用缓存着色，被浪费的字节数就很重要。
+</p>
+
+<p>计算非常基础，步骤如下：</p>
+<ul>
+  <li>将 <tt>wastage</tt> 初始化为 slab 的总大小，即 <i>PAGE_SIZE</i><sup><i>gfp_order</i></sup>；</li>
+  <li>减去存放 slab 描述符所需的空间；</li>
+  <li>统计可以存放的对象数。如果 slab 描述符放在 slab 内，还需加上 <tt>kmem_bufctl_t</tt> 的大小。不断增大 <em>i</em>，直到 slab 被填满；</li>
+  <li>返回对象数和被浪费的字节数。</li>
+</ul>
+
+<h3 id="sec8-2-8">8.2.8　Slab 销毁</h3>
+
+<p>
+当缓存被收缩或销毁时，slab 将被删除。由于对象可能有析构函数，必须先调用它们，因此该函数的任务是：
+</p>
+<ul>
+  <li>如果可用，则为 slab 中的每个对象调用析构函数；</li>
+  <li>如果启用了调试，则检查红色标记和毒化模式；</li>
+  <li>释放该 slab 占用的页面。</li>
+</ul>
+
+<p><a href="#fig-kmem-slab-destroy">图 8.13</a> 所示的调用关系图非常简单。</p>
+
+<div class="figure" id="fig-kmem-slab-destroy">
+  <img src="../original_html/figures/understand-html049.png" alt="图 8.13：调用关系图：kmem_slab_destroy()">
+  <div class="caption">图 8.13：调用关系图：<tt>kmem_slab_destroy()</tt></div>
+</div>
+
+<h2 class="section" id="sec8-3">8.3　对象</h2>
+
+<p>
+本节介绍对象是如何管理的。到这一步，真正繁重的工作大多已经由缓存管理器或 slab 管理器完成了。
+</p>
+
+<h3 id="sec8-3-1">8.3.1　初始化 slab 中的对象</h3>
+
+<p>
+slab 创建时，其中所有对象都被置于初始化状态。如果存在构造函数，则对每个对象调用一次；并且约定对象在释放后仍保持初始化状态。从概念上看初始化非常简单：遍历所有对象，调用构造函数并初始化它们的 <tt>kmem_bufctl</tt>。<tt>kmem_cache_init_objs()</tt> 函数负责对象的初始化。
+</p>
+
+<h3 id="sec8-3-2">8.3.2　对象分配</h3>
+
+<p>
+<tt>kmem_cache_alloc()</tt> 负责向调用者分配一个对象，它在 UP 和 SMP 情况下的行为略有不同。<a href="#fig-kmem-cache-alloc">图 8.14</a> 展示了 SMP 情形下对象分配的基本调用关系图。
+</p>
+
+<div class="figure" id="fig-kmem-cache-alloc">
+  <img src="../original_html/figures/understand-html050.png" alt="图 8.14：调用关系图：kmem_cache_alloc()">
+  <div class="caption">图 8.14：调用关系图：<tt>kmem_cache_alloc()</tt></div>
+</div>
+
+<p>
+基本步骤有四个。第一步（<tt>kmem_cache_alloc_head()</tt>）做基本检查，确保分配请求合法。第二步是选择从哪个 slab 链表分配——<tt>slabs_partial</tt> 或 <tt>slabs_free</tt>。如果 <tt>slabs_free</tt> 中没有 slab，则会增长缓存（见<a href="#sec8-2-2">第 8.2.2 节</a>）以在 <tt>slabs_free</tt> 中创建新 slab。最后一步是从所选 slab 中分配对象。
+</p>
+
+<p>
+SMP 情形还多一步：在分配对象之前，会先检查 per-CPU 缓存中是否有可用对象，若有则使用之；若无，则一次性批量分配 <tt>batchcount</tt> 个对象放入 per-CPU 缓存中。关于 per-CPU 缓存的更多信息见<a href="#sec8-5">第 8.5 节</a>。
+</p>
+
+<h3 id="sec8-3-3">8.3.3　对象释放</h3>
+
+<p>
+<tt>kmem_cache_free()</tt> 用于释放对象，其任务相对简单。与 <tt>kmem_cache_alloc()</tt> 一样，它在 UP 和 SMP 情况下行为不同。两者的主要区别在于：UP 情形下对象直接归还给 slab；SMP 情形下对象归还给 per-CPU 缓存。在两种情况下，若对象有析构函数都会被调用。析构函数负责将对象恢复为初始化状态。
+</p>
+
+<div class="figure" id="fig-kmem-cache-free">
+  <img src="../original_html/figures/understand-html051.png" alt="图 8.15：调用关系图：kmem_cache_free()">
+  <div class="caption">图 8.15：调用关系图：<tt>kmem_cache_free()</tt></div>
+</div>
+
+<h2 class="section" id="sec8-4">8.4　Sizes 缓存</h2>
+
+<p>
+Linux 为小块内存分配（物理页面分配器不适合处理的那种）维护两组缓存。一组用于 DMA，另一组用于普通用途。它们的可读名称分别为 <em>size-N cache</em> 和 <em>size-N(DMA) cache</em>，可通过 <tt>/proc/slabinfo</tt> 查看。每个 sized 缓存的信息存储在 <tt>struct cache_sizes</tt> 中（通过 typedef 重命名为 <tt>cache_sizes_t</tt>），定义于 <tt>mm/slab.c</tt>：
+</p>
+
+<pre class="verbatim">331 typedef struct cache_sizes {
+332     size_t           cs_size;
+333     kmem_cache_t    *cs_cachep;
+334     kmem_cache_t    *cs_dmacachep;
+335 } cache_sizes_t;
+</pre>
+
+<p>该结构体中的字段如下：</p>
+<dl>
+  <dt><strong>cs_size</strong></dt><dd>内存块的大小；</dd>
+  <dt><strong>cs_cachep</strong></dt><dd>用于普通内存的块缓存；</dd>
+  <dt><strong>cs_dmacachep</strong></dt><dd>用于 DMA 的块缓存。</dd>
+</dl>
+
+<p>
+由于此类缓存数量有限，因此在编译时初始化了一个名为 <tt>cache_sizes</tt> 的静态数组，在 4KiB 页大小的机器上从 32 字节开始，在更大页大小的机器上从 64 字节开始。
+</p>
+
+<pre class="verbatim">337 static cache_sizes_t cache_sizes[] = {
+338 #if PAGE_SIZE == 4096
+339     {    32,        NULL, NULL},
+340 #endif
+341     {    64,        NULL, NULL},
+342     {   128,        NULL, NULL},
+343     {   256,        NULL, NULL},
+344     {   512,        NULL, NULL},
+345     {  1024,        NULL, NULL},
+346     {  2048,        NULL, NULL},
+347     {  4096,        NULL, NULL},
+348     {  8192,        NULL, NULL},
+349     { 16384,        NULL, NULL},
+350     { 32768,        NULL, NULL},
+351     { 65536,        NULL, NULL},
+352     {131072,        NULL, NULL},
+353     {     0,        NULL, NULL}
+</pre>
+
+<p>
+显然，这是一个以零结尾的静态数组，由 2 的连续幂次构成的缓冲区组成，范围从 2<sup>5</sup> 到 2<sup>17</sup>。如此就有了描述各 sized 缓存的数组，系统启动时必须为其初始化相应的缓存。
+</p>
+
+<h3 id="sec8-4-1">8.4.1　<tt>kmalloc()</tt></h3>
+
+<p>
+有了 sizes 缓存，slab 分配器就可以提供一个新的分配器函数 <tt>kmalloc()</tt>，用于需要小内存缓冲区的场合。当请求到达时，会选择合适的 sizes 缓存并从中分配一个对象。因此<a href="#fig-kmalloc">图 8.16</a> 中的调用关系图非常简单，因为真正繁重的工作都在缓存分配中完成。
+</p>
+
+<div class="figure" id="fig-kmalloc">
+  <img src="../original_html/figures/understand-html052.png" alt="图 8.16：调用关系图：kmalloc()">
+  <div class="caption">图 8.16：调用关系图：<tt>kmalloc()</tt></div>
+</div>
+
+<h3 id="sec8-4-2">8.4.2　<tt>kfree()</tt></h3>
+
+<p>
+与有 <tt>kmalloc()</tt> 用于分配小对象相对应，存在 <tt>kfree()</tt> 用于释放这些对象。与 <tt>kmalloc()</tt> 类似，真正的工作发生在对象释放阶段（见<a href="#sec8-3-3">第 8.3.3 节</a>），因此<a href="#fig-kfree">图 8.17</a> 中的调用关系图也非常简单。
+</p>
+
+<div class="figure" id="fig-kfree">
+  <img src="../original_html/figures/understand-html053.png" alt="图 8.17：调用关系图：kfree()">
+  <div class="caption">图 8.17：调用关系图：<tt>kfree()</tt></div>
+</div>
+
+<h2 class="section" id="sec8-5">8.5　Per-CPU 对象缓存</h2>
+
+<p>
+slab 分配器致力于的任务之一是提高硬件缓存的利用率。高性能计算的一个普遍目标 [CS98] 是让数据在同一 CPU 上尽可能长时间地停留。Linux 通过为系统中每个 CPU 维护一个 per-CPU 对象缓存（简称 <em>cpucache</em>）来实现这一点。
+</p>
+
+<p>
+在分配或释放对象时，对象会放入 cpucache。当池中没有空闲对象时，会一次性放入一<tt>批</tt>对象。当池过大时，其中一半会被取出放入全局缓存。这样一来，同一个 CPU 的硬件缓存就能尽可能长时间地被复用。
+</p>
+
+<p>
+这种方法的第二大好处是访问 CPU 池时无需持有自旋锁，因为其他 CPU 不会访问本地数据。这一点很重要，因为如果没有 cpucache，每次分配和释放都得获取自旋锁，开销是不必要的。
+</p>
+
+<h3 id="sec8-5-1">8.5.1　描述 per-CPU 对象缓存</h3>
+
+<p>每个缓存描述符都有一个指向 cpucache 数组的指针：</p>
+
+<pre class="verbatim">231    cpucache_t              *cpudata[NR_CPUS];
+</pre>
+
+<p>该结构体非常简单：</p>
+
+<pre class="verbatim">173 typedef struct cpucache_s {
+174     unsigned int avail;
+175     unsigned int limit;
+176 } cpucache_t;
+</pre>
+
+<p>字段如下：</p>
+<dl>
+  <dt><strong>avail</strong></dt><dd>该 cpucache 中可用的空闲对象数；</dd>
+  <dt><strong>limit</strong></dt><dd>可以存在的空闲对象总数。</dd>
+</dl>
+
+<p>
+提供了一个辅助宏 <tt>cc_data()</tt>，用于获取给定缓存和处理器的 cpucache，定义如下：
+</p>
+
+<pre class="verbatim">180 #define cc_data(cachep) \
+181         ((cachep)-&gt;cpudata[smp_processor_id()])
+</pre>
+
+<p>
+它接受给定的缓存描述符 <tt>cachep</tt>，并返回 cpucache 数组（<tt>cpudata</tt>）中的指针，所需索引为当前处理器的 ID <tt>smp_processor_id()</tt>。
+</p>
+
+<p>
+指向 cpucache 中对象的指针被紧接着放在 <tt>cpucache_t</tt> 结构体之后。这与对象存放在 slab 描述符之后的方式非常相似。
+</p>
+
+<h3 id="sec8-5-2">8.5.2　向 per-CPU 缓存中添加/移除对象</h3>
+
+<p>
+为防止碎片，添加或移除对象始终从数组末尾进行。要把对象 <tt>obj</tt> 添加到 CPU 缓存 <tt>cc</tt> 中，使用如下代码块：
+</p>
+
+<pre class="verbatim">        cc_entry(cc)[cc-&gt;avail++] = obj;
+</pre>
+
+<p>要移除一个对象：</p>
+
+<pre class="verbatim">        obj = cc_entry(cc)[--cc-&gt;avail];
+</pre>
+
+<p>
+有一个名为 <tt>cc_entry()</tt> 的辅助宏，返回指向 cpucache 中第一个对象的指针，定义如下：
+</p>
+
+<pre class="verbatim">178 #define cc_entry(cpucache) \
+179         ((void **)(((cpucache_t*)(cpucache))+1))
+</pre>
+
+<p>
+它接受指向 cpucache 的指针，将其值偏移一个 <tt>cpucache_t</tt> 描述符的大小，从而得到该缓存中的第一个对象。
+</p>
+
+<h3 id="sec8-5-3">8.5.3　启用 per-CPU 缓存</h3>
+
+<p>
+当一个缓存被创建时，其 CPU 缓存必须被启用并通过 <tt>kmalloc()</tt> 为其分配内存。函数 <tt>enable_cpucache()</tt> 负责决定该缓存的大小，并调用 <tt>kmem_tune_cpucache()</tt> 为其分配内存。
+</p>
+
+<p>
+显然，CPU 缓存只能在各 sizes 缓存被启用之后才能存在，因此使用一个全局变量 <tt>g_cpucache_up</tt> 来防止 CPU 缓存被过早启用。函数 <tt>enable_all_cpucaches()</tt> 遍历缓存链中的所有缓存，启用它们的 cpucache。
+</p>
+
+<p>
+一旦 CPU 缓存设置完毕，对它的访问就无需加锁，因为一个 CPU 永远不会去访问错误的 cpucache，从而保证了安全访问。
+</p>
+
+<h3 id="sec8-5-4">8.5.4　更新 per-CPU 信息</h3>
+
+<p>
+当 per-CPU 缓存被创建或被修改时，每个 CPU 通过 IPI 收到通知。仅修改缓存描述符中的值并不足够，因为那会导致缓存一致性问题，进而需要使用自旋锁保护 CPU 缓存。取而代之的做法是：将每个 CPU 所需的全部信息填入一个 <tt>ccupdate_t</tt> 结构体，然后由每个 CPU 各自把缓存描述符中的旧信息与新数据交换。用于存放新 cpucache 信息的结构体定义如下：
+</p>
+
+<pre class="verbatim">868 typedef struct ccupdate_struct_s
+869 {
+870     kmem_cache_t *cachep;
+871     cpucache_t *new[NR_CPUS];
+872 } ccupdate_struct_t;
+</pre>
+
+<p>
+<tt>cachep</tt> 是被更新的缓存，<tt>new</tt> 是系统中各 CPU 的 cpucache 描述符数组。函数 <tt>smp_function_all_cpus()</tt> 让每个 CPU 调用 <tt>do_ccupdate_local()</tt>，该函数把 <tt>ccupdate_struct_t</tt> 中的信息与缓存描述符中的信息互换。
+</p>
+
+<p>信息交换完成后，旧数据即可删除。</p>
+
+<h3 id="sec8-5-5">8.5.5　排空 per-CPU 缓存</h3>
+
+<p>
+当某个缓存正在被收缩时，第一步是通过调用 <tt>drain_cpu_caches()</tt> 把 cpucache 中可能存在的对象排空，以便 slab 分配器更清晰地了解哪些 slab 可以释放。这一点很重要：只要某个 slab 中有一个对象被放在 per-CPU 缓存中，整个 slab 就无法释放。如果系统内存吃紧，分配上节省的几毫秒就显得无足轻重了。
+</p>
+
+<h2 class="section" id="sec8-6">8.6　Slab 分配器初始化</h2>
+
+<p>
+本节描述 slab 分配器是如何完成自身初始化的。当 slab 分配器创建一个新缓存时，会从 <tt>cache_cache</tt>（或称 <tt>kmem_cache</tt>）缓存中分配 <tt>kmem_cache_t</tt>。这显然是一个&ldquo;先有鸡还是先有蛋&rdquo;的问题，因此 <tt>cache_cache</tt> 必须被静态初始化：
+</p>
+
+<pre class="verbatim">357 static kmem_cache_t cache_cache = {
+358     slabs_full:     LIST_HEAD_INIT(cache_cache.slabs_full),
+359     slabs_partial:  LIST_HEAD_INIT(cache_cache.slabs_partial),
+360     slabs_free:     LIST_HEAD_INIT(cache_cache.slabs_free),
+361     objsize:        sizeof(kmem_cache_t),
+362     flags:          SLAB_NO_REAP,
+363     spinlock:       SPIN_LOCK_UNLOCKED,
+364     colour_off:     L1_CACHE_BYTES,
+365     name:           "kmem_cache",
+366 };
+</pre>
+
+<p>这段代码静态初始化了 <tt>kmem_cache_t</tt> 结构体：</p>
+<dl>
+  <dt><strong>358–360</strong></dt><dd>将三个链表初始化为空链表；</dd>
+  <dt><strong>361</strong></dt><dd>每个对象的大小为一个缓存描述符的大小；</dd>
+  <dt><strong>362</strong></dt><dd>缓存的创建和删除极为罕见，因此永远不将其纳入收割考虑；</dd>
+  <dt><strong>363</strong></dt><dd>将自旋锁初始化为未锁定状态；</dd>
+  <dt><strong>364</strong></dt><dd>将对象按 L1 缓存对齐；</dd>
+  <dt><strong>365</strong></dt><dd>记录可读名称。</dd>
+</dl>
+
+<p>
+这部分静态地定义了所有可在编译时确定的字段。结构体其余部分的初始化在 <tt>kmem_cache_init()</tt> 中完成，该函数由 <tt>start_kernel()</tt> 调用。
+</p>
+
+<h2 class="section" id="sec8-7">8.7　与伙伴分配器对接</h2>
+
+<p>
+slab 分配器在创建时并不自带页面，它必须向物理页面分配器申请页面。为此提供了两个 API：<tt>kmem_getpages()</tt> 和 <tt>kmem_freepages()</tt>。它们本质上只是对伙伴分配器 API 的封装，以便分配时考虑 slab 的标志。在分配时，默认标志取自 <tt>cachep</tt>→<tt>gfpflags</tt>，order 取自 <tt>cachep</tt>→<tt>gfporder</tt>，其中 <tt>cachep</tt> 是请求页面的缓存。释放页面时，会对要释放的每一个页面调用 <tt>PageClearSlab()</tt>，然后再调用 <tt>free_pages()</tt>。
+</p>
+
+<h2 class="section" id="sec8-8">8.8　2.6 中的新变化</h2>
+
+<p>
+第一个显著变化是 <tt>/proc/slabinfo</tt> 的格式版本从 1.1 提升到 2.0，可读性大大改善。最有用的变化是各字段现在带有表头，无需再去记每一列的含义。
+</p>
+
+<p>
+主要算法和思想保持不变，没有大的算法变动，但实现差别很大。尤其是更强调 per-CPU 对象的使用以及避免加锁。其次，混入了大量调试代码，因此在第一次阅读代码时，可留意 <tt>#ifdef DEBUG</tt> 块，可以先忽略。最后，有些变化纯属表面修饰：函数改了名，但行为非常相似。例如 <tt>kmem_cache_estimate()</tt> 现在被称为 <tt>cache_estimate()</tt>，二者在其他方面完全一致。
+</p>
+
+<h5>缓存描述符</h5>
+
+<p>
+对 <tt>kmem_cache_s</tt> 的改动很小。首先，常用元素（例如 per-CPU 相关数据）被重新排到结构体开头（原因参见<a href="understand006_zh.html#sec3-9">第 3.9 节</a>）。其次，slab 链表（如 <tt>slabs_full</tt>）及相关的统计信息被移到了一个独立的 <tt>struct kmem_list3</tt> 中。从注释和不寻常的宏使用方式来看，有将该结构改为按节点维护的打算。
+</p>
+
+<h5>缓存静态标志</h5>
+
+<p>
+2.4 中的标志依然存在，用法相同。<tt>CFLGS_OPTIMIZE</tt> 不再存在，但在 2.4 中也几乎从未被使用过。新增了两个标志：
+</p>
+
+<dl>
+  <dt><strong>SLAB_STORE_USER</strong></dt><dd>仅用于调试的标志，用于记录释放对象的函数。如果对象在被释放后又被使用，毒化字节将不匹配，并显示内核错误信息。由于知道最后使用该对象的函数，可以简化调试。</dd>
+  <dt><strong>SLAB_RECLAIM_ACCOUNT</strong></dt><dd>对于其对象易于回收的缓存（如 inode 缓存）会设置该标志。系统维护一个名为 <tt>slab_reclaim_pages</tt> 的变量，用于记录这些缓存所占用的 slab 页数。此计数器随后用于 <tt>vm_enough_memory()</tt>，帮助判断系统是否真正内存不足。</dd>
+</dl>
+
+<h5>缓存收割</h5>
+
+<p>
+这是 slab 分配器中最有意思的变化之一。<tt>kmem_cache_reap()</tt> 不再存在，因为它在收缩缓存时过于不加区分，而缓存的使用者其实可以做出更明智的选择。如今，缓存使用者可以通过 <tt>set_shrinker()</tt> 注册一个&ldquo;收缩缓存&rdquo;回调，以便对 slab 进行更智能的老化和收缩。这个简单的函数会填充一个 <tt>struct shrinker</tt>，其中包含回调指针和一个&ldquo;seeks&rdquo;权重——表示重建一个对象的难度——然后将其放入名为 <tt>shrinker_list</tt> 的链表。
+</p>
+
+<p>
+在页面回收时，会调用 <tt>shrink_slab()</tt>，它遍历整个 <tt>shrinker_list</tt>，并对每个 shrinker 回调调用两次。第一次调用以 0 作为参数，意思是回调返回如果被正确调用预计能释放多少页面。然后据此用一个基本启发式判断是否值得使用该回调。如果值得，就以指示要释放多少对象作为参数再调用一次。
+</p>
+
+<p>
+该机制如何统计页面数有点小巧妙。每个 task struct 中有一个名为 <tt>reclaim_state</tt> 的字段。当 slab 分配器释放页面时，会更新该字段以记录被释放的页面数。在调用 <tt>shrink_slab()</tt> 之前，将该字段置为 0，然后在 <tt>shrink_cache</tt> 返回后再次读取，从而得知释放了多少页面。
+</p>
+
+<h5>其他变化</h5>
+
+<p>
+其余变化基本属于表面修饰。例如，slab 描述符现在叫 <tt>struct slab</tt>，不再是 <tt>slab_t</tt>，这与逐步去除 typedef 的整体趋势一致。Per-CPU 缓存基本保持不变，只是结构体和 API 有了新名字。2.6 中 slab 分配器实现的其余大部分内容也大致如此。
+</p>
+
+<hr>
+<div class="notes">
+  <h3>译注</h3>
+  <ul>
+    <li>&ldquo;slab 分配器&rdquo;的术语沿用英文 slab，不翻译为&ldquo;板&rdquo;或&ldquo;片&rdquo;；&ldquo;cache&rdquo;视上下文译为&ldquo;缓存&rdquo;或保留英文 cpucache。</li>
+    <li>&ldquo;cache colouring&rdquo;译为&ldquo;缓存着色&rdquo;。</li>
+    <li>&ldquo;reap&rdquo;译为&ldquo;收割&rdquo;，指内存紧张时对缓存中空闲 slab 的批量回收。</li>
+    <li>函数名、结构体名、宏名均保留英文，便于查阅源码。</li>
+  </ul>
+</div>
+
+<nav>
+  [ <a href="understand010_zh.html">&laquo; 上一章</a> ]
+  [ <a href="index.html">&uarr; 返回目录</a> ]
+  [ <a href="../original_html/understand012.html">下一章 &raquo;</a> ]
+</nav>
+
+<p><small>原文来源：<a href="../original_html/understand011.html">understand011.html</a>（《Understanding the Linux Virtual Memory Manager》by Mel Gorman）</small></p>
+</body>
+</html>
