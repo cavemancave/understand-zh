@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>附录 F 物理页分配 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand022_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand024.html">下一章 &raquo;</a> ]
+  </nav>
+
+<hr>
+<h1 id="chap-physical-page-allocation"><a name="htoc272">附录 F</a>　物理页分配</h1>
+
+<h2><a name="toc112"></a><a name="htoc273">F.1</a>　分配页</h2>
+
+<h3><a name="htoc274">F.1.1</a>　函数：<tt>alloc_pages</tt></h3>
+
+<p><em>源码位置：include/linux/mm.h</em> <a name="func: alloc_pages"></a> <a name="@codeindex185"></a></p>
+
+<p>本函数的调用图见 <a href="understand009_zh.html#fig: alloc_pages">图 6.3</a>。其声明如下：</p>
+<pre class="verbatim">439 static inline struct page * alloc_pages(unsigned int gfp_mask, 
+                                  unsigned int order)
+440 {
+444       if (order &gt;= MAX_ORDER)
+445             return NULL;
+446       return _alloc_pages(gfp_mask, order);
+447 }
+</pre>
+<dl>
+<dt><b>439</b></dt><dd><tt>gfp_mask</tt><a name="@codeindex186"></a>（Get Free Pages，获取空闲页）标志位告诉分配器它可以采取何种行为。例如，若未设置 <tt>GFP_WAIT</tt>，则在内存紧张时分配器不会阻塞，而是直接返回 NULL。<tt>order</tt> 是要分配页数的 2 的幂次</dd>
+<dt><b>444-445</b></dt><dd>一个简单的调试性检查，编译期会被优化掉</dd>
+<dt><b>446</b></dt><dd>下一节将介绍此函数</dd>
+</dl>
+
+<h3><a name="htoc275">F.1.2</a>　函数：<tt>_alloc_pages</tt></h3>
+
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: _alloc_pages"></a> <a name="@codeindex187"></a></p>
+
+<p>函数 <tt>_alloc_pages()</tt><a name="@codeindex188"></a> 有两种实现。第一种仅为 UMA 架构（如 x86）设计，位于 <tt>mm/page_alloc.c</tt>。它只引用静态节点 <tt>contig_page_data</tt><a name="@codeindex189"></a>。第二种位于 <tt>mm/numa.c</tt>，是前者的简单扩展，采用节点本地分配策略，也就是优先从距离处理器最近的内存库分配内存。为了本书的目的，这里只考察 <tt>mm/page_alloc.c</tt> 中的版本，但在 NUMA 架构上工作的开发者还应阅读 <tt>mm/numa.c</tt> 中的 <tt>_alloc_pages()</tt> 和 <tt>_alloc_pages_pgdat()</tt>。</p>
+<pre class="verbatim">244 #ifndef CONFIG_DISCONTIGMEM
+245 struct page *_alloc_pages(unsigned int gfp_mask, 
+                              unsigned int order)
+246 {
+247     return __alloc_pages(gfp_mask, order,
+248       contig_page_data.node_zonelists+(gfp_mask &amp; GFP_ZONEMASK));
+249 }
+250 #endif
+</pre>
+<dl>
+<dt><b>244</b></dt><dd>该 ifndef 针对 x86 之类的 UMA 架构。NUMA 架构使用 <tt>mm/numa.c</tt> 中的 <tt>_alloc_pages()</tt> 函数，该函数采用节点本地策略进行分配</dd>
+<dt><b>245</b></dt><dd><tt>gfp_mask</tt> 标志位告诉分配器它可以采取何种行为。<tt>order</tt> 是要分配页数的 2 的幂次</dd>
+<dt><b>247</b></dt><dd><tt>node_zonelists</tt> 是按优先级排列的备用分配区数组，在 <tt>build_zonelists()</tt>（参见 <a href="understand019_zh.html#func: build_zonelists">B.1.6 节</a>）中初始化。<tt>gfp_mask</tt> 的低 16 位指示优先从哪个区分配。应用位掩码 <tt>gfp_mask</tt> &amp; <tt>GFP_ZONEMASK</tt> 即可得到我们在 <tt>node_zonelists</tt> 中优先分配的索引</dd>
+</dl>
+
+<h3><a name="htoc276">F.1.3</a>　函数：<tt>__alloc_pages</tt></h3>
+
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: __alloc_pages"></a> <a name="@codeindex190"></a></p>
+
+<p>到这里，我们到达了被称为&ldquo;分区伙伴分配器之心脏&rdquo;的 <tt>__alloc_pages()</tt> 函数。它负责遍历备用分区列表并选择一个合适的分区来满足分配请求。当内存紧张时，它会采取一些步骤来缓解问题。它会唤醒 <b>kswapd</b>，必要时还会亲自承担 <b>kswapd</b> 的工作。</p>
+<pre class="verbatim">327 struct page * __alloc_pages(unsigned int gfp_mask, 
+                                unsigned int order,
+                                zonelist_t *zonelist)
+328 {
+329       unsigned long min;
+330       zone_t **zone, * classzone;
+331       struct page * page;
+332       int freed;
+333 
+334       zone = zonelist-&gt;zones;
+335       classzone = *zone;
+336       if (classzone == NULL)
+337             return NULL;
+338       min = 1UL &lt;&lt; order;
+339       for (;;) {
+340             zone_t *z = *(zone++);
+341             if (!z)
+342                   break;
+343 
+344             min += z-&gt;pages_low;
+345             if (z-&gt;free_pages &gt; min) {
+346                   page = rmqueue(z, order);
+347                   if (page)
+348                         return page;
+349             }
+350       }
+</pre>
+<dl>
+<dt><b>334</b></dt><dd>把 <tt>zone</tt> 设为优先分配的分区</dd>
+<dt><b>335</b></dt><dd>该首选分区被记为 <tt>classzone</tt>。若稍后触及某个低水位线，<tt>classzone</tt> 会被标记为需要重新平衡</dd>
+<dt><b>336-337</b></dt><dd>一处非必要的合法性检查。若要触发，<tt>build_zonelists()</tt> 得严重出错</dd>
+<dt><b>338-350</b></dt><dd>这种代码块在本函数中多次出现。可以理解为&ldquo;遍历备用列表中的所有分区，看看能否在不破坏水位线的前提下满足此次分配&rdquo;。注意，每个备用分区的 <tt>pages_low</tt> 是被累加的。这是有意为之，以降低备用分区被使用的概率</dd>
+<dt><b>340</b></dt><dd><tt>z</tt> 是当前正在考察的分区。<tt>zone</tt> 变量被移动到下一个备用分区</dd>
+<dt><b>341-342</b></dt><dd>如果这是备用列表中的最后一个分区，则跳出</dd>
+<dt><b>344</b></dt><dd>把待分配的页数累加上水位线值，便于比较。每个备用分区都会执行这一步。乍看像 bug，但实际上是为了降低备用分区被使用的概率</dd>
+<dt><b>345-349</b></dt><dd>若分配后不会触及 <tt>pages_min</tt> 水位线，则分配该页块。<tt>rmqueue()</tt>（参见 <a href="#func: rmqueue">F.1.4 节</a>）负责从分区中摘取页块</dd>
+<dt><b>347-348</b></dt><dd>若页分配成功，返回指向页的指针</dd>
+</dl>
+<pre class="verbatim">352       classzone-&gt;need_balance = 1;
+353       mb();
+354       if (waitqueue_active(&amp;kswapd_wait))
+355             wake_up_interruptible(&amp;kswapd_wait);
+356 
+357       zone = zonelist-&gt;zones;
+358       min = 1UL &lt;&lt; order;
+359       for (;;) {
+360             unsigned long local_min;
+361             zone_t *z = *(zone++);
+362             if (!z)
+363                   break;
+364 
+365             local_min = z-&gt;pages_min;
+366             if (!(gfp_mask &amp; __GFP_WAIT))
+367                   local_min &gt;&gt;= 2;
+368             min += local_min;
+369             if (z-&gt;free_pages &gt; min) {
+370                   page = rmqueue(z, order);
+371                   if (page)
+372                         return page;
+373             }
+374       }
+375 
+</pre>
+<dl>
+<dt><b>352</b></dt><dd>将首选分区标记为需要重新平衡。该标志稍后会被 <b>kswapd</b> 读取</dd>
+<dt><b>353</b></dt><dd>这是一个内存屏障。它确保所有 CPU 都能看到此前对相关变量所做的修改。这一点很重要，因为 <b>kswapd</b> 可能运行在与内存分配器不同的处理器上</dd>
+<dt><b>354-355</b></dt><dd>若 <b>kswapd</b> 正在休眠，将其唤醒</dd>
+<dt><b>357-358</b></dt><dd>从首选分区与 <tt>min</tt> 初值重新开始</dd>
+<dt><b>360-374</b></dt><dd>遍历所有分区。这一次，只要不触及 <tt>pages_min</tt> 水位线，就分配页</dd>
+<dt><b>365</b></dt><dd><tt>local_min</tt> 表示此分区允许的最小空闲页数</dd>
+<dt><b>366-367</b></dt><dd>如果进程不能等待或被重新调度（<tt>__GFP_WAIT</tt> 未置位），则允许分区承受比通常水位线更大的内存压力</dd>
+</dl>
+<pre class="verbatim">376       /* here we're in the low on memory slow path */
+377 
+378 rebalance:
+379       if (current-&gt;flags &amp; (PF_MEMALLOC | PF_MEMDIE)) {
+380             zone = zonelist-&gt;zones;
+381             for (;;) {
+382                   zone_t *z = *(zone++);
+383                   if (!z)
+384                         break;
+385 
+386                   page = rmqueue(z, order);
+387                   if (page)
+388                         return page;
+389             }
+390             return NULL;
+391       }
+</pre>
+<dl>
+<dt><b>378</b></dt><dd>在尝试同步释放页面之后，会跳回到此标签。从这一行起，已进入低内存路径，进程大概率会休眠</dd>
+<dt><b>379-391</b></dt><dd>这两个标志只会由 OOM killer 设置。由于进程正在尝试干净地自我了结，应尽可能为其分配页，因为可知道这些页很快就会被释放</dd>
+</dl>
+<pre class="verbatim">393       /* Atomic allocations - we can't balance anything */
+394       if (!(gfp_mask &amp; __GFP_WAIT))
+395             return NULL;
+396 
+397       page = balance_classzone(classzone, gfp_mask, order, &amp;freed);
+398       if (page)
+399             return page;
+400 
+401       zone = zonelist-&gt;zones;
+402       min = 1UL &lt;&lt; order;
+403       for (;;) {
+404             zone_t *z = *(zone++);
+405             if (!z)
+406                   break;
+407 
+408             min += z-&gt;pages_min;
+409             if (z-&gt;free_pages &gt; min) {
+410                   page = rmqueue(z, order);
+411                   if (page)
+412                         return page;
+413             }
+414       }
+415 
+416       /* Don't let big-order allocations loop */
+417       if (order &gt; 3)
+418             return NULL;
+419 
+420       /* Yield for kswapd, and try again */
+421       yield();
+422       goto rebalance;
+423 }
+</pre>
+<dl>
+<dt><b>394-395</b></dt><dd>若调用进程不能休眠，则返回 NULL，因为接下来获得页的唯一途径都涉及休眠</dd>
+<dt><b>397</b></dt><dd><tt>balance_classzone()</tt>（参见 <a href="#func: balance_classzone">F.1.6 节</a>）以同步方式执行 <b>kswapd</b> 的工作。主要区别在于：它并不把释放出来的内存归还到全局池，而是为发起分配的进程保留在 <tt>current</tt>&rarr;<tt>local_pages</tt><a name="@mainindex1018"></a> 链表中</dd>
+<dt><b>398-399</b></dt><dd>若释放出了所需 order 的页块，则返回。即便此处为 NULL，也不一定意味着本次分配会失败，因为可能释放了更高 order 的页</dd>
+<dt><b>403-414</b></dt><dd>与前述代码块相同。在不触及 <tt>pages_min</tt> 水位线的前提下分配页块</dd>
+<dt><b>417-418</b></dt><dd>满足像 2<sup>4</sup> 这种较大数量页的分配很困难。若至此仍未满足，不如直接返回 NULL</dd>
+<dt><b>421</b></dt><dd>让出处理器，给 <b>kswapd</b> 一个工作的机会</dd>
+<dt><b>422</b></dt><dd>再次尝试重新平衡分区并分配</dd>
+</dl>
+
+<h3><a name="htoc277">F.1.4</a>　函数：<tt>rmqueue</tt></h3>
+
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: rmqueue"></a> <a name="@codeindex191"></a></p>
+
+<p>该函数由 <tt>__alloc_pages()</tt> 调用，负责寻找一块足够大的内存以满足分配请求。若所需大小的内存块不可用，它会查找更高 order 的块，可将其拆为两个伙伴。实际的拆分由 <tt>expand()</tt><a name="@codeindex192"></a>（参见 <a href="#func: expand">F.1.5 节</a>）完成。</p>
+<pre class="verbatim">198 static FASTCALL(struct page *rmqueue(zone_t *zone, 
+                                         unsigned int order));
+199 static struct page * rmqueue(zone_t *zone, unsigned int order)
+200 {
+201       free_area_t * area = zone-&gt;free_area + order;
+202       unsigned int curr_order = order;
+203       struct list_head *head, *curr;
+204       unsigned long flags;
+205       struct page *page;
+206 
+207       spin_lock_irqsave(&amp;zone-&gt;lock, flags);
+208       do {
+209             head = &amp;area-&gt;free_list;
+210             curr = head-&gt;next;
+211 
+212             if (curr != head) {
+213                   unsigned int index;
+214 
+215                   page = list_entry(curr, struct page, list);
+216                   if (BAD_RANGE(zone,page))
+217                         BUG();
+218                   list_del(curr);
+219                   index = page - zone-&gt;zone_mem_map;
+220                   if (curr_order != MAX_ORDER-1)
+221                         MARK_USED(index, curr_order, area);
+222                   zone-&gt;free_pages -= 1UL &lt;&lt; order;
+223 
+224                   page = expand(zone, page, index, order,
+                                    curr_order, area);
+225                   spin_unlock_irqrestore(&amp;zone-&gt;lock, flags);
+226 
+227                   set_page_count(page, 1);
+228                   if (BAD_RANGE(zone,page))
+229                         BUG();
+230                   if (PageLRU(page))
+231                         BUG();
+232                   if (PageActive(page))
+233                         BUG();
+234                   return page;    
+235             }
+236             curr_order++;
+237             area++;
+238       } while (curr_order &lt; MAX_ORDER);
+239       spin_unlock_irqrestore(&amp;zone-&gt;lock, flags);
+240 
+241       return NULL;
+242 }
+
+</pre>
+<dl>
+<dt><b>199</b></dt><dd>参数包括从哪个分区分配以及所需页的 order</dd>
+<dt><b>201</b></dt><dd>由于 <tt>free_area</tt> 是一个链表数组，<tt>order</tt> 可用作数组索引</dd>
+<dt><b>207</b></dt><dd>获取分区锁</dd>
+<dt><b>208-238</b></dt><dd>该 while 块负责确定我们需要从哪个 order 的页块进行分配。若当前感兴趣的 order 上没有空闲块，则向更高的 order 查找，直到找到合适的为止</dd>
+<dt><b>209</b></dt><dd><tt>head</tt> 是该 order 上空闲页块链表</dd>
+<dt><b>210</b></dt><dd><tt>curr</tt> 是第一个页块</dd>
+<dt><b>212-235</b></dt><dd>如果该 order 上有空闲页块，则分配它</dd>
+<dt><b>215</b></dt><dd><tt>page</tt> 被设为指向该空闲块的第一页</dd>
+<dt><b>216-217</b></dt><dd>合法性检查，确保此页确实属于该分区且位于 <tt>zone_mem_map</tt> 范围内。除非分配器本身有严重 bug 将页块放入了错误的分区，否则不应出现这种情况</dd>
+<dt><b>218</b></dt><dd>由于该块将被分配，从空闲链表中移除</dd>
+<dt><b>219</b></dt><dd><tt>index</tt> 把 <tt>zone_mem_map</tt> 视作页数组，因此 <tt>index</tt> 就是该页在数组中的偏移</dd>
+<dt><b>220-221</b></dt><dd>翻转代表这对伙伴的位。<tt>MARK_USED()</tt> 是一个宏，用于计算要翻转的位</dd>
+<dt><b>222</b></dt><dd>更新此分区的统计信息。<tt>1UL</tt>&lt;&lt;<tt>order</tt> 是本次分配的页数</dd>
+<dt><b>224</b></dt><dd><tt>expand()</tt>（参见 <a href="#func: expand">F.1.5 节</a>）负责拆分更高 order 的页块</dd>
+<dt><b>225</b></dt><dd>此分区已无需进一步更新，释放锁</dd>
+<dt><b>227</b></dt><dd>标记该页正在使用</dd>
+<dt><b>228-233</b></dt><dd>合法性检查</dd>
+<dt><b>234</b></dt><dd>页块分配成功，返回</dd>
+<dt><b>236-237</b></dt><dd>若没有所需 order 的空闲页块，则移动到更高 order 继续查找</dd>
+<dt><b>239</b></dt><dd>此分区已无需进一步更新，释放锁</dd>
+<dt><b>241</b></dt><dd>请求 order 及更高 order 均无可用页块，返回失败</dd>
+</dl>
+
+<h3><a name="htoc278">F.1.5</a>　函数：<tt>expand</tt></h3>
+
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: expand"></a> <a name="@codeindex193"></a></p>
+
+<p>该函数将更高 order 的页块逐级拆分，直到出现所需 order 的页块为止。</p>
+<pre class="verbatim">177 static inline struct page * expand (zone_t *zone, 
+                              struct page *page,
+                              unsigned long index, 
+                              int low, 
+                              int high, 
+                              free_area_t * area)
+179 {
+180       unsigned long size = 1 &lt;&lt; high;
+181 
+182       while (high &gt; low) {
+183             if (BAD_RANGE(zone,page))
+184                   BUG();
+185             area--;
+186             high--;
+187             size &gt;&gt;= 1;
+188             list_add(&amp;(page)-&gt;list, &amp;(area)-&gt;free_list);
+189             MARK_USED(index, high, area);
+190             index += size;
+191             page += size;
+192       }
+193       if (BAD_RANGE(zone,page))
+194             BUG();
+195       return page;
+196 }
+</pre>
+<dl>
+<dt><b>177</b></dt><dd>参数说明：
+<dl>
+<dt><b>zone</b></dt><dd>本次分配所在的分区</dd>
+<dt><b>page</b></dt><dd>待拆分块的首页</dd>
+<dt><b>index</b></dt><dd>该页在 <tt>mem_map</tt> 中的索引</dd>
+<dt><b>low</b></dt><dd>本次分配所需的页 order</dd>
+<dt><b>high</b></dt><dd>正被拆分以满足本次分配的页 order</dd>
+<dt><b>area</b></dt><dd>对应高 order 页块的 <tt>free_area_t</tt></dd>
+</dl></dd>
+<dt><b>180</b></dt><dd><tt>size</tt> 是待拆分块中的页数</dd>
+<dt><b>182-192</b></dt><dd>不断拆分，直到得到所需 order 的页块</dd>
+<dt><b>183-184</b></dt><dd>合法性检查，确保此页属于该分区且位于 <tt>zone_mem_map</tt> 范围内</dd>
+<dt><b>185</b></dt><dd><tt>area</tt> 现在指向下一个表示更低 order 页块的 <tt>free_area_t</tt></dd>
+<dt><b>186</b></dt><dd><tt>high</tt> 是下一个待拆分的页块 order</dd>
+<dt><b>187</b></dt><dd>被拆分块的大小现在减半</dd>
+<dt><b>188</b></dt><dd>这对伙伴中位于 <tt>mem_map</tt> 较低位置的那一个被加入到较低 order 的空闲链表</dd>
+<dt><b>189</b></dt><dd>翻转代表这对伙伴的位</dd>
+<dt><b>190</b></dt><dd><tt>index</tt> 现在指向新生成的伙伴对中的第二个伙伴的索引</dd>
+<dt><b>191</b></dt><dd><tt>page</tt> 现在指向新生成的伙伴对中的第二个伙伴</dd>
+<dt><b>193-194</b></dt><dd>合法性检查</dd>
+<dt><b>195</b></dt><dd>拆分完成，返回页</dd>
+</dl>
+
+<h3><a name="htoc279">F.1.6</a>　函数：<tt>balance_classzone</tt></h3>
+
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: balance_classzone"></a> <a name="@codeindex194"></a></p>
+
+<p>本函数是直接回收路径的一部分。允许休眠的分配器会调用它，以同步方式开始执行 <b>kswapd</b> 的工作。由于进程亲自完成这些工作，所以它释放的所需 order 的页会被保留在 <tt>current</tt>&rarr;<tt>local_pages</tt> 链表中，链表中的页块数量保存在 <tt>current</tt>&rarr;<tt>nr_local_pages</tt>。注意页块数与页数不同：页块可以是任意 order。</p>
+<pre class="verbatim">253 static struct page * balance_classzone(zone_t * classzone, 
+                                           unsigned int gfp_mask, 
+                                           unsigned int order, 
+                                           int * freed)
+254 {
+255     struct page * page = NULL;
+256     int __freed = 0;
+257 
+258     if (!(gfp_mask &amp; __GFP_WAIT))
+259         goto out;
+260     if (in_interrupt())
+261         BUG();
+262 
+263     current-&gt;allocation_order = order;
+264     current-&gt;flags |= PF_MEMALLOC | PF_FREE_PAGES;
+265 
+266     __freed = try_to_free_pages_zone(classzone, gfp_mask);
+267 
+268     current-&gt;flags &amp;= ~(PF_MEMALLOC | PF_FREE_PAGES);
+269 
+</pre>
+<dl>
+<dt><b>258-259</b></dt><dd>若调用者不允许休眠，则跳转到 <tt>out</tt> 退出函数。要触发这种情况，要么直接调用本函数，要么 <tt>__alloc_pages()</tt> 被故意搞坏</dd>
+<dt><b>260-261</b></dt><dd>本函数不能在中断中使用。同样，触发此条件只能是有人故意制造问题</dd>
+<dt><b>263</b></dt><dd>把本次分配所需的大小记录到 <tt>current</tt>&rarr;<tt>allocation_order</tt>。该字段实际未被使用，本可用于只将所需 order 的页加入 <tt>local_pages</tt> 链表。目前的做法是把页的 order 存放在 <tt>page</tt>&rarr;<tt>index</tt></dd>
+<dt><b>264</b></dt><dd>设置标志位，使释放函数将页加入 <tt>local_list</tt></dd>
+<dt><b>266</b></dt><dd>通过 <tt>try_to_free_pages_zone()</tt>（参见 <a href="../original_html/understand027.html#func: try_to_free_pages_zone">J.5.3 节</a>）从目标分区直接释放页。直接回收路径正是在此与 <b>kswapd</b> 相交</dd>
+<dt><b>268</b></dt><dd>清除标志位，使释放函数不再继续将页加入 <tt>local_pages</tt> 链表</dd>
+</dl>
+<pre class="verbatim">270     if (current-&gt;nr_local_pages) {
+271         struct list_head * entry, * local_pages;
+272         struct page * tmp;
+273         int nr_pages;
+274 
+275         local_pages = &amp;current-&gt;local_pages;
+276 
+277         if (likely(__freed)) {
+278             /* pick from the last inserted so we're lifo */
+279             entry = local_pages-&gt;next;
+280             do {
+281                 tmp = list_entry(entry, struct page, list);
+282                 if (tmp-&gt;index == order &amp;&amp; 
+                        memclass(page_zone(tmp), classzone)) {
+283                     list_del(entry);
+284                     current-&gt;nr_local_pages--;
+285                     set_page_count(tmp, 1);
+286                     page = tmp;
+287 
+288                     if (page-&gt;buffers)
+289                         BUG();
+290                     if (page-&gt;mapping)
+291                         BUG();
+292                     if (!VALID_PAGE(page))
+293                         BUG();
+294                     if (PageLocked(page))
+295                         BUG();
+296                     if (PageLRU(page))
+297                         BUG();
+298                     if (PageActive(page))
+299                         BUG();
+300                     if (PageDirty(page))
+301                         BUG();
+302 
+303                     break;
+304                 }
+305             } while ((entry = entry-&gt;next) != local_pages);
+306         }
+</pre>
+<p>假定 <tt>local_pages</tt> 链表中存在页，本函数会遍历该链表，寻找属于所需分区与 order 的页块。</p>
+<dl>
+<dt><b>270</b></dt><dd>仅当本地链表中存有页时才进入该块</dd>
+<dt><b>275</b></dt><dd>从链表起始处开始</dd>
+<dt><b>277</b></dt><dd>若通过 <tt>try_to_free_pages_zone()</tt> 释放出了页，则……</dd>
+<dt><b>279</b></dt><dd>优先选择最近插入的一个，因为它很可能在缓存中是热的，复用近期被访问过的页更可取</dd>
+<dt><b>280-305</b></dt><dd>遍历链表中的页，直到找到所需 order 与分区的页</dd>
+<dt><b>281</b></dt><dd>从该链表项获取页</dd>
+<dt><b>282</b></dt><dd>页块的 order 被保存在 <tt>page</tt>&rarr;<tt>index</tt>，因此检查 order 是否匹配以及是否属于正确的分区。来自其它分区的页出现在此链表中的概率很低，但若 <tt>swap_out()</tt> 被调用以直接从进程页表释放页，则可能出现</dd>
+<dt><b>283</b></dt><dd>这是所需 order 与分区的页，因此从链表中移除</dd>
+<dt><b>284</b></dt><dd>减少链表中的页块计数</dd>
+<dt><b>285</b></dt><dd>将页计数置为 1，因为它即将被释放</dd>
+<dt><b>286</b></dt><dd>设置 <tt>page</tt> 以便返回。<tt>tmp</tt> 用于下一段代码释放本地链表中剩余的页</dd>
+<dt><b>288-301</b></dt><dd>执行与 <tt>__free_pages_ok()</tt> 中相同的检查，确保释放该页是安全的</dd>
+<dt><b>305</b></dt><dd>若当前页不是所需 order 与分区，则继续遍历链表的下一页</dd>
+</dl>
+<pre class="verbatim">308         nr_pages = current-&gt;nr_local_pages;
+309         /* free in reverse order so that the global 
+             * order will be lifo */
+310         while ((entry = local_pages-&gt;prev) != local_pages) {
+311             list_del(entry);
+312             tmp = list_entry(entry, struct page, list);
+313             __free_pages_ok(tmp, tmp-&gt;index);
+314             if (!nr_pages--)
+315                 BUG();
+316         }
+317         current-&gt;nr_local_pages = 0;
+318     }
+319  out:
+320     *freed = __freed;
+321     return page;
+322 }
+</pre>
+<p>该代码块负责释放链表中剩下的页。</p>
+<dl>
+<dt><b>308</b></dt><dd>获取待释放的页块数量</dd>
+<dt><b>310</b></dt><dd>循环直到 <tt>local_pages</tt> 链表为空</dd>
+<dt><b>311</b></dt><dd>把此页块从链表中移除</dd>
+<dt><b>312</b></dt><dd>获取该项对应的 <tt>struct page</tt></dd>
+<dt><b>313</b></dt><dd>通过 <tt>__free_pages_ok()</tt>（参见 <a href="#func: __free_pages_ok">F.3.2 节</a>）释放该页</dd>
+<dt><b>314-315</b></dt><dd>若页块计数已减至 0 而链表中仍有页，说明账目严重错乱，或者有人手动向 <tt>local_pages</tt> 链表加过页，调用 <tt>BUG()</tt></dd>
+<dt><b>317</b></dt><dd>将页块数置 0，因为它们都已被释放</dd>
+<dt><b>320</b></dt><dd>更新 <tt>freed</tt> 参数，告诉调用者总共释放了多少页</dd>
+<dt><b>321</b></dt><dd>返回所需 order 与分区的页块。若释放失败，将返回 NULL</dd>
+</dl>
+
+<h2><a name="toc113"></a><a name="htoc280">F.2</a>　分配辅助函数</h2>
+
+<p>本节介绍伙伴分配器用于分配页的各种辅助函数和宏。它们极少做&ldquo;真正&rdquo;的工作，主要是为程序员提供便利。</p>
+
+<h3><a name="htoc281">F.2.1</a>　函数：<tt>alloc_page</tt></h3>
+
+<p><em>源码位置：include/linux/mm.h</em> <a name="func: alloc_page"></a> <a name="@codeindex195"></a></p>
+
+<p>这个简单的宏以 order 0 调用 <tt>alloc_pages()</tt> 来返回 1 页。其声明如下：</p>
+<pre class="verbatim">449 #define alloc_page(gfp_mask) alloc_pages(gfp_mask, 0)
+</pre>
+
+<h3><a name="htoc282">F.2.2</a>　函数：<tt>__get_free_page</tt></h3>
+
+<p><em>源码位置：include/linux/mm.h</em> <a name="func: __get_free_page"></a> <a name="@codeindex196"></a></p>
+
+<p>这个简单的函数以 order 0 调用 <tt>__get_free_pages()</tt> 来返回 1 页。其声明如下：</p>
+<pre class="verbatim">454 #define __get_free_page(gfp_mask) \
+455             __get_free_pages((gfp_mask),0)
+</pre>
+
+<h3><a name="htoc283">F.2.3</a>　函数：<tt>__get_free_pages</tt></h3>
+
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: __get_free_pages"></a> <a name="@codeindex197"></a></p>
+
+<p>本函数面向那些不关心页对象、只想拿到可用地址的调用者。其声明如下：</p>
+<pre class="verbatim">428 unsigned long __get_free_pages(unsigned int gfp_mask, 
+                           unsigned int order)
+428 {
+430       struct page * page;
+431 
+432       page = alloc_pages(gfp_mask, order);
+433       if (!page)
+434             return 0;
+435       return (unsigned long) page_address(page);
+436 }
+</pre>
+<dl>
+<dt><b>431</b></dt><dd><tt>alloc_pages()</tt> 完成分配页块的工作。参见 <a href="#func: alloc_pages">F.1.1 节</a></dd>
+<dt><b>433-434</b></dt><dd>确保页有效</dd>
+<dt><b>435</b></dt><dd><tt>page_address()</tt> 返回该页的物理地址</dd>
+</dl>
+
+<h3><a name="htoc284">F.2.4</a>　函数：<tt>__get_dma_pages</tt></h3>
+
+<p><em>源码位置：include/linux/mm.h</em> <a name="func: __get_dma_pages"></a> <a name="@codeindex198"></a></p>
+
+<p>这一函数主要是为设备驱动设计的。它会返回 <tt>ZONE_DMA</tt> 中的内存，适合 DMA 设备使用。其声明如下：</p>
+<pre class="verbatim">457 #define __get_dma_pages(gfp_mask, order) \
+458         __get_free_pages((gfp_mask) | GFP_DMA,(order))
+</pre>
+<dl>
+<dt><b>458</b></dt><dd>将 <tt>gfp_mask</tt> 与 <tt>GFP_DMA</tt> 进行或运算，告知分配器从 <tt>ZONE_DMA</tt> 分配</dd>
+</dl>
+
+<h3><a name="htoc285">F.2.5</a>　函数：<tt>get_zeroed_page</tt></h3>
+
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: get_zeroed_page"></a> <a name="@codeindex199"></a></p>
+
+<p>本函数会分配一页并将其内容清零。其声明如下：</p>
+<pre class="verbatim">438 unsigned long get_zeroed_page(unsigned int gfp_mask)
+439 {
+440       struct page * page;
+441 
+442       page = alloc_pages(gfp_mask, 0);
+443       if (page) {
+444             void *address = page_address(page);
+445             clear_page(address);
+446             return (unsigned long) address;
+447       }
+448       return 0;
+449 }
+</pre>
+<dl>
+<dt><b>438</b></dt><dd><tt>gfp_mask</tt> 是影响分配器行为的标志位</dd>
+<dt><b>442</b></dt><dd><tt>alloc_pages()</tt> 完成分配页块的工作。参见 <a href="#func: alloc_pages">F.1.1 节</a></dd>
+<dt><b>444</b></dt><dd><tt>page_address()</tt> 返回该页的物理地址</dd>
+<dt><b>445</b></dt><dd><tt>clear_page()</tt> 将一页的内容填零</dd>
+<dt><b>446</b></dt><dd>返回被清零页的地址</dd>
+</dl>
+
+<h2><a name="toc114"></a><a name="htoc286">F.3</a>　释放页</h2>
+
+<h3><a name="htoc287">F.3.1</a>　函数：<tt>__free_pages</tt></h3>
+
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: __free_pages"></a> <a name="@codeindex200"></a></p>
+
+<p>本函数的调用图见 <a href="understand009_zh.html#fig: __free_pages">图 6.4</a>。容易让人困惑的是，与 <tt>alloc_pages()</tt> 相对应的并不是 <tt>free_pages()</tt>，而是 <tt>__free_pages()</tt>。<tt>free_pages()</tt><a name="@codeindex201"></a> 是一个以地址作为参数的辅助函数，将在后面的小节中介绍。</p>
+<pre class="verbatim">451 void __free_pages(struct page *page, unsigned int order)
+452 {
+453       if (!PageReserved(page) &amp;&amp; put_page_testzero(page))
+454             __free_pages_ok(page, order);
+455 }
+</pre>
+<dl>
+<dt><b>451</b></dt><dd>参数为待释放的 <tt>page</tt> 以及其 order</dd>
+<dt><b>453</b></dt><dd>合法性检查。<tt>PageReserved()</tt> 表示该页被引导内存分配器保留。<tt>put_page_testzero()</tt><a name="@codeindex202"></a> 只是对 <tt>atomic_dec_and_test()</tt> 的宏封装，用于递减使用计数并判断其是否为零</dd>
+<dt><b>454</b></dt><dd>调用真正完成工作的函数</dd>
+</dl>
+
+<h3><a name="htoc288">F.3.2</a>　函数：<tt>__free_pages_ok</tt></h3>
+
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: __free_pages_ok"></a> <a name="@codeindex203"></a></p>
+
+<p>本函数执行真正的页释放，并在可能时把伙伴合并起来。</p>
+<pre class="verbatim">81 static void FASTCALL(__free_pages_ok (struct page *page, 
+                               unsigned int order));
+ 82 static void __free_pages_ok (struct page *page, unsigned int order)
+ 83 {
+ 84       unsigned long index, page_idx, mask, flags;
+ 85       free_area_t *area;
+ 86       struct page *base;
+ 87       zone_t *zone;
+ 88 
+ 93       if (PageLRU(page)) {
+ 94             if (unlikely(in_interrupt()))
+ 95                   BUG();
+ 96             lru_cache_del(page);
+ 97       }
+ 98 
+ 99       if (page-&gt;buffers)
+100             BUG();
+101       if (page-&gt;mapping)
+102             BUG();
+103       if (!VALID_PAGE(page))
+104             BUG();
+105       if (PageLocked(page))
+106             BUG();
+107       if (PageActive(page))
+108             BUG();
+109       page-&gt;flags &amp;= ~((1&lt;&lt;PG_referenced) | (1&lt;&lt;PG_dirty));
+</pre>
+<dl>
+<dt><b>82</b></dt><dd>参数是待释放页块的起始位置以及要释放的页数 order</dd>
+<dt><b>93-97</b></dt><dd>处于 LRU 上的脏页在被钉住进行 I/O 时仍然保留 LRU 位。I/O 完成后会被释放，因此现在必须将其从 LRU 链表中移除</dd>
+<dt><b>99-108</b></dt><dd>合法性检查</dd>
+<dt><b>109</b></dt><dd>由于页已释放且未被使用，必须清除&ldquo;已被引用&rdquo;和&ldquo;脏&rdquo;的标志</dd>
+</dl>
+<pre class="verbatim">110 
+111       if (current-&gt;flags &amp; PF_FREE_PAGES)
+112             goto local_freelist;
+113  back_local_freelist:
+114 
+115       zone = page_zone(page);
+116 
+117       mask = (~0UL) &lt;&lt; order;
+118       base = zone-&gt;zone_mem_map;
+119       page_idx = page - base;
+120       if (page_idx &amp; ~mask)
+121             BUG();
+122       index = page_idx &gt;&gt; (1 + order);
+123 
+124       area = zone-&gt;free_area + order;
+125 
+</pre>
+<dl>
+<dt><b>111-112</b></dt><dd>若设置了此标志，则被释放的页应为执行释放的进程保留。该标志由 <tt>balance_classzone()</tt>（参见 <a href="#func: balance_classzone">F.1.6 节</a>）在分配页时设置，前提是调用者自己释放页而非等待 <b>kswapd</b> 完成工作</dd>
+<dt><b>115</b></dt><dd>页所属的分区被编码在页标志中。<tt>page_zone()</tt> 宏返回该分区</dd>
+<dt><b>117</b></dt><dd><tt>mask</tt> 的计算在配套文档中有讨论，本质上与伙伴的地址计算相关</dd>
+<dt><b>118</b></dt><dd><tt>base</tt> 是此 <tt>zone_mem_map</tt> 的起始位置。为了让伙伴计算正确进行，需要把地址视为相对于 0 的偏移，这样地址就是 2 的幂</dd>
+<dt><b>119</b></dt><dd><tt>page_idx</tt> 把 <tt>zone_mem_map</tt> 视作页数组，它就是页在数组中的索引</dd>
+<dt><b>120-121</b></dt><dd>若 <tt>page_idx</tt> 并非合适的 2 的幂，说明事情严重出错，伙伴计算将不正确</dd>
+<dt><b>122</b></dt><dd>此 <tt>index</tt> 是 <tt>free_area</tt>&rarr;<tt>map</tt> 内的位索引</dd>
+<dt><b>124</b></dt><dd><tt>area</tt> 是存放着对应 order 的空闲链表和位图的数据结构</dd>
+</dl>
+<pre class="verbatim">126       spin_lock_irqsave(&amp;zone-&gt;lock, flags);
+127 
+128       zone-&gt;free_pages -= mask;
+129 
+130       while (mask + (1 &lt;&lt; (MAX_ORDER-1))) {
+131             struct page *buddy1, *buddy2;
+132 
+133             if (area &gt;= zone-&gt;free_area + MAX_ORDER)
+134                   BUG();
+135             if (!__test_and_change_bit(index, area-&gt;map))
+136                   /*
+137                    * the buddy page is still allocated.
+138                    */
+139                   break;
+140             /*
+141              * Move the buddy up one level.
+142              * This code is taking advantage of the identity:
+143              *      -mask = 1+~mask
+144              */
+145             buddy1 = base + (page_idx ^ -mask);
+146             buddy2 = base + page_idx;
+147             if (BAD_RANGE(zone,buddy1))
+148                   BUG();
+149             if (BAD_RANGE(zone,buddy2))
+150                   BUG();
+151 
+152             list_del(&amp;buddy1-&gt;list);
+153             mask &lt;&lt;= 1;
+154             area++;
+155             index &gt;&gt;= 1;
+156             page_idx &amp;= mask;
+157       }
+</pre>
+<dl>
+<dt><b>126</b></dt><dd>即将修改分区，因此先取锁。由于中断处理程序也可能在此路径上分配页，所以这是个中断安全锁</dd>
+<dt><b>128</b></dt><dd>计算 <tt>mask</tt> 的副作用之一是 <tt>-mask</tt> 等于即将释放的页数</dd>
+<dt><b>130-157</b></dt><dd>分配器会不断尝试合并块，直到无法合并或达到可合并的最高 order 为止。每合并一个 order，<tt>mask</tt> 都会被调整。当达到可合并的最高 order 时，该 while 循环条件会变为 0 而退出</dd>
+<dt><b>133-134</b></dt><dd>若 <tt>mask</tt> 出于某种奇迹被破坏，这一检查能保证不会读到 <tt>free_area</tt> 数组之外</dd>
+<dt><b>135</b></dt><dd>翻转代表这对伙伴的位。若之前该位为 0，说明两个伙伴都在使用中；既然这个伙伴正被释放，另一个仍在使用，所以无法合并</dd>
+<dt><b>145-146</b></dt><dd>这两个地址的计算见第 <a href="understand009_zh.html#chap: Physical Page Allocation">6</a> 章</dd>
+<dt><b>147-150</b></dt><dd>合法性检查，确保页确实位于正确的 <tt>zone_mem_map</tt> 内并属于此分区</dd>
+<dt><b>152</b></dt><dd>伙伴已被释放，因此将其从所在链表中移除</dd>
+<dt><b>153-156</b></dt><dd>准备考察更高 order 的伙伴以便合并</dd>
+<dt><b>153</b></dt><dd>把 <tt>mask</tt> 左移一位，对应 order 2<sup><i>k</i>+1</sup></dd>
+<dt><b>154</b></dt><dd><tt>area</tt> 是数组内的指针，<tt>area++</tt> 即移动到下一个索引</dd>
+<dt><b>155</b></dt><dd>更高 order 在位图中的索引</dd>
+<dt><b>156</b></dt><dd>待合并伙伴在 <tt>zone_mem_map</tt> 中的页索引</dd>
+</dl>
+<pre class="verbatim">158       list_add(&amp;(base + page_idx)-&gt;list, &amp;area-&gt;free_list);
+159 
+160       spin_unlock_irqrestore(&amp;zone-&gt;lock, flags);
+161       return;
+162 
+163  local_freelist:
+164       if (current-&gt;nr_local_pages)
+165             goto back_local_freelist;
+166       if (in_interrupt())
+167             goto back_local_freelist;             
+168 
+169       list_add(&amp;page-&gt;list, &amp;current-&gt;local_pages);
+170       page-&gt;index = order;
+171       current-&gt;nr_local_pages++;
+172 }
+
+</pre>
+<dl>
+<dt><b>158</b></dt><dd>尽可能多的合并已完成，一个新的页块空闲了，因此将其加入该 order 的 <tt>free_list</tt></dd>
+<dt><b>160-161</b></dt><dd>对分区的修改完成，释放锁并返回</dd>
+<dt><b>163</b></dt><dd>这是页不归还主池而是为执行释放的进程保留时所走的代码路径</dd>
+<dt><b>164-165</b></dt><dd>若进程已经保留有页，则不允许再保留更多，直接返回。这有点奇怪，因为 <tt>balance_classzone()</tt> 假设该链表中可能返回多于一个页块。这很可能是个疏忽，不过若首个释放的页块恰好是 <tt>balance_classzone()</tt> 所需的 order 与分区，仍能正确工作</dd>
+<dt><b>166-167</b></dt><dd>中断没有进程上下文，所以必须按常规方式释放。不清楚中断如何能走到这里，这一检查很可能是无用的、不可能成立的</dd>
+<dt><b>169</b></dt><dd>将此页块加入进程的 <tt>local_pages</tt> 链表</dd>
+<dt><b>170</b></dt><dd>记录其 order 以便稍后释放</dd>
+<dt><b>171</b></dt><dd>增加 <tt>nr_local_pages</tt> 的使用计数</dd>
+</dl>
+
+<h2><a name="toc115"></a><a name="htoc289">F.4</a>　释放辅助函数</h2>
+
+<p><a name="c_sec: Page Free Helper Functions"></a></p>
+
+<p>这些函数与页分配辅助函数非常类似：它们本身并不做&ldquo;真正&rdquo;的工作，而是依靠 <tt>__free_pages()</tt> 来完成实际的释放。</p>
+
+<h3><a name="htoc290">F.4.1</a>　函数：<tt>free_pages</tt></h3>
+
+<p><em>源码位置：mm/page_alloc.c</em> <a name="func: free_pages"></a> <a name="@codeindex204"></a></p>
+
+<p>本函数以地址（而非页）作为参数进行释放。其声明如下：</p>
+<pre class="verbatim">457 void free_pages(unsigned long addr, unsigned int order)
+458 {
+459       if (addr != 0)
+460             __free_pages(virt_to_page(addr), order);
+461 }
+</pre>
+<dl>
+<dt><b>460</b></dt><dd>该函数详见 <a href="#func: __free_pages">F.3.1 节</a>。宏 <tt>virt_to_page()</tt> 返回 <tt>addr</tt> 对应的 <tt>struct page</tt></dd>
+</dl>
+
+<h3><a name="htoc291">F.4.2</a>　函数：<tt>__free_page</tt></h3>
+
+<p><em>源码位置：include/linux/mm.h</em> <a name="func: __free_page"></a> <a name="@codeindex205"></a></p>
+
+<p>这个简单的宏以 order 0（即 1 页）调用 <tt>__free_pages()</tt>（参见 <a href="#func: __free_pages">F.3.1 节</a>）。其声明如下：</p>
+<pre class="verbatim">472 #define __free_page(page) __free_pages((page), 0)
+</pre>
+
+<h3><a name="htoc292">F.4.3</a>　函数：<tt>free_page</tt></h3>
+
+<p><em>源码位置：include/linux/mm.h</em> <a name="func: free_page"></a> <a name="@codeindex206"></a></p>
+
+<p>这个简单的宏只是调用 <tt>free_pages()</tt> 函数。它与 <tt>__free_page()</tt> 的本质区别在于：本宏的参数是虚拟地址，而 <tt>__free_page()</tt> 的参数是 <tt>struct page</tt>。</p>
+<pre class="verbatim">472 #define free_page(addr) free_pages((addr),0)
+</pre>
+
+<hr>
+  <nav>
+    [ <a href="understand022_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand024.html">下一章 &raquo;</a> ]
+  </nav>
+</body>
+</html>
