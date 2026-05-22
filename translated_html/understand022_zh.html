@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>附录 E 引导内存分配器 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand021_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand023.html">下一章 &raquo;</a> ]
+  </nav>
+
+<h1 id="chap-boot-memory-allocator"><a name="htoc247">附录 E</a>　引导内存分配器</h1>
+
+<h2><a name="toc108"></a><a name="htoc248">E.1</a>　初始化引导内存分配器</h2>
+
+<p>本节中的函数负责为引导内存分配器（boot memory allocator）做引导初始化工作。整个流程从体系结构相关的函数 <tt>setup_memory()</tt>（参见 <a href="understand019_zh.html#func: setup_memory">B.1.1 节</a>）开始；但所有体系结构在调用与体系结构无关的函数 <tt>init_bootmem()</tt> 之前，都会在各自体系结构相关的函数中完成相同的基本任务。</p>
+
+<h3><a name="htoc249">E.1.1</a>　函数：<tt>init_bootmem</tt></h3>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: init_bootmem"></a> <a name="@codeindex163"></a></p>
+
+<p>本函数由 UMA 体系结构调用，用以初始化其引导内存分配器相关的结构。</p>
+<pre class="verbatim">304 unsigned long __init init_bootmem (unsigned long start, 
+                               unsigned long pages)
+305 {
+306       max_low_pfn = pages;
+307       min_low_pfn = start;
+308       return(init_bootmem_core(&amp;contig_page_data, start, 0, pages));
+309 }
+</pre>
+<dl>
+<dt><b>304</b></dt><dd>有些令人困惑的是，<tt>pages</tt> 参数实际上是本节点可寻址内存的末尾 PFN，而不是名字所暗示的页数</dd>
+<dt><b>306</b></dt><dd>设置本节点可寻址的最大 PFN，以防体系结构相关的代码没有设置</dd>
+<dt><b>307</b></dt><dd>设置本节点可寻址的最小 PFN，以防体系结构相关的代码没有设置</dd>
+<dt><b>308</b></dt><dd>调用 <tt>init_bootmem_core()</tt>（参见 <a href="#func: init_bootmem_core">E.1.3 节</a>），该函数完成 <tt>bootmem_data</tt> 真正的初始化工作</dd>
+</dl>
+
+<h3><a name="htoc250">E.1.2</a>　函数：<tt>init_bootmem_node</tt></h3>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: init_bootmem_node"></a> <a name="@codeindex164"></a></p>
+
+<p>本函数由 NUMA 体系结构调用，用以初始化某个给定节点的引导内存分配器数据。</p>
+<pre class="verbatim">284 unsigned long __init init_bootmem_node (pg_data_t *pgdat, 
+                                  unsigned long freepfn, 
+                                  unsigned long startpfn, 
+                                  unsigned long endpfn)
+285 {
+286       return(init_bootmem_core(pgdat, freepfn, startpfn, endpfn));
+287 }
+</pre>
+<dl>
+<dt><b>286</b></dt><dd>直接调用 <tt>init_bootmem_core()</tt>（参见 <a href="#func: init_bootmem_core">E.1.3 节</a>）</dd>
+</dl>
+
+<h3><a name="htoc251">E.1.3</a>　函数：<tt>init_bootmem_core</tt></h3>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: init_bootmem_core"></a> <a name="@codeindex165"></a></p>
+
+<p>初始化相应的 <tt>struct bootmem_data_t</tt>，并将该节点插入到节点链表 <tt>pgdat_list</tt> 中。</p>
+<pre class="verbatim"> 46 static unsigned long __init init_bootmem_core (pg_data_t *pgdat,
+ 47       unsigned long mapstart, unsigned long start, unsigned long end)
+ 48 {
+ 49       bootmem_data_t *bdata = pgdat-&gt;bdata;
+ 50       unsigned long mapsize = ((end - start)+7)/8;
+ 51 
+ 52       pgdat-&gt;node_next = pgdat_list;
+ 53       pgdat_list = pgdat;
+ 54 
+ 55       mapsize = (mapsize + (sizeof(long) - 1UL)) &amp; 
+                    ~(sizeof(long) - 1UL);
+ 56       bdata-&gt;node_bootmem_map = phys_to_virt(mapstart &lt;&lt; PAGE_SHIFT);
+ 57       bdata-&gt;node_boot_start = (start &lt;&lt; PAGE_SHIFT);
+ 58       bdata-&gt;node_low_pfn = end;
+ 59 
+ 60       /*
+ 61        * Initially all pages are reserved - setup_arch() has to
+ 62        * register free RAM areas explicitly.
+ 63        */
+ 64       memset(bdata-&gt;node_bootmem_map, 0xff, mapsize);
+ 65 
+ 66       return mapsize;
+ 67 }
+</pre>
+<dl>
+<dt><b>46</b></dt><dd>参数说明：
+  <dl>
+  <dt><b>pgdat</b></dt><dd>正在初始化的节点描述符</dd>
+  <dt><b>mapstart</b></dt><dd>可用内存的起始位置</dd>
+  <dt><b>start</b></dt><dd>本节点的起始 PFN</dd>
+  <dt><b>end</b></dt><dd>本节点的结束 PFN</dd>
+  </dl>
+</dd>
+<dt><b>50</b></dt><dd>每页用 1 个比特表示，因此所需位图的大小为该节点的页数向上取整到 8 的倍数，再除以 8，得到所需的字节数</dd>
+<dt><b>52-53</b></dt><dd>由于该节点很快就会被视为已初始化，将其插入到全局 <tt>pgdat_list</tt> 中</dd>
+<dt><b>55</b></dt><dd>将 mapsize 向上对齐到最近的字（word）边界</dd>
+<dt><b>56</b></dt><dd>将 <tt>mapstart</tt> 转换为虚拟地址，并存入 <tt>bdata</tt>&#X2192;<tt>node_bootmem_map</tt></dd>
+<dt><b>57</b></dt><dd>将起始 PFN 转换为物理地址，并存入 <tt>node_boot_start</tt></dd>
+<dt><b>58</b></dt><dd>将 <tt>ZONE_NORMAL</tt> 的结束 PFN 存入 <tt>node_low_pfn</tt></dd>
+<dt><b>64</b></dt><dd>用全 1 填充整个位图，将所有页标记为已分配。具体哪些页可用，由体系结构相关的代码再行标记</dd>
+</dl>
+
+<h2><a name="toc109"></a><a name="htoc252">E.2</a>　分配内存</h2>
+
+<h3><a name="htoc253">E.2.1</a>　预留大块内存区域</h3>
+
+<h4><a name="htoc254">E.2.1.1</a>　函数：<tt>reserve_bootmem</tt></h4>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: reserve_bootmem"></a> <a name="@codeindex166"></a></p>
+<pre class="verbatim">311 void __init reserve_bootmem (unsigned long addr, unsigned long size)
+312 {
+313     reserve_bootmem_core(contig_page_data.bdata, addr, size);
+314 }
+</pre>
+<dl>
+<dt><b>313</b></dt><dd>直接调用 <tt>reserve_bootmem_core()</tt>（参见 <a href="#func: reserve_bootmem_core">E.2.1.3 节</a>）。由于这是非 NUMA 体系结构，要分配的节点就是静态的 <tt>contig_page_data</tt> 节点</dd>
+</dl>
+
+<h4><a name="htoc255">E.2.1.2</a>　函数：<tt>reserve_bootmem_node</tt></h4>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: reserve_bootmem_node"></a> <a name="@codeindex167"></a></p>
+<pre class="verbatim">289 void __init reserve_bootmem_node (pg_data_t *pgdat, 
+                    unsigned long physaddr,
+                    unsigned long size)
+290 {
+291     reserve_bootmem_core(pgdat-&gt;bdata, physaddr, size);
+292 }
+</pre>
+<dl>
+<dt><b>291</b></dt><dd>直接调用 <tt>reserve_bootmem_core()</tt>（参见 <a href="#func: reserve_bootmem_core">E.2.1.3 节</a>），并向其传入所请求节点的 bootmem 数据</dd>
+</dl>
+
+<h4><a name="htoc256">E.2.1.3</a>　函数：<tt>reserve_bootmem_core</tt></h4>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: reserve_bootmem_core"></a> <a name="@codeindex168"></a></p>
+<pre class="verbatim"> 74 static void __init reserve_bootmem_core(bootmem_data_t *bdata, 
+                        unsigned long addr, 
+                        unsigned long size)
+ 75 {
+ 76     unsigned long i;
+ 77     /*
+ 78      * round up, partially reserved pages are considered
+ 79      * fully reserved.
+ 80      */
+ 81     unsigned long sidx = (addr - bdata-&gt;node_boot_start)/PAGE_SIZE;
+ 82     unsigned long eidx = (addr + size - bdata-&gt;node_boot_start + 
+ 83                PAGE_SIZE-1)/PAGE_SIZE;
+ 84     unsigned long end = (addr + size + PAGE_SIZE-1)/PAGE_SIZE;
+ 85 
+ 86     if (!size) BUG();
+ 87 
+ 88     if (sidx &lt; 0)
+ 89         BUG();
+ 90     if (eidx &lt; 0)
+ 91         BUG();
+ 92     if (sidx &gt;= eidx)
+ 93         BUG();
+ 94     if ((addr &gt;&gt; PAGE_SHIFT) &gt;= bdata-&gt;node_low_pfn)
+ 95         BUG();
+ 96     if (end &gt; bdata-&gt;node_low_pfn)
+ 97         BUG();
+ 98     for (i = sidx; i &lt; eidx; i++)
+ 99         if (test_and_set_bit(i, bdata-&gt;node_bootmem_map))
+100             printk("hm, page %08lx reserved twice.\n",
+                   i*PAGE_SIZE);
+101 }
+</pre>
+<dl>
+<dt><b>81</b></dt><dd><tt>sidx</tt> 是开始派发页面的起始索引。其值通过用请求地址减去起始地址，再除以页大小得到</dd>
+<dt><b>82</b></dt><dd>结束索引 <tt>eidx</tt> 的计算方式类似，只不过分配大小向上取整到最近的页边界。这意味着对一页的部分预留请求会导致整页被预留</dd>
+<dt><b>84</b></dt><dd><tt>end</tt> 是本次预留所影响的最后一个 PFN</dd>
+<dt><b>86</b></dt><dd>检查是否传入了非零值</dd>
+<dt><b>88-89</b></dt><dd>检查起始索引是否在节点起始位置之前</dd>
+<dt><b>90-91</b></dt><dd>检查结束索引是否在节点起始位置之前</dd>
+<dt><b>92-93</b></dt><dd>检查起始索引是否大于等于结束索引</dd>
+<dt><b>94-95</b></dt><dd>检查起始地址是否超出本 bootmem 节点所表示的内存范围</dd>
+<dt><b>96-97</b></dt><dd>检查结束地址是否超出本 bootmem 节点所表示的内存范围</dd>
+<dt><b>88-100</b></dt><dd>从 <tt>sidx</tt> 开始，一直到 <tt>eidx</tt>，测试并设置 bootmem 位图中对应该页的比特，将其标记为已分配。如果该比特原本就是 1，则打印一条消息，说明该页被重复预留</dd>
+</dl>
+
+<h3><a name="htoc257">E.2.2</a>　引导时分配内存</h3>
+
+<h4><a name="htoc258">E.2.2.1</a>　函数：<tt>alloc_bootmem</tt></h4>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: alloc_bootmem"></a> <a name="@codeindex169"></a></p>
+
+<p>这些宏的调用图见 <a href="understand008_zh.html#fig: alloc_bootmem">图 5.1</a>。</p>
+<pre class="verbatim"> 38 #define alloc_bootmem(x) \
+ 39     __alloc_bootmem((x), SMP_CACHE_BYTES, __pa(MAX_DMA_ADDRESS))
+ 40 #define alloc_bootmem_low(x) \
+ 41     __alloc_bootmem((x), SMP_CACHE_BYTES, 0)
+ 42 #define alloc_bootmem_pages(x) \
+ 43     __alloc_bootmem((x), PAGE_SIZE, __pa(MAX_DMA_ADDRESS))
+ 44 #define alloc_bootmem_low_pages(x) \
+ 45     __alloc_bootmem((x), PAGE_SIZE, 0)
+</pre>
+<dl>
+<dt><b>39</b></dt><dd><tt>alloc_bootmem()</tt> 会按 L1 硬件缓存对齐，并从可用于 DMA 的最大地址之后开始搜索页面</dd>
+<dt><b>40</b></dt><dd><tt>alloc_bootmem_low()</tt> 会按 L1 硬件缓存对齐，并从第 0 页开始搜索</dd>
+<dt><b>42</b></dt><dd><tt>alloc_bootmem_pages()</tt> 会按页大小对齐，从可用于 DMA 的最大地址之后开始分配完整的页</dd>
+<dt><b>44</b></dt><dd><tt>alloc_bootmem_pages()</tt> 会按页大小对齐，从物理地址 0 开始分配完整的页</dd>
+</dl>
+
+<h4><a name="htoc259">E.2.2.2</a>　函数：<tt>__alloc_bootmem</tt></h4>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: __alloc_bootmem"></a> <a name="@codeindex170"></a></p>
+<pre class="verbatim">326 void * __init __alloc_bootmem (unsigned long size, 
+                   unsigned long align, unsigned long goal)
+327 {
+328     pg_data_t *pgdat;
+329     void *ptr;
+330 
+331     for_each_pgdat(pgdat)
+332         if ((ptr = __alloc_bootmem_core(pgdat-&gt;bdata, size,
+333                         align, goal)))
+334             return(ptr);
+335 
+336     /*
+337      * Whoops, we cannot satisfy the allocation request.
+338      */
+339     printk(KERN_ALERT "bootmem alloc of %lu bytes failed!\n", size);
+340     panic("Out of memory");
+341     return NULL;
+342 }
+</pre>
+<dl>
+<dt><b>326</b></dt><dd>参数说明：
+  <dl>
+  <dt><b>size</b></dt><dd>所请求分配的大小</dd>
+  <dt><b>align</b></dt><dd>所需的对齐值，必须是 2 的幂。当前要么是 <tt>SMP_CACHE_BYTES</tt>，要么是 <tt>PAGE_SIZE</tt></dd>
+  <dt><b>goal</b></dt><dd>开始搜索的起始地址</dd>
+  </dl>
+</dd>
+<dt><b>331-334</b></dt><dd>遍历所有可用节点，依次尝试从每个节点分配。在 UMA 情况下，仅会从 <tt>contig_page_data</tt> 节点分配</dd>
+<dt><b>349-340</b></dt><dd>如果分配失败，系统将无法启动，因此让内核进入 panic</dd>
+</dl>
+
+<h4><a name="htoc260">E.2.2.3</a>　函数：<tt>alloc_bootmem_node</tt></h4>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: alloc_bootmem_node"></a> <a name="@codeindex171"></a></p>
+<pre class="verbatim"> 53 #define alloc_bootmem_node(pgdat, x) \
+ 54     __alloc_bootmem_node((pgdat), (x), SMP_CACHE_BYTES,
+                 __pa(MAX_DMA_ADDRESS))
+ 55 #define alloc_bootmem_pages_node(pgdat, x) \
+ 56     __alloc_bootmem_node((pgdat), (x), PAGE_SIZE,
+                 __pa(MAX_DMA_ADDRESS))
+ 57 #define alloc_bootmem_low_pages_node(pgdat, x) \
+ 58     __alloc_bootmem_node((pgdat), (x), PAGE_SIZE, 0)
+</pre>
+<dl>
+<dt><b>53-54</b></dt><dd><tt>alloc_bootmem_node()</tt> 会从指定节点分配，按 L1 硬件缓存对齐，并从 <tt>ZONE_NORMAL</tt> 开始搜索（即位于 <tt>MAX_DMA_ADDRESS</tt> 处的 <tt>ZONE_DMA</tt> 之后）</dd>
+<dt><b>55-56</b></dt><dd><tt>alloc_bootmem_pages()</tt> 会从指定节点分配，按页大小对齐，从 <tt>ZONE_NORMAL</tt> 开始分配完整的页</dd>
+<dt><b>57-58</b></dt><dd><tt>alloc_bootmem_pages()</tt> 会从指定节点分配，按页大小对齐，从物理地址 0 开始分配完整的页，因此会使用 <tt>ZONE_DMA</tt></dd>
+</dl>
+
+<h4><a name="htoc261">E.2.2.4</a>　函数：<tt>__alloc_bootmem_node</tt></h4>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: __alloc_bootmem_node"></a> <a name="@codeindex172"></a></p>
+<pre class="verbatim">344 void * __init __alloc_bootmem_node (pg_data_t *pgdat, 
+                    unsigned long size, 
+                    unsigned long align, 
+                    unsigned long goal)
+345 {
+346     void *ptr;
+347 
+348     ptr = __alloc_bootmem_core(pgdat-&gt;bdata, size, align, goal);
+349     if (ptr)
+350         return (ptr);
+351 
+352     /*
+353      * Whoops, we cannot satisfy the allocation request.
+354      */
+355     printk(KERN_ALERT "bootmem alloc of %lu bytes failed!\n", size);
+356     panic("Out of memory");
+357     return NULL;
+358 }
+</pre>
+<dl>
+<dt><b>344</b></dt><dd>参数与 <tt>__alloc_bootmem_node()</tt>（参见 <a href="#func: __alloc_bootmem_node">E.2.2.4 节</a>）相同，但多了指定要从哪个节点分配</dd>
+<dt><b>348</b></dt><dd>调用核心函数 <tt>__alloc_bootmem_core()</tt>（参见 <a href="#func: __alloc_bootmem_core">E.2.2.5 节</a>）执行实际分配</dd>
+<dt><b>349-350</b></dt><dd>如果成功，返回分配得到的指针</dd>
+<dt><b>355-356</b></dt><dd>否则打印一条消息，并让内核 panic。因为即使到了此时还无法分配内存，系统也无法启动</dd>
+</dl>
+
+<h4><a name="htoc262">E.2.2.5</a>　函数：<tt>__alloc_bootmem_core</tt></h4>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: __alloc_bootmem_core"></a> <a name="@codeindex173"></a></p>
+
+<p>这是引导内存分配器中用于从指定节点分配内存的核心函数。它较为庞大，可拆分为以下几项任务：</p>
+<ul>
+<li>函数序言：检查参数是否合法</li>
+<li>根据 <tt>goal</tt> 参数计算扫描起始地址</li>
+<li>检查本次分配能否与上次分配所使用的页面合并，以节省内存</li>
+<li>在位图中将已分配的页面标记为 1，并将这些页的内容清零</li>
+</ul>
+<pre class="verbatim">144 static void * __init __alloc_bootmem_core (bootmem_data_t *bdata, 
+145     unsigned long size, unsigned long align, unsigned long goal)
+146 {
+147     unsigned long i, start = 0;
+148     void *ret;
+149     unsigned long offset, remaining_size;
+150     unsigned long areasize, preferred, incr;
+151     unsigned long eidx = bdata-&gt;node_low_pfn - 
+152                (bdata-&gt;node_boot_start &gt;&gt; PAGE_SHIFT);
+153 
+154     if (!size) BUG();
+155 
+156     if (align &amp; (align-1))
+157         BUG();
+158 
+159     offset = 0;
+160     if (align &amp;&amp;
+161         (bdata-&gt;node_boot_start &amp; (align - 1UL)) != 0)
+162         offset = (align - (bdata-&gt;node_boot_start &amp; 
+                    (align - 1UL)));
+163     offset &gt;&gt;= PAGE_SHIFT;
+</pre>
+<p>函数序言，检查参数是否合法。</p>
+<dl>
+<dt><b>144</b></dt><dd>参数说明：
+  <dl>
+  <dt><b>bdata</b></dt><dd>用于本次分配的 bootmem 结构</dd>
+  <dt><b>size</b></dt><dd>所请求分配的大小</dd>
+  <dt><b>align</b></dt><dd>所需的对齐值，必须是 2 的幂</dd>
+  <dt><b>goal</b></dt><dd>如果可能，分配地址优先位于该地址之上的偏好地址</dd>
+  </dl>
+</dd>
+<dt><b>151</b></dt><dd>计算结束位索引 <tt>eidx</tt>，它给出本次分配可使用的最大页索引</dd>
+<dt><b>154</b></dt><dd>若请求大小为 0，则调用 <tt>BUG()</tt></dd>
+<dt><b>156-156</b></dt><dd>如果 <tt>align</tt> 不是 2 的幂，则调用 <tt>BUG()</tt></dd>
+<dt><b>159</b></dt><dd>对齐时的默认偏移为 0</dd>
+<dt><b>160</b></dt><dd>如果指定了对齐要求……</dd>
+<dt><b>161</b></dt><dd>且所请求的对齐与节点起始位置的对齐相同，则计算要使用的偏移</dd>
+<dt><b>162</b></dt><dd>所使用的偏移由所请求的对齐值与起始地址的低位作掩码运算得到。实际上，对于常用的 <tt>align</tt> 取值，这个 <tt>offset</tt> 很可能与 <tt>align</tt> 相同</dd>
+</dl>
+<pre class="verbatim">169     if (goal &amp;&amp; (goal &gt;= bdata-&gt;node_boot_start) &amp;&amp; 
+170             ((goal &gt;&gt; PAGE_SHIFT) &lt; bdata-&gt;node_low_pfn)) {
+171         preferred = goal - bdata-&gt;node_boot_start;
+172     } else
+173         preferred = 0;
+174 
+175     preferred = ((preferred + align - 1) &amp; ~(align - 1)) 
+                &gt;&gt; PAGE_SHIFT;
+176     preferred += offset;
+177     areasize = (size+PAGE_SIZE-1)/PAGE_SIZE;
+178     incr = align &gt;&gt; PAGE_SHIFT ? : 1;
+</pre>
+<p>根据 <tt>goal</tt> 参数计算开始扫描的起始 PFN。</p>
+<dl>
+<dt><b>169</b></dt><dd>如果指定了 goal，且 goal 在本节点的起始地址之后，并且 goal 对应的 PFN 小于本节点可寻址的末尾 PFN，则……</dd>
+<dt><b>170</b></dt><dd>偏好起始偏移为 goal 减去本节点可寻址内存的起始位置</dd>
+<dt><b>173</b></dt><dd>否则偏好偏移为 0</dd>
+<dt><b>175-176</b></dt><dd>调整 preferred 地址使其考虑 offset，以保证地址正确对齐</dd>
+<dt><b>177</b></dt><dd>本次分配所涉及的页数存入 <tt>areasize</tt></dd>
+<dt><b>178</b></dt><dd>当对齐大于 1 页时，<tt>incr</tt> 表示为满足对齐而每次跳过的页数</dd>
+</dl>
+<pre class="verbatim">179 
+180 restart_scan:
+181     for (i = preferred; i &lt; eidx; i += incr) {
+182         unsigned long j;
+183         if (test_bit(i, bdata-&gt;node_bootmem_map))
+184             continue;
+185         for (j = i + 1; j &lt; i + areasize; ++j) {
+186             if (j &gt;= eidx)
+187                 goto fail_block;
+188             if (test_bit (j, bdata-&gt;node_bootmem_map))
+189                 goto fail_block;
+190         }
+191         start = i;
+192         goto found;
+193     fail_block:;
+194     }
+195     if (preferred) {
+196         preferred = offset;
+197         goto restart_scan;
+198     }
+199     return NULL;
+</pre>
+<p>扫描内存，寻找一块足够大的空闲块以满足本次请求。</p>
+<dl>
+<dt><b>180</b></dt><dd>如果从 <tt>goal</tt> 开始无法满足分配，则跳到此标签以重新扫描位图</dd>
+<dt><b>181-194</b></dt><dd>从 <tt>preferred</tt> 开始，线性扫描寻找足够大的空闲块以满足请求。以 <tt>incr</tt> 为步长遍历地址空间以满足大于一页的对齐要求；若对齐小于一页，<tt>incr</tt> 就是 1</dd>
+<dt><b>183-184</b></dt><dd>测试该位，若已经是 1，则该页非空闲，跳到下一页</dd>
+<dt><b>185-190</b></dt><dd>扫描接下来的 <tt>areasize</tt> 页，看它们是否也空闲。若到达可寻址空间末尾（<tt>eidx</tt>）或其中一页已被使用，则失败</dd>
+<dt><b>191-192</b></dt><dd>找到一段空闲块，记录 <tt>start</tt> 并跳到 found 处</dd>
+<dt><b>195-198</b></dt><dd>分配失败，从头再扫描一次</dd>
+<dt><b>199</b></dt><dd>若仍失败，则返回 NULL，这将导致内核 panic</dd>
+</dl>
+<pre class="verbatim">200 found:
+201     if (start &gt;= eidx)
+202         BUG();
+203 
+209     if (align &lt;= PAGE_SIZE
+210         &amp;&amp; bdata-&gt;last_offset &amp;&amp; bdata-&gt;last_pos+1 == start) {
+211         offset = (bdata-&gt;last_offset+align-1) &amp; ~(align-1);
+212         if (offset &gt; PAGE_SIZE)
+213             BUG();
+214         remaining_size = PAGE_SIZE-offset;
+215         if (size &lt; remaining_size) {
+216             areasize = 0;
+217             // last_pos unchanged
+218             bdata-&gt;last_offset = offset+size;
+219             ret = phys_to_virt(bdata-&gt;last_pos*PAGE_SIZE + offset +
+220                         bdata-&gt;node_boot_start);
+221         } else {
+222             remaining_size = size - remaining_size;
+223             areasize = (remaining_size+PAGE_SIZE-1)/PAGE_SIZE;
+224             ret = phys_to_virt(bdata-&gt;last_pos*PAGE_SIZE +
+225                         offset + 
+                            bdata-&gt;node_boot_start);
+226             bdata-&gt;last_pos = start+areasize-1;
+227             bdata-&gt;last_offset = remaining_size;
+228         }
+229         bdata-&gt;last_offset &amp;= ~PAGE_MASK;
+230     } else {
+231         bdata-&gt;last_pos = start + areasize - 1;
+232         bdata-&gt;last_offset = size &amp; ~PAGE_MASK;
+233         ret = phys_to_virt(start * PAGE_SIZE +
+                     bdata-&gt;node_boot_start);
+234     }
+</pre>
+<p>检测本次分配是否可以与上一次分配合并。</p>
+<dl>
+<dt><b>201-202</b></dt><dd>检查分配起始位置是否超出可寻址内存。此前刚做过该检查，所以这里是冗余的</dd>
+<dt><b>209-230</b></dt><dd>如果对齐小于一个 <tt>PAGE_SIZE</tt>、上一页中还有剩余空间（<tt>last_offset != 0</tt>），且上一次使用的页与本次分配找到的页相邻，则尝试与上一次分配合并</dd>
+<dt><b>231-234</b></dt><dd>否则记录本次分配使用的页和偏移，以便下一次分配时合并</dd>
+<dt><b>211</b></dt><dd>更新偏移，使其按所请求的 <tt>align</tt> 正确对齐</dd>
+<dt><b>212-213</b></dt><dd>如果偏移此时已越过一页的边界，则调用 <tt>BUG()</tt>。要触发此条件需要使用非常糟糕的对齐选择。由于常用的对齐只是 <tt>PAGE_SIZE</tt> 的因子，所以正常使用下不可能发生</dd>
+<dt><b>214</b></dt><dd><tt>remaining_size</tt> 是上一次使用的页中剩余的空闲空间</dd>
+<dt><b>215-221</b></dt><dd>如果旧页中剩余空间足够，则全部使用旧页，并更新 <tt>bootmem_data</tt> 结构反映这一变化</dd>
+<dt><b>221-228</b></dt><dd>否则计算除当前页外还需要多少页，并更新 <tt>bootmem_data</tt></dd>
+<dt><b>216</b></dt><dd>本次分配使用的页数现在为 0</dd>
+<dt><b>218</b></dt><dd>将 <tt>last_offset</tt> 更新为本次分配的结束位置</dd>
+<dt><b>219</b></dt><dd>计算成功分配的返回虚拟地址</dd>
+<dt><b>222</b></dt><dd><tt>remaining_size</tt> 是为满足本次分配，在最后一页中将占用多少空间</dd>
+<dt><b>223</b></dt><dd>计算还需要多少页才能满足分配</dd>
+<dt><b>224</b></dt><dd>记录本次分配的起始地址</dd>
+<dt><b>226</b></dt><dd>最后使用的页等于 <tt>start</tt> 加上满足本次分配所需的额外页数 <tt>areasize</tt></dd>
+<dt><b>227</b></dt><dd>本次分配的结束位置之前已计算好</dd>
+<dt><b>229</b></dt><dd>如果 offset 恰好位于页末，则将其置 0</dd>
+<dt><b>231</b></dt><dd>未发生合并，所以记录本次分配使用的最后一页</dd>
+<dt><b>232</b></dt><dd>记录最后一页被使用了多少</dd>
+<dt><b>233</b></dt><dd>记录本次分配的起始虚拟地址</dd>
+</dl>
+<pre class="verbatim">238     for (i = start; i &lt; start+areasize; i++)
+239         if (test_and_set_bit(i, bdata-&gt;node_bootmem_map))
+240             BUG();
+241     memset(ret, 0, size);
+242     return ret;
+243 }
+</pre>
+<p>在位图中将已分配的页标记为 1，并将这些页清零。</p>
+<dl>
+<dt><b>238-240</b></dt><dd>遍历本次分配所使用的所有页，并将位图中对应的比特置 1。如果其中任何一位已经是 1，说明发生了重复分配，因此调用 <tt>BUG()</tt></dd>
+<dt><b>241</b></dt><dd>将这些页清零</dd>
+<dt><b>242</b></dt><dd>返回分配的地址</dd>
+</dl>
+
+<h2><a name="toc110"></a><a name="htoc263">E.3</a>　释放内存</h2>
+
+<h3><a name="htoc264">E.3.1</a>　函数：<tt>free_bootmem</tt></h3>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: free_bootmem"></a> <a name="@codeindex174"></a></p>
+
+<div class="figure">
+  <hr width="80%" size="2">
+  <img src="../original_html/figures/understand-html080.png" alt="图 E.1：调用图：free_bootmem()">
+  <div class="caption">图 E.1：调用图：<tt>free_bootmem()</tt></div>
+  <a name="fig: free_bootmem"></a>
+  <hr width="80%" size="2">
+</div>
+<pre class="verbatim">294 void __init free_bootmem_node (pg_data_t *pgdat, 
+                           unsigned long physaddr, unsigned long size)
+295 {
+296       return(free_bootmem_core(pgdat-&gt;bdata, physaddr, size));
+297 }
+
+316 void __init free_bootmem (unsigned long addr, unsigned long size)
+317 {
+318       return(free_bootmem_core(contig_page_data.bdata, addr, size));
+319 }
+</pre>
+<dl>
+<dt><b>296</b></dt><dd>使用所请求节点对应的 bootmem 数据调用核心函数</dd>
+<dt><b>318</b></dt><dd>使用 <tt>contig_page_data</tt> 的 bootmem 数据调用核心函数</dd>
+</dl>
+
+<h3><a name="htoc265">E.3.2</a>　函数：<tt>free_bootmem_core</tt></h3>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: free_bootmem_core"></a> <a name="@codeindex175"></a></p>
+<pre class="verbatim">103 static void __init free_bootmem_core(bootmem_data_t *bdata, 
+                               unsigned long addr, 
+                               unsigned long size)
+104 {
+105       unsigned long i;
+106       unsigned long start;
+111       unsigned long sidx;
+112       unsigned long eidx = (addr + size -
+                          bdata-&gt;node_boot_start)/PAGE_SIZE;
+113       unsigned long end = (addr + size)/PAGE_SIZE;
+114 
+115       if (!size) BUG();
+116       if (end &gt; bdata-&gt;node_low_pfn)
+117             BUG();
+118 
+119       /*
+120        * Round up the beginning of the address.
+121        */
+122       start = (addr + PAGE_SIZE-1) / PAGE_SIZE;
+123       sidx = start - (bdata-&gt;node_boot_start/PAGE_SIZE);
+124 
+125       for (i = sidx; i &lt; eidx; i++) {
+126             if (!test_and_clear_bit(i, bdata-&gt;node_bootmem_map))
+127                   BUG();
+128       }
+129 }
+</pre>
+<dl>
+<dt><b>112</b></dt><dd>将受影响的结束索引计算为 <tt>eidx</tt></dd>
+<dt><b>113</b></dt><dd>如果尚未按页对齐，结束地址为受影响区域结束位置向下取整到最近的页</dd>
+<dt><b>115</b></dt><dd>若释放大小为 0，则调用 <tt>BUG</tt></dd>
+<dt><b>116-117</b></dt><dd>若结束 PFN 超出本节点可寻址的内存范围，则调用 <tt>BUG</tt></dd>
+<dt><b>122</b></dt><dd>如果尚未按页对齐，将起始地址向上取整到最近的页</dd>
+<dt><b>123</b></dt><dd>计算要释放的起始索引</dd>
+<dt><b>125-127</b></dt><dd>对于本次操作释放的所有完整页，在引导位图中清除对应的比特。若该位已经是 0，则说明是重复释放，或释放了从未使用过的内存，因此调用 <tt>BUG</tt></dd>
+</dl>
+
+<h2><a name="toc111"></a><a name="htoc266">E.4</a>　废弃引导内存分配器</h2>
+
+<p>系统启动完成后，就不再需要引导内存分配器了，因此这些函数负责移除不必要的引导内存分配器结构，并把剩余的页面交给常规的物理页分配器。</p>
+
+<h3><a name="htoc267">E.4.1</a>　函数：<tt>mem_init</tt></h3>
+
+<p><em>源码位置：arch/i386/mm/init.c</em> <a name="func: mem_init"></a> <a name="@codeindex176"></a></p>
+
+<p>本函数的调用图见 <a href="understand008_zh.html#fig: mem_init">图 5.2</a>。对引导内存分配器而言，本函数的关键之处在于它会调用 <tt>free_pages_init()</tt>（参见 <a href="#func: free_pages_init">E.4.2 节</a>）。该函数被拆分为以下几个任务：</p>
+<ul>
+<li>函数序言：在全局 <tt>mem_map</tt> 中设置高端内存（high memory）所在的 PFN，并把系统范围的零页清零</li>
+<li>调用 <tt>free_pages_init()</tt>（参见 <a href="#func: free_pages_init">E.4.2 节</a>）</li>
+<li>打印一条关于系统内存可用情况的信息</li>
+<li>如果启用了相应配置项，检查 CPU 是否支持 PAE；并测试 CPU 上的 WP 位。这一点很重要，因为若没有 WP 位，则内核每次向用户空间写入都必须调用 <tt>verify_write()</tt>。这只对像 386 这样的老处理器有意义</li>
+<li>为内核页表 <tt>swapper_pg_dir</tt> 中用户空间部分的 PGD 项填值。所有这些项都映射到零页</li>
+</ul>
+<pre class="verbatim">507 void __init mem_init(void)
+508 {
+509     int codesize, reservedpages, datasize, initsize;
+510 
+511     if (!mem_map)
+512         BUG();
+513     
+514     set_max_mapnr_init();
+515 
+516     high_memory = (void *) __va(max_low_pfn * PAGE_SIZE);
+517 
+518     /* clear the zero-page */
+519     memset(empty_zero_page, 0, PAGE_SIZE);
+</pre>
+<dl>
+<dt><b>514</b></dt><dd>该函数把高端内存在 <tt>mem_map</tt> 中起始的 PFN 记录到 <tt>highmem_start_page</tt>，把系统中最大的页数记录到 <tt>max_mapnr</tt> 和 <tt>num_physpages</tt>，并把内核可映射的最大页数记录到 <tt>num_mappedpages</tt></dd>
+<dt><b>516</b></dt><dd><tt>high_memory</tt> 是高端内存开始处的虚拟地址</dd>
+<dt><b>519</b></dt><dd>把系统范围的零页清零</dd>
+</dl>
+<pre class="verbatim">520 
+521     reservedpages = free_pages_init();
+522 
+</pre>
+<dl>
+<dt><b>512</b></dt><dd>调用 <tt>free_pages_init()</tt>（参见 <a href="#func: free_pages_init">E.4.2 节</a>），通知引导内存分配器自行退役，并初始化所有高端内存中的页面供伙伴分配器使用</dd>
+</dl>
+<pre class="verbatim">523     codesize =  (unsigned long) &amp;_etext - (unsigned long) &amp;_text;
+524     datasize =  (unsigned long) &amp;_edata - (unsigned long) &amp;_etext;
+525     initsize =  (unsigned long) &amp;__init_end - (unsigned long)
+                            &amp;__init_begin;
+526 
+527     printk(KERN_INFO "Memory: %luk/%luk available (%dk kernel code, 
+            %dk reserved, %dk data, %dk init, %ldk highmem)\n",
+528         (unsigned long) nr_free_pages() &lt;&lt; (PAGE_SHIFT-10),
+529         max_mapnr &lt;&lt; (PAGE_SHIFT-10),
+530         codesize &gt;&gt; 10,
+531         reservedpages &lt;&lt; (PAGE_SHIFT-10),
+532         datasize &gt;&gt; 10,
+533         initsize &gt;&gt; 10,
+534         (unsigned long) (totalhigh_pages &lt;&lt; (PAGE_SHIFT-10))
+535        );
+</pre>
+<p>打印一条信息性消息。</p>
+<dl>
+<dt><b>523</b></dt><dd>计算代码段、数据段以及初始化代码和数据所占内存的大小（所有标记为 <tt>__init</tt><a name="@codeindex177"></a> 的函数都属于该段）</dd>
+<dt><b>527-535</b></dt><dd>友好地打印出内存的可用情况以及内核所消耗的内存</dd>
+</dl>
+<pre class="verbatim">536 
+537 #if CONFIG_X86_PAE
+538     if (!cpu_has_pae)
+539         panic("cannot execute a PAE-enabled kernel on a PAE-less
+CPU!");
+540 #endif
+541     if (boot_cpu_data.wp_works_ok &lt; 0)
+542         test_wp_bit();
+543 
+</pre>
+<dl>
+<dt><b>538-539</b></dt><dd>如果启用了 PAE 但处理器不支持，则 panic</dd>
+<dt><b>541-542</b></dt><dd>测试 WP 位是否可用</dd>
+</dl>
+<pre class="verbatim">550 #ifndef CONFIG_SMP
+551     zap_low_mappings();
+552 #endif
+553 
+554 }
+</pre>
+<dl>
+<dt><b>551</b></dt><dd>遍历 <tt>swapper_pg_dir</tt> 中用户空间部分的每个 PGD，将零页映射到其中</dd>
+</dl>
+
+<h3><a name="htoc268">E.4.2</a>　函数：<tt>free_pages_init</tt></h3>
+
+<p><em>源码位置：arch/i386/mm/init.c</em> <a name="func: free_pages_init"></a> <a name="@codeindex178"></a></p>
+
+<p>本函数有两个重要功能：调用 <tt>free_all_bootmem()</tt>（参见 <a href="#func: free_all_bootmem">E.4.4 节</a>）让引导内存分配器退役，以及把所有高端内存页释放给伙伴分配器。</p>
+<pre class="verbatim">481 static int __init free_pages_init(void)
+482 {
+483     extern int ppro_with_ram_bug(void);
+484     int bad_ppro, reservedpages, pfn;
+485 
+486     bad_ppro = ppro_with_ram_bug();
+487 
+488     /* this will put all low memory onto the freelists */
+489     totalram_pages += free_all_bootmem();
+490 
+491     reservedpages = 0;
+492     for (pfn = 0; pfn &lt; max_low_pfn; pfn++) {
+493         /*
+494          * Only count reserved RAM pages
+495          */
+496         if (page_is_ram(pfn) &amp;&amp; PageReserved(mem_map+pfn))
+497             reservedpages++;
+498     }
+499 #ifdef CONFIG_HIGHMEM
+500     for (pfn = highend_pfn-1; pfn &gt;= highstart_pfn; pfn--)
+501         one_highpage_init((struct page *) (mem_map + pfn), pfn,
+bad_ppro);
+502     totalram_pages += totalhigh_pages;
+503 #endif
+504     return reservedpages;
+505 }
+</pre>
+<dl>
+<dt><b>486</b></dt><dd>Pentium Pro 上存在一个 bug，会导致高端内存中某些页无法使用。函数 <tt>ppro_with_ram_bug()</tt><a name="@codeindex179"></a> 用于检测该 bug 是否存在</dd>
+<dt><b>489</b></dt><dd>调用 <tt>free_all_bootmem()</tt> 让引导内存分配器退役</dd>
+<dt><b>491-498</b></dt><dd>遍历全部内存，统计引导内存分配器遗留下来的已预留页数</dd>
+<dt><b>500-501</b></dt><dd>对高端内存中的每一页调用 <tt>one_highpage_init()</tt><a name="@codeindex180"></a>（参见 <a href="#func: one_highpage_init">E.4.3 节</a>）。该函数会清除 <tt>PG_reserved</tt> 位、设置 PG_high 位、将引用计数设为 1，然后调用 <tt>__free_pages()</tt> 把页交给伙伴分配器，并递增 <tt>totalhigh_pages</tt> 计数。会跳过那些会导致有 bug 的 Pentium Pro 崩溃的页</dd>
+</dl>
+
+<h3><a name="htoc269">E.4.3</a>　函数：<tt>one_highpage_init</tt></h3>
+
+<p><em>源码位置：arch/i386/mm/init.c</em> <a name="func: one_highpage_init"></a> <a name="@codeindex181"></a></p>
+
+<p>本函数初始化高端内存中一页的信息，并检查该页是否会触发某些 Pentium Pro 的 bug。它仅在编译时指定了 <tt>CONFIG_HIGHMEM</tt> 时才存在。</p>
+<pre class="verbatim">449 #ifdef CONFIG_HIGHMEM
+450 void __init one_highpage_init(struct page *page, int pfn, 
+                                  int bad_ppro)
+451 {
+452     if (!page_is_ram(pfn)) {
+453         SetPageReserved(page);
+454         return;
+455     }
+456         
+457     if (bad_ppro &amp;&amp; page_kills_ppro(pfn)) {
+458         SetPageReserved(page);
+459         return;
+460     }
+461         
+462     ClearPageReserved(page);
+463     set_bit(PG_highmem, &amp;page-&gt;flags);
+464     atomic_set(&amp;page-&gt;count, 1);
+465     __free_page(page);
+466     totalhigh_pages++;
+467 }
+468 #endif /* CONFIG_HIGHMEM */
+</pre>
+<dl>
+<dt><b>452-455</b></dt><dd>如果该 PFN 处不存在页，则将该 <tt>struct page</tt> 标记为 reserved，使其不被使用</dd>
+<dt><b>457-460</b></dt><dd>如果当前 CPU 受 Pentium Pro bug 影响，且本页会导致崩溃（由 <tt>page_kills_ppro()</tt> 完成检查），则将该页标记为 reserved，使其永远不会被分配</dd>
+<dt><b>462</b></dt><dd>从这里开始，该页是一个应被使用的高端内存页，因此首先清除 reserved 位，使其稍后能被交给伙伴分配器</dd>
+<dt><b>463</b></dt><dd>设置 <tt>PG_highmem</tt> 位，表明它是一个高端内存页</dd>
+<dt><b>464</b></dt><dd>将该页的使用计数初始化为 1，之后伙伴分配器会将其设为 0</dd>
+<dt><b>465</b></dt><dd>调用 <tt>__free_page()</tt>（参见 <a href="../original_html/understand023.html#func: __free_page">F.4.2 节</a>）释放该页，使伙伴分配器把它加入到自己的空闲链表中</dd>
+<dt><b>466</b></dt><dd>递增可用高端内存页的总数（<tt>totalhigh_pages</tt><a name="@codeindex182"></a>）</dd>
+</dl>
+
+<h3><a name="htoc270">E.4.4</a>　函数：<tt>free_all_bootmem</tt></h3>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: free_all_bootmem"></a> <a name="@codeindex183"></a></p>
+<pre class="verbatim">299 unsigned long __init free_all_bootmem_node (pg_data_t *pgdat)
+300 {
+301     return(free_all_bootmem_core(pgdat));
+302 }
+
+321 unsigned long __init free_all_bootmem (void)
+322 {
+323     return(free_all_bootmem_core(&amp;contig_page_data));
+324 }
+</pre>
+<dl>
+<dt><b>299-302</b></dt><dd>对于 NUMA，仅以指定的 <tt>pgdat</tt> 调用核心函数</dd>
+<dt><b>321-324</b></dt><dd>对于 UMA，以唯一的节点 <tt>contig_page_data</tt> 调用核心函数</dd>
+</dl>
+
+<h3><a name="htoc271">E.4.5</a>　函数：<tt>free_all_bootmem_core</tt></h3>
+
+<p><em>源码位置：mm/bootmem.c</em> <a name="func: free_all_bootmem_core"></a> <a name="@codeindex184"></a></p>
+
+<p>这是让引导内存分配器&#X201C;退役&#X201D;的核心函数。它分为两大任务：</p>
+<ul>
+<li>对于该节点的分配器已知的所有未分配页：
+  <ul>
+  <li>清除其 struct page 中的 <tt>PG_reserved</tt> 标志</li>
+  <li>将引用计数设为 1</li>
+  <li>调用 <tt>__free_pages()</tt>，让伙伴分配器把它加入空闲链表</li>
+  </ul>
+</li>
+<li>释放所有用于位图的页，并把它们交给伙伴分配器</li>
+</ul>
+<pre class="verbatim">245 static unsigned long __init free_all_bootmem_core(pg_data_t *pgdat)
+246 {
+247     struct page *page = pgdat-&gt;node_mem_map;
+248     bootmem_data_t *bdata = pgdat-&gt;bdata;
+249     unsigned long i, count, total = 0;
+250     unsigned long idx;
+251 
+252     if (!bdata-&gt;node_bootmem_map) BUG();
+253 
+254     count = 0;
+255     idx = bdata-&gt;node_low_pfn - 
+              (bdata-&gt;node_boot_start &gt;&gt; PAGE_SHIFT);
+256     for (i = 0; i &lt; idx; i++, page++) {
+257         if (!test_bit(i, bdata-&gt;node_bootmem_map)) {
+258             count++;
+259             ClearPageReserved(page);
+260             set_page_count(page, 1);
+261             __free_page(page);
+262         }
+263     }
+264     total += count;
+</pre>
+<dl>
+<dt><b>252</b></dt><dd>如果位图不可用，意味着本节点已被释放过，体系结构相关的代码出现了严重错误，因此调用 <tt>BUG()</tt></dd>
+<dt><b>254</b></dt><dd>用于累计交给伙伴分配器的页数</dd>
+<dt><b>255</b></dt><dd><tt>idx</tt> 是本节点可寻址的最后一个索引</dd>
+<dt><b>256-263</b></dt><dd>遍历本节点可寻址的所有页</dd>
+<dt><b>257</b></dt><dd>如果该页被标记为空闲，则……</dd>
+<dt><b>258</b></dt><dd>增加交给伙伴分配器的页数计数</dd>
+<dt><b>259</b></dt><dd>清除 <tt>PG_reserved</tt> 标志</dd>
+<dt><b>260</b></dt><dd>将引用计数设为 1，这样伙伴分配器会认为这是该页的最后一个使用者，从而把它放入空闲链表</dd>
+<dt><b>261</b></dt><dd>调用伙伴分配器的释放函数，把该页加入其空闲链表</dd>
+<dt><b>264</b></dt><dd><tt>total</tt> 将累加成为本函数交出的页面总数</dd>
+</dl>
+<pre class="verbatim">270     page = virt_to_page(bdata-&gt;node_bootmem_map);
+271     count = 0;
+272     for (i = 0; 
+        i &lt; ((bdata-&gt;node_low_pfn - (bdata-&gt;node_boot_start &gt;&gt; PAGE_SHIFT)
+                          )/8 + PAGE_SIZE-1)/PAGE_SIZE; 
+        i++,page++) {
+273         count++;
+274         ClearPageReserved(page);
+275         set_page_count(page, 1);
+276         __free_page(page);
+277     }
+278     total += count;
+279     bdata-&gt;node_bootmem_map = NULL;
+280 
+281     return total;
+282 }
+</pre>
+<p>释放分配器位图并返回。</p>
+<dl>
+<dt><b>270</b></dt><dd>获取位于 bootmem 位图起始处的 <tt>struct page</tt></dd>
+<dt><b>271</b></dt><dd>位图所释放页面的计数</dd>
+<dt><b>272-277</b></dt><dd>对所有用于位图的页，按上一段代码的方式将其释放给伙伴分配器</dd>
+<dt><b>279</b></dt><dd>将 bootmem 位图设为 NULL，以免被意外地二次释放</dd>
+<dt><b>281</b></dt><dd>返回本函数释放的页面总数，也就是加入到伙伴分配器空闲链表中的页数</dd>
+</dl>
+
+<hr>
+<nav>
+  [ <a href="understand021_zh.html">&laquo; 上一章</a> ]
+  [ <a href="index.html">&uarr; 返回目录</a> ]
+  [ <a href="../original_html/understand023.html">下一章 &raquo;</a> ]
+</nav>
+</body>
+</html>
