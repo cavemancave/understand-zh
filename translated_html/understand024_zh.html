@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>附录 G 非连续内存分配 | Linux 虚拟内存管理器</title>
+  <link rel="stylesheet" type="text/css" href="understand_zh.css">
+</head>
+<body>
+  <nav>
+    [ <a href="understand023_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand025.html">下一章 &raquo;</a> ]
+  </nav>
+
+<hr>
+<h1 id="chap-non-contiguous-allocation"><a name="htoc293">附录 G</a>　非连续内存分配</h1>
+
+<h2><a name="toc116"></a><a name="htoc294">G.1</a>　分配非连续区域</h2>
+
+<h3><a name="htoc295">G.1.1</a>　函数：<tt>vmalloc</tt></h3>
+
+<p><em>源码位置：include/linux/vmalloc.h</em> <a name="func: vmalloc"></a> <a name="@codeindex207"></a></p>
+
+<p>本函数的调用图见 <a href="understand010_zh.html#fig: vmalloc">图 7.2</a>。下面这些宏的区别仅在于它们所使用的 <tt>GFP_</tt> 标志位（参见 <a href="understand009_zh.html#Sec: GFP Flags">6.4 节</a>）。<tt>size</tt> 参数由 <tt>__vmalloc()</tt>（参见 <a href="#func: __vmalloc">G.1.2 节</a>）按页对齐。</p>
+<pre class="verbatim"> 37 static inline void * vmalloc (unsigned long size)
+ 38 {
+ 39     return __vmalloc(size, GFP_KERNEL | __GFP_HIGHMEM, PAGE_KERNEL);
+ 40 }
+ 45 
+ 46 static inline void * vmalloc_dma (unsigned long size)
+ 47 {
+ 48     return __vmalloc(size, GFP_KERNEL|GFP_DMA, PAGE_KERNEL);
+ 49 }
+ 54  
+ 55 static inline void * vmalloc_32(unsigned long size)
+ 56 {
+ 57     return __vmalloc(size, GFP_KERNEL, PAGE_KERNEL);
+ 58 }
+</pre>
+<dl>
+<dt><b>37</b></dt><dd>这些标志位指示按需使用 <tt>ZONE_NORMAL</tt> 或 <tt>ZONE_HIGHMEM</tt></dd>
+<dt><b>46</b></dt><dd>该标志指示只从 <tt>ZONE_DMA</tt> 分配</dd>
+<dt><b>55</b></dt><dd>只会分配 <tt>ZONE_NORMAL</tt> 中的物理页</dd>
+</dl>
+
+<h3><a name="htoc296">G.1.2</a>　函数：<tt>__vmalloc</tt></h3>
+
+<p><em>源码位置：mm/vmalloc.c</em> <a name="func: __vmalloc"></a> <a name="@codeindex208"></a></p>
+
+<p>本函数有三项任务：将请求大小按页对齐；请求 <tt>get_vm_area()</tt> 为该请求找到一块区域；并使用 <tt>vmalloc_area_pages()</tt> 为这些页分配 PTE。</p>
+<pre class="verbatim">261 void * __vmalloc (unsigned long size, int gfp_mask, pgprot_t prot)
+262 {
+263     void * addr;
+264     struct vm_struct *area;
+265 
+266     size = PAGE_ALIGN(size);
+267     if (!size || (size &gt;&gt; PAGE_SHIFT) &gt; num_physpages)
+268         return NULL;
+269     area = get_vm_area(size, VM_ALLOC);
+270     if (!area)
+271         return NULL;
+272     addr = area-&gt;addr;
+273     if (__vmalloc_area_pages(VMALLOC_VMADDR(addr), size, gfp_mask,
+274                              prot, NULL)) {
+275         vfree(addr);
+276         return NULL;
+277     }
+278     return addr;
+279 }
+</pre>
+<dl>
+<dt><b>261</b></dt><dd>参数依次为：要分配的大小、用于分配的 <tt>GFP_</tt> 标志位以及赋予 PTE 的保护属性</dd>
+<dt><b>266</b></dt><dd>将 <tt>size</tt> 对齐到页大小</dd>
+<dt><b>267</b></dt><dd>合理性检查。确保大小不为 0，且请求的大小不超过物理页总数</dd>
+<dt><b>269</b></dt><dd>用 <tt>get_vm_area()</tt>（参见 <a href="#func: get_vm_area">G.1.3 节</a>）在虚拟地址空间中寻找一块区域来存放此次分配</dd>
+<dt><b>272</b></dt><dd>addr 字段已由 <tt>get_vm_area()</tt> 填好</dd>
+<dt><b>273</b></dt><dd>用 <tt>__vmalloc_area_pages()</tt>（参见 <a href="#func: __vmalloc_area_pages">G.1.5 节</a>）为此次分配建立所需的 PTE 表项。若失败，则返回非 0 值 <tt>-ENOMEM</tt></dd>
+<dt><b>275-276</b></dt><dd>如果分配失败，释放该区域的所有 PTE、页和描述信息</dd>
+<dt><b>278</b></dt><dd>返回所分配区域的地址</dd>
+</dl>
+
+<h3><a name="htoc297">G.1.3</a>　函数：<tt>get_vm_area</tt></h3>
+
+<p><em>源码位置：mm/vmalloc.c</em> <a name="func: get_vm_area"></a> <a name="@codeindex209"></a></p>
+
+<p>为分配一个 <tt>vm_struct</tt> 所需的区域，会请求 slab 分配器通过 <tt>kmalloc()</tt> 提供所需内存。然后线性遍历 <tt>vm_struct</tt> 链表，寻找一块足够大的区域以满足请求，且在区域末尾包含一页填充。</p>
+<pre class="verbatim">195 struct vm_struct * get_vm_area(unsigned long size, 
+                                   unsigned long flags)
+196 {
+197     unsigned long addr, next;
+198     struct vm_struct **p, *tmp, *area;
+199 
+200     area = (struct vm_struct *) kmalloc(sizeof(*area), GFP_KERNEL);
+201     if (!area)
+202         return NULL;
+203
+204     size += PAGE_SIZE;
+205     if(!size) {
+206         kfree (area);
+207         return NULL;
+208     }
+209
+210     addr = VMALLOC_START;
+211     write_lock(&amp;vmlist_lock);
+212     for (p = &amp;vmlist; (tmp = *p) ; p = &amp;tmp-&gt;next) {
+213         if ((size + addr) &lt; addr)
+214             goto out;
+215         if (size + addr &lt;= (unsigned long) tmp-&gt;addr)
+216             break;
+217         next = tmp-&gt;size + (unsigned long) tmp-&gt;addr;
+218         if (next &gt; addr)
+219             addr = next;
+220         if (addr &gt; VMALLOC_END-size)
+221             goto out;
+222     }
+223     area-&gt;flags = flags;
+224     area-&gt;addr = (void *)addr;
+225     area-&gt;size = size;
+226     area-&gt;next = *p;
+227     *p = area;
+228     write_unlock(&amp;vmlist_lock);
+229     return area;
+230 
+231 out:
+232     write_unlock(&amp;vmlist_lock);
+233     kfree(area);
+234     return NULL;
+235 }
+</pre>
+<dl>
+<dt><b>195</b></dt><dd>参数是请求区域的大小（应为页大小的倍数）和区域标志，标志取值为 <tt>VM_ALLOC</tt> 或 <tt>VM_IOREMAP</tt></dd>
+<dt><b>200-202</b></dt><dd>为 <tt>vm_struct</tt> 描述结构分配空间</dd>
+<dt><b>204</b></dt><dd>对请求大小进行填充，使得各区域之间留出一页间隙，以防止越界覆盖</dd>
+<dt><b>205-206</b></dt><dd>这是为了避免填充后因溢出而使大小变为 0。如果确实出错，则释放刚分配的 <tt>area</tt> 并返回 NULL</dd>
+<dt><b>210</b></dt><dd>从 vmalloc 地址空间的起始位置开始搜索</dd>
+<dt><b>211</b></dt><dd>锁住链表</dd>
+<dt><b>212-222</b></dt><dd>遍历链表，寻找一块足以容纳请求的区域</dd>
+<dt><b>213-214</b></dt><dd>检查是否已到达可寻址范围的末尾</dd>
+<dt><b>215-216</b></dt><dd>若请求区域可以放入当前地址与下一个区域之间，则搜索完成</dd>
+<dt><b>217</b></dt><dd>确保地址不会超出 vmalloc 地址空间的末尾</dd>
+<dt><b>223-225</b></dt><dd>填入该区域的信息</dd>
+<dt><b>226-227</b></dt><dd>将新区域链接到链表中</dd>
+<dt><b>228-229</b></dt><dd>释放链表锁并返回</dd>
+<dt><b>231</b></dt><dd>当请求无法被满足时跳到此标签</dd>
+<dt><b>232</b></dt><dd>释放链表锁</dd>
+<dt><b>233-234</b></dt><dd>释放用于区域描述符的内存并返回</dd>
+</dl>
+
+<h3><a name="htoc298">G.1.4</a>　函数：<tt>vmalloc_area_pages</tt></h3>
+
+<p><em>源码位置：mm/vmalloc.c</em> <a name="func: vmalloc_area_pages"></a> <a name="@codeindex210"></a></p>
+
+<p>这只是 <tt>__vmalloc_area_pages()</tt> 的包装器。该函数存在是为了与较旧的内核保持兼容。改名是为了体现新函数 <tt>__vmalloc_area_pages()</tt> 能够接收一个用于插入到页表中的页数组。</p>
+<pre class="verbatim">189 int vmalloc_area_pages(unsigned long address, unsigned long size,
+190                        int gfp_mask, pgprot_t prot)
+191 {
+192         return __vmalloc_area_pages(address, size, gfp_mask, prot, NULL);
+193 }
+</pre>
+<dl>
+<dt><b>192</b></dt><dd>以相同的参数调用 <tt>__vmalloc_area_pages()</tt>。<tt>pages</tt> 数组传入 NULL，表示页将按需分配</dd>
+</dl>
+
+<h3><a name="htoc299">G.1.5</a>　函数：<tt>__vmalloc_area_pages</tt></h3>
+
+<p><em>源码位置：mm/vmalloc.c</em> <a name="func: __vmalloc_area_pages"></a> <a name="@codeindex211"></a></p>
+
+<p>这是标准页表遍历函数的开始。该顶层函数会遍历地址范围内的所有 PGD。对每个 PGD，它会调用 <tt>pmd_alloc()</tt> 分配一个 PMD 目录，然后对该目录调用 <tt>alloc_area_pmd()</tt>。</p>
+<pre class="verbatim">155 static inline int __vmalloc_area_pages (unsigned long address,
+156                                         unsigned long size,
+157                                         int gfp_mask,
+158                                         pgprot_t prot,
+159                                         struct page ***pages)
+160 {
+161     pgd_t * dir;
+162     unsigned long end = address + size;
+163     int ret;
+164 
+165     dir = pgd_offset_k(address);
+166     spin_lock(&amp;init_mm.page_table_lock);
+167     do {
+168         pmd_t *pmd;
+169         
+170         pmd = pmd_alloc(&amp;init_mm, dir, address);
+171         ret = -ENOMEM;
+172         if (!pmd)
+173             break;
+174 
+175         ret = -ENOMEM;
+176         if (alloc_area_pmd(pmd, address, end - address, 
+                       gfp_mask, prot, pages))
+177             break;
+178 
+179         address = (address + PGDIR_SIZE) &amp; PGDIR_MASK;
+180         dir++;
+181 
+182         ret = 0;
+183     } while (address &amp;&amp; (address &lt; end));
+184     spin_unlock(&amp;init_mm.page_table_lock);
+185     flush_cache_all();
+186     return ret;
+187 }
+</pre>
+<dl>
+<dt><b>155</b></dt><dd>参数为：
+<dl>
+<dt><b>address</b></dt><dd>要分配 PMD 的起始地址</dd>
+<dt><b>size</b></dt><dd>区域的大小</dd>
+<dt><b>gfp_mask</b></dt><dd>传给 <tt>alloc_pages()</tt>（参见 <a href="understand023_zh.html#func: alloc_pages">F.1.1 节</a>）的 <tt>GFP_</tt> 标志位</dd>
+<dt><b>prot</b></dt><dd>赋给 PTE 表项的保护属性</dd>
+<dt><b>pages</b></dt><dd>一个用于插入的页数组，可替代由 <tt>alloc_area_pte()</tt> 逐页分配的方式。只有 <tt>vmap()</tt> 接口会传入一个数组</dd>
+</dl></dd>
+<dt><b>162</b></dt><dd>结束地址即起始地址加上大小</dd>
+<dt><b>165</b></dt><dd>获取起始地址对应的 PGD 表项</dd>
+<dt><b>166</b></dt><dd>锁住内核参考页表</dd>
+<dt><b>167-183</b></dt><dd>对此地址范围内的每个 PGD，分配一个 PMD 目录并调用 <tt>alloc_area_pmd()</tt>（参见 <a href="#func: alloc_area_pmd">G.1.6 节</a>）</dd>
+<dt><b>170</b></dt><dd>分配一个 PMD 目录</dd>
+<dt><b>176</b></dt><dd>调用 <tt>alloc_area_pmd()</tt>（参见 <a href="#func: alloc_area_pmd">G.1.6 节</a>），它将为 PMD 中的每个 PTE 槽分配一个 PTE</dd>
+<dt><b>179</b></dt><dd><tt>address</tt> 变为下一个 PGD 表项的基地址</dd>
+<dt><b>180</b></dt><dd>将 <tt>dir</tt> 移动到下一个 PGD 表项</dd>
+<dt><b>184</b></dt><dd>释放内核页表锁</dd>
+<dt><b>185</b></dt><dd><tt>flush_cache_all()</tt> 会刷新所有 CPU 缓存。这是必需的，因为内核页表已经更改</dd>
+<dt><b>186</b></dt><dd>返回成功</dd>
+</dl>
+
+<h3><a name="htoc300">G.1.6</a>　函数：<tt>alloc_area_pmd</tt></h3>
+
+<p><em>源码位置：mm/vmalloc.c</em> <a name="func: alloc_area_pmd"></a> <a name="@codeindex212"></a></p>
+
+<p>这是为某地址范围分配 PTE 表项的标准页表遍历的第二阶段。对一个 PGD 上给定地址范围内的每个 PMD，<tt>pte_alloc()</tt> 会创建一个 PTE 目录，然后调用 <tt>alloc_area_pte()</tt> 分配物理页。</p>
+<pre class="verbatim">132 static inline int alloc_area_pmd(pmd_t * pmd, unsigned long address,
+133                         unsigned long size, int gfp_mask,
+134                         pgprot_t prot, struct page ***pages)
+135 {
+136     unsigned long end;
+137 
+138     address &amp;= ~PGDIR_MASK;
+139     end = address + size;
+140     if (end &gt; PGDIR_SIZE)
+141         end = PGDIR_SIZE;
+142     do {
+143         pte_t * pte = pte_alloc(&amp;init_mm, pmd, address);
+144         if (!pte)
+145             return -ENOMEM;
+146         if (alloc_area_pte(pte, address, end - address, 
+147                    gfp_mask, prot, pages))
+148             return -ENOMEM;
+149         address = (address + PMD_SIZE) &amp; PMD_MASK;
+150         pmd++;
+151     } while (address &lt; end);
+152     return 0;
+152 }
+</pre>
+<dl>
+<dt><b>132</b></dt><dd>参数为：
+<dl>
+<dt><b>pmd</b></dt><dd>需要进行分配的 PMD</dd>
+<dt><b>address</b></dt><dd>起始地址</dd>
+<dt><b>size</b></dt><dd>在该 PMD 内需要分配的区域大小</dd>
+<dt><b>gfp_mask</b></dt><dd>传给 <tt>alloc_pages()</tt>（参见 <a href="understand023_zh.html#func: alloc_pages">F.1.1 节</a>）的 <tt>GFP_</tt> 标志位</dd>
+<dt><b>prot</b></dt><dd>赋给 PTE 表项的保护属性</dd>
+<dt><b>pages</b></dt><dd>可选的页数组，若提供则直接使用其中的页而不再逐页分配</dd>
+</dl></dd>
+<dt><b>138</b></dt><dd>将起始地址按 PGD 对齐</dd>
+<dt><b>139-141</b></dt><dd>将 end 计算为本次分配的结束地址或本 PGD 的结束地址，取较小者</dd>
+<dt><b>142-151</b></dt><dd>对给定地址范围内的每个 PMD，分配一个 PTE 目录并调用 <tt>alloc_area_pte()</tt>（参见 <a href="#func: alloc_area_pte">G.1.7 节</a>）</dd>
+<dt><b>143</b></dt><dd>分配 PTE 目录</dd>
+<dt><b>146-147</b></dt><dd>调用 <tt>alloc_area_pte()</tt>，若 <tt>pages</tt> 未提供页数组，它将分配物理页</dd>
+<dt><b>149</b></dt><dd><tt>address</tt> 变为下一个 PMD 表项的基地址</dd>
+<dt><b>150</b></dt><dd>将 <tt>pmd</tt> 移动到下一个 PMD 表项</dd>
+<dt><b>152</b></dt><dd>返回成功</dd>
+</dl>
+
+<h3><a name="htoc301">G.1.7</a>　函数：<tt>alloc_area_pte</tt></h3>
+
+<p><em>源码位置：mm/vmalloc.c</em> <a name="func: alloc_area_pte"></a> <a name="@codeindex213"></a></p>
+
+<p>这是页表遍历的最后阶段。对给定 PTE 目录和地址范围内的每个 PTE，都会分配一页并与该 PTE 关联。</p>
+<pre class="verbatim"> 95 static inline int alloc_area_pte (pte_t * pte, unsigned long address,
+ 96                         unsigned long size, int gfp_mask,
+ 97                         pgprot_t prot, struct page ***pages)
+ 98 {
+ 99     unsigned long end;
+100 
+101     address &amp;= ~PMD_MASK;
+102     end = address + size;
+103     if (end &gt; PMD_SIZE)
+104         end = PMD_SIZE;
+105     do {
+106         struct page * page;
+107 
+108         if (!pages) {
+109             spin_unlock(&amp;init_mm.page_table_lock);
+110             page = alloc_page(gfp_mask);
+111             spin_lock(&amp;init_mm.page_table_lock);
+112         } else {
+113             page = (**pages);
+114             (*pages)++;
+115
+116             /* Add a reference to the page so we can free later */
+117             if (page)
+118                 atomic_inc(&amp;page-&gt;count);
+119
+120         }
+121         if (!pte_none(*pte))
+122             printk(KERN_ERR "alloc_area_pte: page already exists\n");
+123         if (!page)
+124             return -ENOMEM;
+125         set_pte(pte, mk_pte(page, prot));
+126         address += PAGE_SIZE;
+127         pte++;
+128     } while (address &lt; end);
+129     return 0;
+130 }
+</pre>
+<dl>
+<dt><b>101</b></dt><dd>将地址按 PMD 目录对齐</dd>
+<dt><b>103-104</b></dt><dd>结束地址为请求的结束位置或目录的结束位置，取较小者</dd>
+<dt><b>105-128</b></dt><dd>遍历此页中的每个 PTE。如果提供了 <tt>pages</tt> 数组，则用其中的页填充页表，否则逐页分配</dd>
+<dt><b>108-111</b></dt><dd>若未提供 <tt>pages</tt> 数组，则解锁内核参考页表，用 <tt>alloc_page()</tt> 分配一页，然后重新获取自旋锁</dd>
+<dt><b>112-120</b></dt><dd>否则，从数组中取一页并递增其使用计数，因为它即将被插入到参考页表中</dd>
+<dt><b>121-122</b></dt><dd>若该 PTE 已在使用中，则意味着 vmalloc 区域中的多个区域出现了某种重叠</dd>
+<dt><b>123-124</b></dt><dd>若无可用物理页则返回失败</dd>
+<dt><b>125</b></dt><dd>将带有所需保护位（<tt>prot</tt>）的 <tt>page</tt> 设置到 PTE 中</dd>
+<dt><b>126</b></dt><dd><tt>address</tt> 变为下一个 PTE 的地址</dd>
+<dt><b>127</b></dt><dd>移动到下一个 PTE</dd>
+<dt><b>129</b></dt><dd>返回成功</dd>
+</dl>
+
+<h3><a name="htoc302">G.1.8</a>　函数：<tt>vmap</tt></h3>
+
+<p><em>源码位置：mm/vmalloc.c</em> <a name="func: vmap"></a> <a name="@codeindex214"></a></p>
+
+<p>该函数允许将调用者提供的 <tt>pages</tt> 数组插入到 vmalloc 地址空间中。它在 2.4.22 中并未被使用，我怀疑这是从 2.6.x 误传回的代码，在 2.6.x 中它被声音子系统核心使用。</p>
+<pre class="verbatim">281 void * vmap(struct page **pages, int count,
+282             unsigned long flags, pgprot_t prot)
+283 {
+284     void * addr;
+285     struct vm_struct *area;
+286     unsigned long size = count &lt;&lt; PAGE_SHIFT;
+287 
+288     if (!size || size &gt; (max_mapnr &lt;&lt; PAGE_SHIFT))
+289         return NULL;
+290     area = get_vm_area(size, flags);
+291     if (!area) {
+292         return NULL;
+293     }
+294     addr = area-&gt;addr;
+295     if (__vmalloc_area_pages(VMALLOC_VMADDR(addr), size, 0,
+296                              prot, &amp;pages)) {
+297         vfree(addr);
+298         return NULL;
+299     }
+300     return addr;
+301 }
+</pre>
+<dl>
+<dt><b>281</b></dt><dd>参数为：
+<dl>
+<dt><b>pages</b></dt><dd>调用者提供的、要插入的页数组</dd>
+<dt><b>count</b></dt><dd>数组中页的数量</dd>
+<dt><b>flags</b></dt><dd>用于 <tt>vm_struct</tt> 的标志位</dd>
+<dt><b>prot</b></dt><dd>设置到 PTE 中的保护位</dd>
+</dl></dd>
+<dt><b>286</b></dt><dd>根据数组大小计算要创建区域的字节大小</dd>
+<dt><b>288-289</b></dt><dd>确保区域大小不超过限制</dd>
+<dt><b>290-293</b></dt><dd>用 <tt>get_vm_area()</tt> 寻找足以容纳该映射的区域。若未找到则返回 NULL</dd>
+<dt><b>294</b></dt><dd>获取该区域的虚拟地址</dd>
+<dt><b>295</b></dt><dd>用 <tt>__vmalloc_area_pages()</tt>（参见 <a href="#func: vmalloc_area_pages">G.1.4 节</a>）将数组插入到页表中</dd>
+<dt><b>297</b></dt><dd>若插入失败，释放该区域并返回 NULL</dd>
+<dt><b>298</b></dt><dd>返回新映射区域的虚拟地址</dd>
+</dl>
+
+<h2><a name="toc117"></a><a name="htoc303">G.2</a>　释放非连续区域</h2>
+
+<h3><a name="htoc304">G.2.1</a>　函数：<tt>vfree</tt></h3>
+
+<p><em>源码位置：mm/vmalloc.c</em> <a name="func: vfree"></a> <a name="@codeindex215"></a></p>
+
+<p>本函数的调用图见 <a href="understand010_zh.html#fig: vfree">图 7.4</a>。它是负责释放非连续内存区域的顶层函数。它先做基本的合理性检查，然后查找请求 <tt>addr</tt> 对应的 <tt>vm_struct</tt>。一旦找到，便调用 <tt>vmfree_area_pages()</tt>。</p>
+<pre class="verbatim">237 void vfree(void * addr)
+238 {
+239     struct vm_struct **p, *tmp;
+240 
+241     if (!addr)
+242         return;
+243     if ((PAGE_SIZE-1) &amp; (unsigned long) addr) {
+244         printk(KERN_ERR 
+               "Trying to vfree() bad address (%p)\n", addr);
+245         return;
+246     }
+247     write_lock(&amp;vmlist_lock);
+248     for (p = &amp;vmlist ; (tmp = *p) ; p = &amp;tmp-&gt;next) {
+249         if (tmp-&gt;addr == addr) {
+250             *p = tmp-&gt;next;
+251             vmfree_area_pages(VMALLOC_VMADDR(tmp-&gt;addr), 
+                          tmp-&gt;size);
+252             write_unlock(&amp;vmlist_lock);
+253             kfree(tmp);
+254             return;
+255         }
+256     }
+257     write_unlock(&amp;vmlist_lock);
+258     printk(KERN_ERR 
+           "Trying to vfree() nonexistent vm area (%p)\n", addr);
+259 }
+</pre>
+<dl>
+<dt><b>237</b></dt><dd>参数是 <tt>vmalloc()</tt> 或 <tt>ioremap()</tt> 通过 <tt>get_vm_area()</tt>（参见 <a href="#func: get_vm_area">G.1.3 节</a>）返回的地址</dd>
+<dt><b>241-243</b></dt><dd>忽略 NULL 地址</dd>
+<dt><b>243-246</b></dt><dd>检查地址是否按页对齐，这是判断该区域是否有效的一个合理的快速检查</dd>
+<dt><b>247</b></dt><dd>获取 <tt>vmlist</tt> 的写锁</dd>
+<dt><b>248</b></dt><dd>遍历 <tt>vmlist</tt>，寻找 <tt>addr</tt> 对应的正确 <tt>vm_struct</tt></dd>
+<dt><b>249</b></dt><dd>如果地址匹配，则……</dd>
+<dt><b>250</b></dt><dd>将该区域从 <tt>vmlist</tt> 链表中移除</dd>
+<dt><b>251</b></dt><dd>释放与该地址范围相关的所有页</dd>
+<dt><b>252</b></dt><dd>释放 <tt>vmlist</tt> 锁</dd>
+<dt><b>253</b></dt><dd>释放 <tt>vm_struct</tt> 占用的内存并返回</dd>
+<dt><b>257-258</b></dt><dd>未找到对应的 <tt>vm_struct</tt>。释放锁并打印释放失败的消息</dd>
+</dl>
+
+<h3><a name="htoc305">G.2.2</a>　函数：<tt>vmfree_area_pages</tt></h3>
+
+<p><em>源码位置：mm/vmalloc.c</em> <a name="func: vmfree_area_pages"></a> <a name="@codeindex216"></a></p>
+
+<p>这是页表遍历的第一阶段，用于释放与某地址范围相关的所有页和 PTE。它负责遍历相关的 PGD 并刷新 TLB。</p>
+<pre class="verbatim"> 80 void vmfree_area_pages(unsigned long address, unsigned long size)
+ 81 {
+ 82     pgd_t * dir;
+ 83     unsigned long end = address + size;
+ 84 
+ 85     dir = pgd_offset_k(address);
+ 86     flush_cache_all();
+ 87     do {
+ 88         free_area_pmd(dir, address, end - address);
+ 89         address = (address + PGDIR_SIZE) &amp; PGDIR_MASK;
+ 90         dir++;
+ 91     } while (address &amp;&amp; (address &lt; end));
+ 92     flush_tlb_all();
+ 93 }
+</pre>
+<dl>
+<dt><b>80</b></dt><dd>参数为起始 <tt>address</tt> 和区域的 <tt>size</tt></dd>
+<dt><b>82</b></dt><dd>地址空间末尾为起始地址加大小</dd>
+<dt><b>85</b></dt><dd>获取地址范围对应的第一个 PGD</dd>
+<dt><b>86</b></dt><dd>刷新 CPU 缓存，避免对即将删除的页命中缓存。这在许多体系结构上（包括 x86）是空操作</dd>
+<dt><b>87</b></dt><dd>调用 <tt>free_area_pmd()</tt>（参见 <a href="#func: free_area_pmd">G.2.3 节</a>）执行页表遍历的第二阶段</dd>
+<dt><b>89</b></dt><dd><tt>address</tt> 变为下一个 PGD 的起始地址</dd>
+<dt><b>90</b></dt><dd>移动到下一个 PGD</dd>
+<dt><b>92</b></dt><dd>由于页表已发生变化，刷新 TLB</dd>
+</dl>
+
+<h3><a name="htoc306">G.2.3</a>　函数：<tt>free_area_pmd</tt></h3>
+
+<p><em>源码位置：mm/vmalloc.c</em> <a name="func: free_area_pmd"></a> <a name="@codeindex217"></a></p>
+
+<p>这是页表遍历的第二阶段。对此目录中的每个 PMD，调用 <tt>free_area_pte()</tt> 以释放对应的页和 PTE。</p>
+<pre class="verbatim"> 56 static inline void free_area_pmd(pgd_t * dir, 
+                     unsigned long address,
+                     unsigned long size)
+ 57 {
+ 58     pmd_t * pmd;
+ 59     unsigned long end;
+ 60 
+ 61     if (pgd_none(*dir))
+ 62         return;
+ 63     if (pgd_bad(*dir)) {
+ 64         pgd_ERROR(*dir);
+ 65         pgd_clear(dir);
+ 66         return;
+ 67     }
+ 68     pmd = pmd_offset(dir, address);
+ 69     address &amp;= ~PGDIR_MASK;
+ 70     end = address + size;
+ 71     if (end &gt; PGDIR_SIZE)
+ 72         end = PGDIR_SIZE;
+ 73     do {
+ 74         free_area_pte(pmd, address, end - address);
+ 75         address = (address + PMD_SIZE) &amp; PMD_MASK;
+ 76         pmd++;
+ 77     } while (address &lt; end);
+ 78 }
+</pre>
+<dl>
+<dt><b>56</b></dt><dd>参数为正被遍历的 PGD、起始地址以及区域长度</dd>
+<dt><b>61-62</b></dt><dd>若没有 PGD 则返回。这种情况可能发生在分配失败后调用 <tt>vfree()</tt>（参见 <a href="#func: vfree">G.2.1 节</a>）时</dd>
+<dt><b>63-67</b></dt><dd>若 PGD 表项不存在、被标记为只读、或被标记为已访问/已写入，则视为坏 PGD</dd>
+<dt><b>68</b></dt><dd>获取该地址范围内的第一个 PMD</dd>
+<dt><b>69</b></dt><dd>将地址按 PGD 对齐</dd>
+<dt><b>70-72</b></dt><dd><tt>end</tt> 为要释放空间的结束位置或本 PGD 的结束位置，取较小者</dd>
+<dt><b>73-77</b></dt><dd>对每个 PMD，调用 <tt>free_area_pte()</tt>（参见 <a href="#func: free_area_pte">G.2.4 节</a>）释放 PTE 表项</dd>
+<dt><b>75</b></dt><dd>address 为下一个 PMD 的基地址</dd>
+<dt><b>76</b></dt><dd>移动到下一个 PMD</dd>
+</dl>
+
+<h3><a name="htoc307">G.2.4</a>　函数：<tt>free_area_pte</tt></h3>
+
+<p><em>源码位置：mm/vmalloc.c</em> <a name="func: free_area_pte"></a> <a name="@codeindex218"></a></p>
+
+<p>这是页表遍历的最后阶段。对给定 PMD 在地址范围内的每个 PTE，释放该 PTE 及其关联的页。</p>
+<pre class="verbatim">22 static inline void free_area_pte(pmd_t * pmd, unsigned long address,
+                    unsigned long size)
+ 23 {
+ 24     pte_t * pte;
+ 25     unsigned long end;
+ 26 
+ 27     if (pmd_none(*pmd))
+ 28         return;
+ 29     if (pmd_bad(*pmd)) {
+ 30         pmd_ERROR(*pmd);
+ 31         pmd_clear(pmd);
+ 32         return;
+ 33     }
+ 34     pte = pte_offset(pmd, address);
+ 35     address &amp;= ~PMD_MASK;
+ 36     end = address + size;
+ 37     if (end &gt; PMD_SIZE)
+ 38         end = PMD_SIZE;
+ 39     do {
+ 40         pte_t page;
+ 41         page = ptep_get_and_clear(pte);
+ 42         address += PAGE_SIZE;
+ 43         pte++;
+ 44         if (pte_none(page))
+ 45             continue;
+ 46         if (pte_present(page)) {
+ 47             struct page *ptpage = pte_page(page);
+ 48             if (VALID_PAGE(ptpage) &amp;&amp; 
+                   (!PageReserved(ptpage)))
+ 49                 __free_page(ptpage);
+ 50             continue;
+ 51         }
+ 52         printk(KERN_CRIT 
+               "Whee.. Swapped out page in kernel page table\n");
+ 53     } while (address &lt; end);
+ 54 }
+</pre>
+<dl>
+<dt><b>22</b></dt><dd>参数为要从中释放 PTE 的 PMD、起始地址以及要释放区域的大小</dd>
+<dt><b>27-28</b></dt><dd>若此区域来自一次失败的 <tt>vmalloc()</tt>，PMD 可能并不存在</dd>
+<dt><b>29-33</b></dt><dd>若 PMD 不在主存、为只读、或被标记为已写入/已访问，则视为坏 PMD</dd>
+<dt><b>34</b></dt><dd><tt>pte</tt> 是该地址范围内的第一个 PTE</dd>
+<dt><b>35</b></dt><dd>将地址按 PMD 对齐</dd>
+<dt><b>36-38</b></dt><dd>end 为请求区域的结束位置或本 PMD 的结束位置，取较小者</dd>
+<dt><b>38-53</b></dt><dd>遍历所有 PTE，进行检查并释放 PTE 及其关联页</dd>
+<dt><b>41</b></dt><dd><tt>ptep_get_and_clear()</tt><a name="@codeindex219"></a> 会从页表中移除一个 PTE 并将其返回给调用者</dd>
+<dt><b>42</b></dt><dd><tt>address</tt> 变为下一个 PTE 的基地址</dd>
+<dt><b>43</b></dt><dd>移动到下一个 PTE</dd>
+<dt><b>44</b></dt><dd>若没有 PTE，则继续</dd>
+<dt><b>46-51</b></dt><dd>若该页存在，则进行基本检查后释放</dd>
+<dt><b>47</b></dt><dd><tt>pte_page()</tt> 利用全局 <tt>mem_map</tt> 找到该 PTE 对应的 <tt>struct page</tt></dd>
+<dt><b>48-49</b></dt><dd>在调用 <tt>__free_page()</tt> 释放物理页之前，确保该页是有效的且未被保留</dd>
+<dt><b>50</b></dt><dd>继续处理下一个 PTE</dd>
+<dt><b>52</b></dt><dd>若执行到此行，意味着内核地址空间中的某个 PTE 不知何故被换出。内核内存不可换出，因此这是一个严重错误</dd>
+</dl>
+
+<hr>
+  <nav>
+    [ <a href="understand023_zh.html">&laquo; 上一章</a> ]
+    [ <a href="index.html">&uarr; 返回目录</a> ]
+    [ <a href="../original_html/understand025.html">下一章 &raquo;</a> ]
+  </nav>
+</body>
+</html>
