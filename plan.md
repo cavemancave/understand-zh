@@ -49,6 +49,25 @@ After Phase 1 is complete, walk chapters in order. For each PNG `<img>` in each 
 - For medium source files (1000-2000 lines): split by H3 subsection.
 - For large source files (>3000 lines, like App D): hand-translate in main session, one H4 function per commit. Sub-agents are NOT reliable.
 
+### Sub-agent timeout & splitting policy (NEW 2026-05-22)
+To prevent runaway sub-agents that never report back, the main session enforces an internal timeout per sub-agent call and splits the work on timeout.
+
+- **Soft timeout**: ~10 minutes of wall time per sub-agent invocation (the main session should be ready to interrupt and re-plan if a `task` call goes silent that long).
+- **On timeout or silent failure**:
+  1. Interrupt the sub-agent (or treat it as failed if it returned `total_turns: 0` / no commit).
+  2. Check `git log --oneline -5` and the target file to see whether any partial work landed.
+  3. Split the remaining work into smaller units and relaunch:
+     - File >2000 lines → split by H2 section (one sub-agent per H2).
+     - H2 section still too large → split by H3 subsection.
+     - H3 subsection still failing → split by H4 (one function per sub-agent), or fall back to hand-translation in the main session.
+  4. Update plan.md and the SQL `todos` table to record the new finer-grained todos (e.g. `xlate-025-H1`, `xlate-025-H2`, …).
+- **Size heuristics for initial split (before first try):**
+  - <1000 lines: one sub-agent, whole file.
+  - 1000–2000 lines: one sub-agent, whole file, but read-then-`create` (single write) — no incremental `edit` loops.
+  - 2000–3000 lines: split by H2 up front.
+  - 3000 lines: split by H3 or H4 up front; consider hand-translation.
+- **Recovery**: every sub-agent prompt MUST instruct the agent to commit + push before exiting, so partial progress is never lost between retries.
+
 ## Sub-agent contract
 - Type: `general-purpose` (full toolset, Sonnet) for translation; `general-purpose` for SVG too (geometry + commit work).
 - Each sub-agent is stateless: the launching prompt MUST contain all rules (git identity, commit-per-file, English message, push after commit, link to `AGENTS.md`).
