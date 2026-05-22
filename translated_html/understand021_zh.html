@@ -13,10 +13,17 @@
   </nav>
 <h1 id="chap-process-address-space"><a name="htoc133">附录 D</a>　进程地址空间</h1>
 <div class="meta">原文版本：Appendix D — Process Address Space</div><P>
-	</P><H2 CLASS="section"><A NAME="toc102"></A><A NAME="htoc134">D.1</A>  Process Memory Descriptors</H2><P>This section covers the functions used to allocate, initialise, copy and
-destroy memory descriptors.</P><H3 CLASS="subsection"><A NAME="htoc135">D.1.1</A>  Initalising a Descriptor</H3><P>The initial <TT>mm_struct</TT> in the system is called
-<TT>init_mm</TT><A NAME="@codeindex43"></A> and is statically initialised at compile time using
-the macro <TT>INIT_MM()</TT><A NAME="@codeindex44"></A>.</P><PRE CLASS="verbatim">238 #define INIT_MM(name) \
+
+<h2><a name="toc102"></a><a name="htoc134">D.1</a>　进程内存描述符</h2>
+
+<p>本节涵盖用于分配、初始化、复制和销毁内存描述符的各个函数。</p>
+
+<h3><a name="htoc135">D.1.1</a>　初始化描述符</h3>
+
+<p>系统中初始的 <tt>mm_struct</tt> 称为
+<tt>init_mm</tt><a name="@codeindex43"></a>，它在编译时通过宏
+<tt>INIT_MM()</tt><a name="@codeindex44"></a> 进行静态初始化。</p>
+<pre class="verbatim">238 #define INIT_MM(name) \
 239 {                                                         \
 240       mm_rb:           RB_ROOT,                           \
 241       pgd:             swapper_pg_dir,                    \
@@ -26,11 +33,20 @@ the macro <TT>INIT_MM()</TT><A NAME="@codeindex44"></A>.</P><PRE CLASS="verbatim
 245       page_table_lock: SPIN_LOCK_UNLOCKED,                \
 246       mmlist:          LIST_HEAD_INIT(name.mmlist),       \
 247 }
-</PRE><P>Once it is established, new <TT>mm_struct</TT>s are copies of their
-parent <TT>mm_struct</TT> and are copied using <TT>copy_mm()</TT><A NAME="@codeindex45"></A>
-with the process specific fields initialised with <TT>init_mm()</TT>.</P><H3 CLASS="subsection"><A NAME="htoc136">D.1.2</A>  Copying a Descriptor</H3><H4 CLASS="subsubsection"><A NAME="htoc137">D.1.2.1</A>  Function: copy_mm</H4><P> <EM>Source: kernel/fork.c</EM> <A NAME="func: copy_mm"></A> <A NAME="@codeindex46"></A></P><P>This function makes a copy of the <TT>mm_struct</TT> for the given
-task. This is only called from <TT>do_fork()</TT> after a new process has
-been created and needs its own <TT>mm_struct</TT>.</P><PRE CLASS="verbatim">315 static int copy_mm(unsigned long clone_flags, 
+</pre>
+<p>建立之后，新的 <tt>mm_struct</tt> 是其父 <tt>mm_struct</tt> 的副本，
+通过 <tt>copy_mm()</tt><a name="@codeindex45"></a> 来复制，
+并用 <tt>init_mm()</tt> 初始化进程特定的字段。</p>
+
+<h3><a name="htoc136">D.1.2</a>　复制描述符</h3>
+
+<h4><a name="htoc137">D.1.2.1</a>　函数：<tt>copy_mm</tt></h4>
+
+<p><em>源码位置：kernel/fork.c</em> <a name="func: copy_mm"></a> <a name="@codeindex46"></a></p>
+
+<p>本函数为给定任务创建 <tt>mm_struct</tt> 的副本。它仅由
+<tt>do_fork()</tt> 在新进程创建之后、需要独立 <tt>mm_struct</tt> 时调用。</p>
+<pre class="verbatim">315 static int copy_mm(unsigned long clone_flags, 
                        struct task_struct * tsk)
 316 {
 317       struct mm_struct * mm, *oldmm;
@@ -56,15 +72,19 @@ been created and needs its own <TT>mm_struct</TT>.</P><PRE CLASS="verbatim">315 
 338             mm = oldmm;
 339             goto good_mm;
 340       }
-</PRE><P>Reset fields that are not inherited by a child <TT>mm_struct</TT>
-and find a mm to copy from.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>315</B>The parameters are the flags passed for clone and the task that
-is creating a copy of the <TT>mm_struct</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>320-325</B>Initialise the <TT>task_struct</TT> fields related to
-memory management</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>332</B>Borrow the mm of the current running process to copy from</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>333</B>A kernel thread has no mm so it can return immediately</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>336-341</B>If the <TT>CLONE_VM</TT> flag is set, the child process
-is to share the mm with the parent process. This is required by users
-like pthreads. The <TT>mm_users</TT> field is incremented so the mm
-is not destroyed prematurely later. The <TT>good_mm</TT> label sets
-<TT>tsk</TT>&#X2192;<TT>mm</TT> and <TT>tsk</TT>&#X2192;<TT>active_mm</TT> and returns
-success</DD></DL><PRE CLASS="verbatim">342       retval = -ENOMEM;
+</pre>
+<p>重置不被子 <tt>mm_struct</tt> 继承的字段，并找到要复制的 mm。</p>
+<dl>
+<dt><b>315</b></dt><dd>参数为克隆标志以及正在创建 <tt>mm_struct</tt> 副本的任务</dd>
+<dt><b>320-325</b></dt><dd>初始化与内存管理相关的 <tt>task_struct</tt> 字段</dd>
+<dt><b>332</b></dt><dd>借用当前运行进程的 mm 作为拷贝来源</dd>
+<dt><b>333</b></dt><dd>内核线程没有 mm，可以直接返回</dd>
+<dt><b>336-341</b></dt><dd>如果设置了 <tt>CLONE_VM</tt> 标志，子进程将与父进程共享 mm。这是
+pthreads 等用户所必需的。<tt>mm_users</tt> 字段递增，以防止 mm 被过早销毁。
+<tt>good_mm</tt> 标签会设置 <tt>tsk</tt>&#X2192;<tt>mm</tt> 和
+<tt>tsk</tt>&#X2192;<tt>active_mm</tt> 并返回成功</dd>
+</dl>
+<pre class="verbatim">342       retval = -ENOMEM;
 343       mm = allocate_mm();
 344       if (!mm)
 345             goto fail_nomem;
@@ -81,10 +101,14 @@ success</DD></DL><PRE CLASS="verbatim">342       retval = -ENOMEM;
 356       retval = dup_mmap(mm);
 357       up_write(&amp;oldmm-&gt;mmap_sem);
 358 
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>343</B>Allocate a new mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>348-350</B>Copy the parent mm and initialise the process specific mm
-fields with <TT>init_mm()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>352-353</B>Initialise the MMU context for architectures that do not
-automatically manage their MMU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>355-357</B>Call <TT>dup_mmap()</TT> which is responsible for copying
-all the VMAs regions in use by the parent process</DD></DL><PRE CLASS="verbatim">359       if (retval)
+</pre>
+<dl>
+<dt><b>343</b></dt><dd>分配一个新的 mm</dd>
+<dt><b>348-350</b></dt><dd>复制父进程的 mm，并用 <tt>init_mm()</tt> 初始化进程特定的 mm 字段</dd>
+<dt><b>352-353</b></dt><dd>为不自动管理 MMU 的体系结构初始化 MMU 上下文</dd>
+<dt><b>355-357</b></dt><dd>调用 <tt>dup_mmap()</tt>，负责复制父进程使用的所有 VMA 区域</dd>
+</dl>
+<pre class="verbatim">359       if (retval)
 360             goto free_pt;
 361 
 362       /*
@@ -102,10 +126,20 @@ all the VMAs regions in use by the parent process</DD></DL><PRE CLASS="verbatim"
 374 fail_nomem:
 375       return retval;
 376 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>359</B><TT>dup_mmap()</TT> returns 0 on success. If it failed, the
-label <TT>free_pt</TT> will call <TT>mmput()</TT> which decrements the
-use count of the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>365</B>This copies the LDT for the new process based on the parent
-process</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>368-370</B>Set the new mm, <TT>active_mm</TT> and return success</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc138">D.1.2.2</A>  Function: mm_init</H4><P> <EM>Source: kernel/fork.c</EM> <A NAME="func: mm_init"></A> <A NAME="@codeindex47"></A></P><P>This function initialises process specific mm fields.</P><PRE CLASS="verbatim">230 static struct mm_struct * mm_init(struct mm_struct * mm)
+</pre>
+<dl>
+<dt><b>359</b></dt><dd><tt>dup_mmap()</tt> 成功时返回 0。若失败，标签 <tt>free_pt</tt> 会调用
+<tt>mmput()</tt> 来递减 mm 的使用计数</dd>
+<dt><b>365</b></dt><dd>根据父进程为新进程复制 LDT</dd>
+<dt><b>368-370</b></dt><dd>设置新的 mm、<tt>active_mm</tt> 并返回成功</dd>
+</dl>
+
+<h4><a name="htoc138">D.1.2.2</a>　函数：<tt>mm_init</tt></h4>
+
+<p><em>源码位置：kernel/fork.c</em> <a name="func: mm_init"></a> <a name="@codeindex47"></a></p>
+
+<p>本函数初始化进程特定的 mm 字段。</p>
+<pre class="verbatim">230 static struct mm_struct * mm_init(struct mm_struct * mm)
 231 {
 232       atomic_set(&amp;mm-&gt;mm_users, 1);
 233       atomic_set(&amp;mm-&gt;mm_count, 1);
@@ -118,13 +152,39 @@ process</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>368-37
 240       free_mm(mm);
 241       return NULL;
 242 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>232</B>Set the number of users to 1</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>233</B>Set the reference count of the mm to 1</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>234</B>Initialise the semaphore protecting the VMA list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>235</B>Initialise the spinlock protecting write access to it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>236</B>Allocate a new PGD for the struct</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>237</B>By default, pages used by the process are not locked in memory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>238</B>If a PGD exists, return the initialised struct</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>240</B>Initialisation failed, delete the <TT>mm_struct</TT> and return</DD></DL><H3 CLASS="subsection"><A NAME="htoc139">D.1.3</A>  Allocating a Descriptor</H3><P>Two functions are provided allocating a <TT>mm_struct</TT>. To be slightly
-confusing, they are essentially the name. <TT>allocate_mm()</TT><A NAME="@codeindex48"></A>
-will allocate a <TT>mm_struct</TT> from the slab
-allocator. <TT>mm_alloc()</TT><A NAME="@codeindex49"></A> will allocate the struct and then call
-the function <TT>mm_init()</TT><A NAME="@codeindex50"></A> to initialise it.</P><H4 CLASS="subsubsection"><A NAME="htoc140">D.1.3.1</A>  Function: allocate_mm</H4><P> <EM>Source: kernel/fork.c</EM> <A NAME="func: allocate_mm"></A> <A NAME="@codeindex51"></A></P><PRE CLASS="verbatim">227 #define allocate_mm()   (kmem_cache_alloc(mm_cachep, SLAB_KERNEL))
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>226</B>Allocate a <TT>mm_struct</TT> from the slab allocator</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc141">D.1.3.2</A>  Function: mm_alloc</H4><P> <EM>Source: kernel/fork.c</EM> <A NAME="func: mm_alloc"></A> <A NAME="@codeindex52"></A>
-</P><PRE CLASS="verbatim">248 struct mm_struct * mm_alloc(void)
+</pre>
+<dl>
+<dt><b>232</b></dt><dd>将用户数设为 1</dd>
+<dt><b>233</b></dt><dd>将 mm 的引用计数设为 1</dd>
+<dt><b>234</b></dt><dd>初始化保护 VMA 链表的读写信号量</dd>
+<dt><b>235</b></dt><dd>初始化保护写访问的自旋锁</dd>
+<dt><b>236</b></dt><dd>为结构体分配新的页全局目录（PGD）</dd>
+<dt><b>237</b></dt><dd>默认情况下，进程使用的页面不锁定在内存中</dd>
+<dt><b>238</b></dt><dd>如果 PGD 分配成功，则返回已初始化的结构体</dd>
+<dt><b>240</b></dt><dd>初始化失败，释放 <tt>mm_struct</tt> 并返回</dd>
+</dl>
+
+<h3><a name="htoc139">D.1.3</a>　分配描述符</h3>
+
+<p>内核提供了两个用于分配 <tt>mm_struct</tt> 的函数，其命名容易令人混淆，功能也极为相似。
+<tt>allocate_mm()</tt><a name="@codeindex48"></a>
+直接从 slab 分配器分配一个 <tt>mm_struct</tt>；
+<tt>mm_alloc()</tt><a name="@codeindex49"></a> 则在分配结构体后再调用
+<tt>mm_init()</tt><a name="@codeindex50"></a> 对其进行初始化。</p>
+
+<h4><a name="htoc140">D.1.3.1</a>　函数：<tt>allocate_mm</tt></h4>
+
+<p><em>源码位置：kernel/fork.c</em> <a name="func: allocate_mm"></a> <a name="@codeindex51"></a></p>
+<pre class="verbatim">227 #define allocate_mm()   (kmem_cache_alloc(mm_cachep, SLAB_KERNEL))
+</pre>
+<dl>
+<dt><b>226</b></dt><dd>从 slab 分配器分配一个 <tt>mm_struct</tt></dd>
+</dl>
+
+<h4><a name="htoc141">D.1.3.2</a>　函数：<tt>mm_alloc</tt></h4>
+
+<p><em>源码位置：kernel/fork.c</em> <a name="func: mm_alloc"></a> <a name="@codeindex52"></a></p>
+<pre class="verbatim">248 struct mm_struct * mm_alloc(void)
 249 {
 250       struct mm_struct * mm;
 251 
@@ -135,19 +195,120 @@ the function <TT>mm_init()</TT><A NAME="@codeindex50"></A> to initialise it.</P>
 256       }
 257       return NULL;
 258 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>252</B>Allocate a <TT>mm_struct</TT> from the slab allocator</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>254</B>Zero out all contents of the struct</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>255</B>Perform basic initialisation</DD></DL><H3 CLASS="subsection"><A NAME="htoc142">D.1.4</A>  Destroying a Descriptor</H3><P>A new user to an mm increments the usage count with a simple call,</P><PRE CLASS="verbatim">atomic_inc(&amp;mm-&gt;mm_users};
-</PRE><P>It is decremented with a call to <TT>mmput()</TT><A NAME="@codeindex53"></A>. If the
-<TT>mm_users</TT> count reaches zero, all the mapped regions are deleted
-with <TT>exit_mmap()</TT><A NAME="@codeindex54"></A> and the page tables destroyed as there is no
-longer any users of the userspace portions. The <TT>mm_count</TT> count is
-decremented with <TT>mmdrop()</TT><A NAME="@codeindex55"></A> as all the users of the page tables and
-VMAs are counted as one <TT>mm_struct</TT> user. When <TT>mm_count</TT>
-reaches zero, the <TT>mm_struct</TT> will be destroyed.</P><H4 CLASS="subsubsection"><A NAME="htoc143">D.1.4.1</A>  Function: mmput</H4><P> <EM>Source: kernel/fork.c</EM> <A NAME="func: mmput"></A> <A NAME="@codeindex56"></A></P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
-<DIV CLASS="center"><IMG SRC="figures/understand-html079.png"></DIV>
-<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>Figure D.1: Call Graph: <TT>mmput()</TT></TD></TR>
-</TABLE></DIV>
-<A NAME="fig: mmput"></A>
-<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><PRE CLASS="verbatim">276 void mmput(struct mm_struct *mm)
+</pre>
+<dl>
+<dt><b>252</b></dt><dd>从 slab 分配器分配一个 <tt>mm_struct</tt></dd>
+<dt><b>254</b></dt><dd>将结构体内容清零</dd>
+<dt><b>255</b></dt><dd>执行基本初始化</dd>
+</dl>
+
+<h3><a name="htoc142">D.1.4</a>　销毁描述符</h3>
+
+<p>新用户通过简单调用来递增 mm 的使用计数，</p>
+<pre class="verbatim">atomic_inc(&amp;mm-&gt;mm_users};
+</pre>
+<p>使用计数通过调用 <tt>mmput()</tt><a name="@codeindex53"></a> 来递减。若
+<tt>mm_users</tt> 计数降至零，则所有已映射区域将通过
+<tt>exit_mmap()</tt><a name="@codeindex54"></a> 删除，页表也将被销毁，
+因为不再有任何用户使用用户空间部分。<tt>mm_count</tt> 计数通过
+<tt>mmdrop()</tt><a name="@codeindex55"></a> 递减——所有使用页表和 VMA 的用户
+都被计为一个 <tt>mm_struct</tt> 用户。当 <tt>mm_count</tt>
+降至零时，<tt>mm_struct</tt> 将被销毁。</p>
+
+<h4><a name="htoc143">D.1.4.1</a>　函数：<tt>mmput</tt></h4>
+
+<p><em>源码位置：kernel/fork.c</em> <a name="func: mmput"></a> <a name="@codeindex56"></a></p>
+
+<div class="figure">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 370" role="img"
+     aria-label="mmput() 调用图"
+     style="max-width:100%;height:auto;font-family:Consolas,monospace;">
+  <defs>
+    <marker id="arr-mmput" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#666"/>
+    </marker>
+    <style>
+      .nd-top { fill:#e8eef9; stroke:#1a3a6b; stroke-width:1.8; }
+      .nd     { fill:#ffffff; stroke:#1a3a6b; stroke-width:1.3; }
+      .edge   { fill:none; stroke:#666; stroke-width:1.2; }
+      .earr   { fill:none; stroke:#666; stroke-width:1.2; marker-end:url(#arr-mmput); }
+      .lbl    { fill:#1a3a6b; text-anchor:middle; dominant-baseline:central; }
+    </style>
+  </defs>
+
+  <!-- mmput() -->
+  <rect class="nd-top" x="310" y="10" width="160" height="36" rx="5"/>
+  <text class="lbl" style="font-size:13px;font-weight:600;" x="390" y="28">mmput()</text>
+
+  <!-- trunk from mmput down to branch -->
+  <line class="edge" x1="390" y1="46" x2="390" y2="84"/>
+  <!-- horizontal branch spanning all direct callees -->
+  <line class="edge" x1="80"  y1="84" x2="640" y2="84"/>
+
+  <!-- arrows down to row-2 nodes -->
+  <line class="earr" x1="80"  y1="84" x2="80"  y2="106"/>
+  <line class="earr" x1="220" y1="84" x2="220" y2="106"/>
+  <line class="earr" x1="360" y1="84" x2="360" y2="106"/>
+  <line class="earr" x1="500" y1="84" x2="500" y2="106"/>
+  <line class="earr" x1="640" y1="84" x2="640" y2="106"/>
+
+  <!-- atomic_dec_and_lock() -->
+  <rect class="nd" x="5"   y="106" width="150" height="32" rx="4"/>
+  <text class="lbl" style="font-size:11px;" x="80" y="122">atomic_dec_and_lock()</text>
+
+  <!-- list_del() -->
+  <rect class="nd" x="155" y="106" width="130" height="32" rx="4"/>
+  <text class="lbl" style="font-size:12px;" x="220" y="122">list_del()</text>
+
+  <!-- spin_unlock() -->
+  <rect class="nd" x="295" y="106" width="130" height="32" rx="4"/>
+  <text class="lbl" style="font-size:12px;" x="360" y="122">spin_unlock()</text>
+
+  <!-- exit_mmap() -->
+  <rect class="nd" x="435" y="106" width="130" height="32" rx="4"/>
+  <text class="lbl" style="font-size:12px;" x="500" y="122">exit_mmap()</text>
+
+  <!-- mmdrop() -->
+  <rect class="nd" x="575" y="106" width="130" height="32" rx="4"/>
+  <text class="lbl" style="font-size:12px;" x="640" y="122">mmdrop()</text>
+
+  <!-- mmdrop → __mmdrop -->
+  <line class="earr" x1="640" y1="138" x2="640" y2="198"/>
+
+  <!-- __mmdrop() -->
+  <rect class="nd" x="563" y="198" width="154" height="32" rx="4"/>
+  <text class="lbl" style="font-size:12px;" x="640" y="214">__mmdrop()</text>
+
+  <!-- trunk from __mmdrop down -->
+  <line class="edge" x1="640" y1="230" x2="640" y2="268"/>
+  <!-- horizontal branch for __mmdrop callees -->
+  <line class="edge" x1="490" y1="268" x2="780" y2="268"/>
+
+  <!-- arrows to row-4 nodes -->
+  <line class="earr" x1="490" y1="268" x2="490" y2="290"/>
+  <line class="earr" x1="635" y1="268" x2="635" y2="290"/>
+  <line class="earr" x1="780" y1="268" x2="780" y2="290"/>
+
+  <!-- pgd_free() -->
+  <rect class="nd" x="428" y="290" width="124" height="32" rx="4"/>
+  <text class="lbl" style="font-size:12px;" x="490" y="306">pgd_free()</text>
+
+  <!-- destroy_context() -->
+  <rect class="nd" x="555" y="290" width="160" height="32" rx="4"/>
+  <text class="lbl" style="font-size:12px;" x="635" y="306">destroy_context()</text>
+
+  <!-- free_mm() -->
+  <rect class="nd" x="720" y="290" width="120" height="32" rx="4"/>
+  <text class="lbl" style="font-size:12px;" x="780" y="306">free_mm()</text>
+
+  <!-- caption -->
+  <text style="font-size:13px;font-family:'Microsoft YaHei',Arial,sans-serif;fill:#444;text-anchor:middle;"
+        x="410" y="356">图 D.1：调用图：mmput()</text>
+</svg>
+</div>
+
+<pre class="verbatim">276 void mmput(struct mm_struct *mm)
 277 {
 278       if (atomic_dec_and_lock(&amp;mm-&gt;mm_users, &amp;mmlist_lock)) {
 279             extern struct mm_struct *swap_mm;
@@ -161,27 +322,51 @@ reaches zero, the <TT>mm_struct</TT> will be destroyed.</P><H4 CLASS="subsubsect
 286             mmdrop(mm);
 287       }
 288 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>278</B>Atomically decrement the <TT>mm_users</TT> field while
-holding the <TT>mmlist_lock</TT> lock. Return with the lock held if the
-count reaches zero</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>279-286</B>If the usage count reaches zero, the mm and associated
-structures need to be removed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>279-281</B>The <TT>swap_mm</TT> is the last mm that was swapped out
-by the vmscan code. If the current process was the last mm swapped, move to
-the next entry in the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>282</B>Remove this mm from the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>283-284</B>Reduce the count of mms in the list and release the
-<TT>mmlist</TT> lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>285</B>Remove all associated mappings</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>286</B>Delete the mm</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc144">D.1.4.2</A>  Function: mmdrop</H4><P> <EM>Source: include/linux/sched.h</EM> <A NAME="func: mmdrop"></A> <A NAME="@codeindex57"></A></P><PRE CLASS="verbatim">765 static inline void mmdrop(struct mm_struct * mm)
+</pre>
+<dl>
+<dt><b>278</b></dt><dd>以原子方式递减 <tt>mm_users</tt> 字段，同时持有
+<tt>mmlist_lock</tt> 锁。若计数降至零，则保持锁并继续执行</dd>
+<dt><b>279-286</b></dt><dd>若使用计数降至零，需要移除该 mm 及其关联结构</dd>
+<dt><b>279-281</b></dt><dd><tt>swap_mm</tt> 是 vmscan 代码最近换出的最后一个 mm。
+若当前进程是最后被换出的 mm，则移至链表中的下一项</dd>
+<dt><b>282</b></dt><dd>将此 mm 从链表中移除</dd>
+<dt><b>283-284</b></dt><dd>减少链表中 mm 的计数，并释放 <tt>mmlist</tt> 锁</dd>
+<dt><b>285</b></dt><dd>删除所有关联的内存映射</dd>
+<dt><b>286</b></dt><dd>销毁该 mm</dd>
+</dl>
+
+<h4><a name="htoc144">D.1.4.2</a>　函数：<tt>mmdrop</tt></h4>
+
+<p><em>源码位置：include/linux/sched.h</em> <a name="func: mmdrop"></a> <a name="@codeindex57"></a></p>
+<pre class="verbatim">765 static inline void mmdrop(struct mm_struct * mm)
 766 {
 767       if (atomic_dec_and_test(&amp;mm-&gt;mm_count))
 768             __mmdrop(mm);
 769 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>767</B>Atomically decrement the reference count. The reference count could
-be higher if the mm was been used by lazy tlb switching tasks</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>768</B>If the reference count reaches zero, call <TT>__mmdrop()</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc145">D.1.4.3</A>  Function: __mmdrop</H4><P> <EM>Source: kernel/fork.c</EM> <A NAME="func: __mmdrop"></A> <A NAME="@codeindex58"></A></P><PRE CLASS="verbatim">265 inline void __mmdrop(struct mm_struct *mm)
+</pre>
+<dl>
+<dt><b>767</b></dt><dd>以原子方式递减引用计数。若 mm 被惰性 TLB 切换任务使用，引用计数可能大于 1</dd>
+<dt><b>768</b></dt><dd>若引用计数降至零，则调用 <tt>__mmdrop()</tt></dd>
+</dl>
+
+<h4><a name="htoc145">D.1.4.3</a>　函数：<tt>__mmdrop</tt></h4>
+
+<p><em>源码位置：kernel/fork.c</em> <a name="func: __mmdrop"></a> <a name="@codeindex58"></a></p>
+<pre class="verbatim">265 inline void __mmdrop(struct mm_struct *mm)
 266 {
 267       BUG_ON(mm == &amp;init_mm);
 268       pgd_free(mm-&gt;pgd);
 269       destroy_context(mm);
 270       free_mm(mm);
 271 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>267</B>Make sure the init_mm is not destroyed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>268</B>Delete the PGD entry</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>269</B>Delete the LDT</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>270</B>Call <TT>kmem_cache_free()</TT> for the mm freeing it with the
-slab allocator</DD></DL><P>
+</pre>
+<dl>
+<dt><b>267</b></dt><dd>确保不会销毁 init_mm</dd>
+<dt><b>268</b></dt><dd>释放页全局目录（PGD）条目</dd>
+<dt><b>269</b></dt><dd>删除局部描述符表（LDT）</dd>
+<dt><b>270</b></dt><dd>调用 <tt>kmem_cache_free()</tt>，通过 slab 分配器释放该 mm</dd>
+</dl>
+
 	</P><H2 CLASS="section"><A NAME="toc103"></A><A NAME="htoc146">D.2</A>  Creating Memory Regions</H2><P>This large section deals with the creation, deletion and manipulation of
 memory regions.</P><H3 CLASS="subsection"><A NAME="htoc147">D.2.1</A>  Creating A Memory Region</H3><P>The main call graph for creating a memory region is shown in Figure <A HREF="understand007.html#fig: sys_mmap2">4.4</A>.</P><H4 CLASS="subsubsection"><A NAME="htoc148">D.2.1.1</A>  Function: do_mmap</H4><P> <EM>Source: include/linux/mm.h</EM> <A NAME="func: do_mmap"></A> <A NAME="@codeindex59"></A></P><P>This is a very simply wrapper function around <TT>do_mmap_pgoff()</TT> which
 performs most of the work.</P><PRE CLASS="verbatim">557 static inline unsigned long do_mmap(struct file *file, 
