@@ -322,7 +322,62 @@ buffer head 不出意外地由 <tt>alloc_bounce_bh()</tt> 分配，其原理与 
 <h3 id="sec-copying-via-bounce-buffers">9.4.3　通过反弹缓冲区进行复制</h3>
 
 <div class="figure" id="fig-bounce-end-io-read">
-  <img src="../original_html/figures/understand-html057.png" alt="图 9.4：bounce_end_io_read/write() 的调用图">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 320" width="700" role="img"
+       aria-labelledby="fig057-title fig057-desc"
+       font-family="sans-serif" font-size="12">
+    <title id="fig057-title">图 9.4：bounce_end_io_read/write() 的调用图</title>
+    <desc id="fig057-desc">写路径：在 create_bounce() 创建缓冲区时调用 copy_from_high_bh() 将高端内存数据复制到反弹缓冲区；设备就绪后，bounce_end_io_write() 被调用，最终由 bounce_end_io() 回收资源。读路径：设备就绪时中断处理程序调用 bounce_end_io_read()，后者通过 copy_to_high_bh_irq() 将数据复制到高端内存，最终由 bounce_end_io() 回收资源。</desc>
+    <defs>
+      <marker id="arr057" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+      </marker>
+    </defs>
+
+    <text x="350" y="22" text-anchor="middle" font-size="13" font-weight="bold">bounce_end_io_read/write() 调用关系图</text>
+
+    <!-- column headers -->
+    <text x="175" y="50" text-anchor="middle" font-size="12" fill="#1f4e8a" font-weight="bold">写路径</text>
+    <text x="525" y="50" text-anchor="middle" font-size="12" fill="#1f4e8a" font-weight="bold">读路径</text>
+
+    <g font-family="monospace" font-size="12" text-anchor="middle">
+      <!-- write path -->
+      <rect x="60"  y="65" width="220" height="32" fill="#eef" stroke="#333"/>
+      <text x="170" y="85">copy_from_high_bh()</text>
+
+      <rect x="60"  y="145" width="220" height="32" fill="#eef5ff" stroke="#1f4e8a"/>
+      <text x="170" y="165">bounce_end_io_write()</text>
+
+      <rect x="60"  y="225" width="220" height="32" fill="#eef" stroke="#333"/>
+      <text x="170" y="245">bounce_end_io()</text>
+
+      <!-- read path -->
+      <rect x="420" y="65" width="220" height="32" fill="#eef5ff" stroke="#1f4e8a"/>
+      <text x="530" y="85">bounce_end_io_read()</text>
+
+      <rect x="420" y="145" width="220" height="32" fill="#eef" stroke="#333"/>
+      <text x="530" y="165">copy_to_high_bh_irq()</text>
+
+      <rect x="420" y="225" width="220" height="32" fill="#eef" stroke="#333"/>
+      <text x="530" y="245">bounce_end_io()</text>
+    </g>
+
+    <g stroke="#333" stroke-width="1.4" fill="none" marker-end="url(#arr057)">
+      <!-- write path arrows -->
+      <line x1="170" y1="97"  x2="170" y2="145"/>
+      <line x1="170" y1="177" x2="170" y2="225"/>
+      <!-- read path arrows -->
+      <line x1="530" y1="97"  x2="530" y2="145"/>
+      <line x1="530" y1="177" x2="530" y2="225"/>
+    </g>
+
+    <g font-size="11" fill="#555" text-anchor="middle">
+      <text x="170" y="128">创建时复制高端内存数据</text>
+      <text x="530" y="128">IRQ 中断触发；复制数据到高端内存</text>
+    </g>
+
+    <!-- divider -->
+    <line x1="350" y1="55" x2="350" y2="280" stroke="#bbb" stroke-dasharray="5,4"/>
+  </svg>
   <div class="caption">图 9.4：<tt>bounce_end_io_read/write()</tt> 的调用图</div>
 </div>
 
