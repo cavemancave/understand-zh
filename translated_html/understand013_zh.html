@@ -492,7 +492,64 @@ nr_pages * nr_active_pages / ((nr_inactive_pages + 1) * 2)
 </p>
 
 <div class="figure" id="fig-shrink-caches">
-  <img src="../original_html/figures/understand-html062.png" alt="图 10.4：调用图：shrink_caches()">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 580 340" width="580"
+       role="img" aria-labelledby="fig062-title fig062-desc"
+       font-family="sans-serif" font-size="12">
+    <title id="fig062-title">图 10.4：调用图：shrink_caches()</title>
+    <desc id="fig062-desc">shrink_caches() 依次调用 kmem_cache_reap() 收缩 slab 缓存、refill_inactive() 将活跃页移至非活跃链表、shrink_cache() 回收非活跃链表末端的页，最后调用 shrink_dcache_memory()、shrink_icache_memory() 和 shrink_dqcache_memory() 收缩三个特殊缓存。</desc>
+    <defs>
+      <marker id="arr062" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="#333"/>
+      </marker>
+    </defs>
+
+    <!-- shrink_caches() -->
+    <rect x="10" y="146" width="150" height="28" rx="4" fill="#eef5ff" stroke="#1f4e8a" stroke-width="1.5"/>
+    <text x="85" y="165" text-anchor="middle" fill="#1f4e8a">shrink_caches()</text>
+
+    <!-- Note: called by try_to_free_pages_zone() -->
+    <text x="85" y="182" text-anchor="middle" font-size="10" fill="#777">← try_to_free_pages_zone()</text>
+
+    <!-- Spine -->
+    <line x1="160" y1="160" x2="180" y2="160" stroke="#333" stroke-width="1.5"/>
+    <line x1="180" y1="36" x2="180" y2="300" stroke="#333" stroke-width="1.5"/>
+
+    <!-- Child 1: kmem_cache_reap() at y=36 -->
+    <line x1="180" y1="36" x2="198" y2="36" stroke="#333" stroke-width="1.5" marker-end="url(#arr062)"/>
+    <rect x="200" y="22" width="175" height="28" rx="4" fill="#eef" stroke="#333" stroke-width="1.2"/>
+    <text x="287" y="37" text-anchor="middle">kmem_cache_reap()</text>
+    <text x="287" y="49" text-anchor="middle" font-size="10" fill="#555">收缩 slab 缓存</text>
+
+    <!-- Child 2: refill_inactive() at y=96 -->
+    <line x1="180" y1="96" x2="198" y2="96" stroke="#333" stroke-width="1.5" marker-end="url(#arr062)"/>
+    <rect x="200" y="82" width="175" height="28" rx="4" fill="#eef" stroke="#333" stroke-width="1.2"/>
+    <text x="287" y="97" text-anchor="middle">refill_inactive()</text>
+    <text x="287" y="109" text-anchor="middle" font-size="10" fill="#555">活跃页→非活跃链表</text>
+
+    <!-- Child 3: shrink_cache() at y=156 -->
+    <line x1="180" y1="156" x2="198" y2="156" stroke="#333" stroke-width="1.5" marker-end="url(#arr062)"/>
+    <rect x="200" y="142" width="175" height="28" rx="4" fill="#eef" stroke="#333" stroke-width="1.2"/>
+    <text x="287" y="157" text-anchor="middle">shrink_cache()</text>
+    <text x="287" y="169" text-anchor="middle" font-size="10" fill="#555">回收非活跃链表末端页</text>
+
+    <!-- Child 4: shrink_dcache_memory() at y=216 -->
+    <line x1="180" y1="216" x2="198" y2="216" stroke="#333" stroke-width="1.5" marker-end="url(#arr062)"/>
+    <rect x="200" y="202" width="175" height="28" rx="4" fill="#eef" stroke="#333" stroke-width="1.2"/>
+    <text x="287" y="217" text-anchor="middle">shrink_dcache_memory()</text>
+    <text x="287" y="229" text-anchor="middle" font-size="10" fill="#555">收缩 dcache</text>
+
+    <!-- Child 5: shrink_icache_memory() at y=258 -->
+    <line x1="180" y1="258" x2="198" y2="258" stroke="#333" stroke-width="1.5" marker-end="url(#arr062)"/>
+    <rect x="200" y="244" width="175" height="28" rx="4" fill="#eef" stroke="#333" stroke-width="1.2"/>
+    <text x="287" y="259" text-anchor="middle">shrink_icache_memory()</text>
+    <text x="287" y="271" text-anchor="middle" font-size="10" fill="#555">收缩 icache</text>
+
+    <!-- Child 6: shrink_dqcache_memory() at y=300 -->
+    <line x1="180" y1="300" x2="198" y2="300" stroke="#333" stroke-width="1.5" marker-end="url(#arr062)"/>
+    <rect x="200" y="286" width="175" height="28" rx="4" fill="#eef" stroke="#333" stroke-width="1.2"/>
+    <text x="287" y="301" text-anchor="middle">shrink_dqcache_memory()</text>
+    <text x="287" y="313" text-anchor="middle" font-size="10" fill="#555">收缩 dqcache</text>
+  </svg>
   <div class="caption">图 10.4：调用图：<tt>shrink_caches()</tt></div>
 </div>
 
