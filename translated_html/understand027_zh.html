@@ -1,0 +1,916 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand_zh.css">
+<TITLE>页框回收</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand026_zh.html">&laquo; 上一章</A> ]
+[ <A HREF="index.html">&uarr; 上级</A> ]
+[ <A HREF="../original_html/understand028.html">下一章 &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc398">附录 J</A>　页框回收</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc131"></A><A NAME="htoc399">J.1</A>　页缓存操作</H2><P>本节阐述如何向页缓存与 LRU 链表中添加和删除页，这两者紧密关联。</P><H3 CLASS="subsection"><A NAME="htoc400">J.1.1</A>　向页缓存添加页</H3><H4 CLASS="subsubsection"><A NAME="htoc401">J.1.1.1</A>　函数：add_to_page_cache</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: add_to_page_cache"></A> <A NAME="@codeindex285"></A></P><P>在调用 <TT>__add_to_page_cache()</TT> 前先获取保护页缓存的锁；该函数会将页加入页哈希表和 inode 队列，以便能快速找到属于某个文件的页。</P><PRE CLASS="verbatim">667 void add_to_page_cache(struct page * page, 
+                     struct address_space * mapping,
+                      unsigned long offset)
+668 {
+669       spin_lock(&amp;pagecache_lock);
+670       __add_to_page_cache(page, mapping, 
+                        offset, page_hash(mapping, offset));
+671       spin_unlock(&amp;pagecache_lock);
+672       lru_cache_add(page);
+673 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>669</B>获取保护页哈希表和 inode 队列的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>670</B>调用执行&#X201C;真正&#X201D;工作的函数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>671</B>释放保护哈希表和 inode 队列的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>672</B>将页加入页缓存。<TT>page_hash()</TT><A NAME="@codeindex286"></A> 根据 <TT>mapping</TT> 和文件内的 <TT>offset</TT> 哈希到页哈希表中。若返回一个页，则发生了冲突，冲突的页通过 <TT>page</TT>&#X2192;<TT>next_hash</TT> 和 <TT>page</TT>&#X2192;<TT>pprev_hash</TT> 字段串成链表</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc402">J.1.1.2</A>　函数：add_to_page_cache_unique</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: add_to_page_cache_unique"></A> <A NAME="@codeindex287"></A></P><P>该函数在许多方面与 <TT>add_to_page_cache()</TT> 非常相似。主要区别在于：本函数在向缓存中添加页之前会先持有 <TT>pagecache_lock</TT> 自旋锁检查页缓存。它供那些可能与其他进程竞争在缓存中插入页的调用者使用，例如 <TT>add_to_swap_cache()</TT>（见 <A HREF="../original_html/understand028.html#func: add_to_swap_cache">K.2.1.1</A>).</P><PRE CLASS="verbatim">675 int add_to_page_cache_unique(struct page * page,
+676         struct address_space *mapping, unsigned long offset,
+677         struct page **hash)
+678 {
+679     int err;
+680     struct page *alias;
+681 
+682     spin_lock(&amp;pagecache_lock);
+683     alias = __find_page_nolock(mapping, offset, *hash);
+684 
+685     err = 1;
+686     if (!alias) {
+687         __add_to_page_cache(page,mapping,offset,hash);
+688         err = 0;
+689     }
+690 
+691     spin_unlock(&amp;pagecache_lock);
+692     if (!err)
+693         lru_cache_add(page);
+694     return err;
+695 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>682</B>获取 <TT>pagecache_lock</TT> 以检查缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>683</B>使用 <TT>__find_page_nolock()</TT> 检查页是否已存在于缓存中（见 <A HREF="#func: __find_page_nolock">J.1.4.3</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>686-689</B>如果页不在缓存中，使用 <TT>__add_to_page_cache()</TT> 添加（见 <A HREF="#func: __add_to_page_cache">J.1.1.3</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>691</B>释放 <TT>pagecache_lock</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>692-693</B>如果页之前不在页缓存中，使用 <TT>lru_cache_add()</TT> 将其加入 LRU 链表（见 <A HREF="#func: lru_cache_add">J.2.1.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>694</B>若本次调用将页加入了页缓存则返回 0，若页已存在则返回 1</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc403">J.1.1.3</A>　函数：__add_to_page_cache</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: __add_to_page_cache"></A> <A NAME="@codeindex288"></A></P><P>清除所有页标志，将其加锁，取一次引用并将其加入 inode 与哈希队列。</P><PRE CLASS="verbatim">653 static inline void __add_to_page_cache(struct page * page,
+654       struct address_space *mapping, unsigned long offset,
+655       struct page **hash)
+656 {
+657       unsigned long flags;
+658 
+659       flags = page-&gt;flags &amp; ~(1 &lt;&lt; PG_uptodate | 
+                            1 &lt;&lt; PG_error | 1 &lt;&lt; PG_dirty | 
+                            1 &lt;&lt; PG_referenced | 1 &lt;&lt; PG_arch_1 | 
+                            1 &lt;&lt; PG_checked);
+660       page-&gt;flags = flags | (1 &lt;&lt; PG_locked);
+661       page_cache_get(page);
+662       page-&gt;index = offset;
+663       add_page_to_inode_queue(mapping, page);
+664       add_page_to_hash_queue(page, hash);
+665 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>659</B>清除所有页标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>660</B>锁定该页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>661</B>对该页取一次引用，以免其被过早释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>662</B>更新索引，使其知道该页表示的文件偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>663</B>使用 <TT>add_page_to_inode_queue()</TT> 将页加入 inode 队列（见 <A HREF="#func: add_page_to_inode_queue">J.1.1.4</A>). 
+该操作通过 <TT>page</TT>&#X2192;<TT>list</TT> 将页链接到 <TT>address_space</TT> 中的 <TT>clean_pages</TT> 链表，并使 <TT>page</TT>&#X2192;<TT>mapping</TT> 指向同一个 <TT>address_space</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>664</B>使用 <TT>add_page_to_hash_queue()</TT> 将其加入页哈希（见 <A HREF="#func: add_page_to_hash_queue">J.1.1.5</A>)。<TT>hash</TT> 页由父函数中的 <TT>page_hash()</TT> 返回。页哈希让我们无需线性搜索 inode 队列就能找到页缓存中的页</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc404">J.1.1.4</A>　函数：add_page_to_inode_queue</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: add_page_to_inode_queue"></A> <A NAME="@codeindex289"></A></P><PRE CLASS="verbatim"> 85 static inline void add_page_to_inode_queue(
+                       struct address_space *mapping, struct page * page)
+ 86 {
+ 87     struct list_head *head = &amp;mapping-&gt;clean_pages;
+ 88 
+ 89     mapping-&gt;nrpages++;
+ 90     list_add(&amp;page-&gt;list, head);
+ 91     page-&gt;mapping = mapping;
+ 92 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>87</B>调用该函数时，页是干净的，因此关心的是 <TT>mapping</TT>&#X2192;<TT>clean_pages</TT> 链表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B>递增属于该 <TT>mapping</TT> 的页数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>90</B>将页加入干净页链表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>91</B>设置 <TT>page</TT>&#X2192;<TT>mapping</TT> 字段</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc405">J.1.1.5</A>　函数：add_page_to_hash_queue</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: add_page_to_hash_queue"></A> <A NAME="@codeindex290"></A></P><P>该函数将 <TT>page</TT> 添加到以 <TT>p</TT> 为头的哈希桶顶部。要注意 <TT>p</TT> 是数组 <TT>page_hash_table</TT> 中的元素<A NAME="@codeindex291"></A>.</P><PRE CLASS="verbatim"> 71 static void add_page_to_hash_queue(struct page * page, 
+                                       struct page **p)
+ 72 {
+ 73     struct page *next = *p;
+ 74 
+ 75     *p = page;
+ 76     page-&gt;next_hash = next;
+ 77     page-&gt;pprev_hash = p;
+ 78     if (next)
+ 79         next-&gt;pprev_hash = &amp;page-&gt;next_hash;
+ 80     if (page-&gt;buffers)
+ 81         PAGE_BUG(page);
+ 82     atomic_inc(&amp;page_cache_size);
+ 83 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>73</B>将哈希桶当前的头记录到 <TT>next</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>75</B>将哈希桶的头更新为 <TT>page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>76</B>将 <TT>page</TT>&#X2192;<TT>next_hash</TT> 指向哈希桶的旧头</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>77</B>将 <TT>page</TT>&#X2192;<TT>pprev_hash</TT> 指向 <TT>page_hash_table</TT> 中对应的数组元素</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-79</B>这会将下一个元素的 <TT>pprev_hash</TT> 字段指向哈希桶的头，完成 <TT>page</TT> 插入链表的操作</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>80-81</B>检查加入的页没有关联的缓冲区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>82</B>递增 <TT>page_cache_size</TT><A NAME="@codeindex292"></A>，它是页缓存的大小</DD></DL><H3 CLASS="subsection"><A NAME="htoc406">J.1.2</A>　从页缓存删除页</H3><H4 CLASS="subsubsection"><A NAME="htoc407">J.1.2.1</A>　函数：remove_inode_page</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: remove_inode_page"></A> <A NAME="@codeindex293"></A></P><PRE CLASS="verbatim">130 void remove_inode_page(struct page *page)
+131 {
+132     if (!PageLocked(page))
+133         PAGE_BUG(page);
+134 
+135     spin_lock(&amp;pagecache_lock);
+136     __remove_inode_page(page);
+137     spin_unlock(&amp;pagecache_lock);
+138 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>132-133</B>如果页未被锁定，则为一个 bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>135</B>获取保护页缓存的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>136</B><TT>__remove_inode_page()</TT>（见 <A HREF="#func: __remove_inode_page">J.1.2.2</A>)
+在持有 pagecache 锁时调用的顶层函数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>137</B>释放 pagecache 锁</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc408">J.1.2.2</A>　函数：__remove_inode_page</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: __remove_inode_page"></A> <A NAME="@codeindex294"></A></P><P>这是从页缓存中移除页的顶层函数，供持有 <TT>pagecache_lock</TT> 自旋锁的调用者使用。未持有该锁的调用者应当调用 <TT>remove_inode_page()</TT>。</P><PRE CLASS="verbatim">124 void __remove_inode_page(struct page *page)
+125 {
+126         remove_page_from_inode_queue(page);
+127         remove_page_from_hash_queue(page);
+128 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>126</B><TT>remove_page_from_inode_queue()</TT>（见 <A HREF="#func: remove_page_from_inode_queue">J.1.2.3</A>)
+将页从其 <TT>page</TT>&#X2192;<TT>mapping</TT> 所指的 <TT>address_space</TT> 中移除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>127</B><TT>remove_page_from_hash_queue()</TT> 将页从 <TT>page_hash_table</TT> 哈希表中移除</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc409">J.1.2.3</A>　函数：remove_page_from_inode_queue</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: remove_page_from_inode_queue"></A> <A NAME="@codeindex295"></A></P><PRE CLASS="verbatim"> 94 static inline void remove_page_from_inode_queue(struct page * page)
+ 95 {
+ 96     struct address_space * mapping = page-&gt;mapping;
+ 97 
+ 98     if (mapping-&gt;a_ops-&gt;removepage)
+ 99         mapping-&gt;a_ops-&gt;removepage(page);
+100     list_del(&amp;page-&gt;list);
+101     page-&gt;mapping = NULL;
+102     wmb();
+103     mapping-&gt;nr_pages--;
+104 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>96</B>获取与该 <TT>page</TT> 关联的 <TT>address_space</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>98-99</B>如果文件系统提供了特定的 <TT>removepage()</TT> 函数，则调用它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>100</B>将页从其在 <TT>mapping</TT> 中所属的链表删除，多数情况下是 <TT>clean_pages</TT> 链表，少数情况下是 <TT>dirty_pages</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>101</B>将 <TT>page</TT>&#X2192;<TT>mapping</TT> 置为 NULL，因为它不再由任何 <TT>address_space</TT> 支持</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>103</B>递减 <TT>mapping</TT> 中的页数</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc410">J.1.2.4</A>　函数：remove_page_from_hash_queue</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: remove_page_from_hash_queue"></A> <A NAME="@codeindex296"></A></P><PRE CLASS="verbatim">107 static inline void remove_page_from_hash_queue(struct page * page)
+108 {
+109     struct page *next = page-&gt;next_hash;
+110     struct page **pprev = page-&gt;pprev_hash;
+111 
+112     if (next)
+113         next-&gt;pprev_hash = pprev;
+114     *pprev = next;
+115     page-&gt;pprev_hash = NULL;
+116     atomic_dec(&amp;page_cache_size);
+117 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>109</B>获取被移除 <TT>page</TT> 之后的 <TT>next</TT> 页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>110</B>获取被移除 <TT>page</TT> 之前的 <TT>pprev</TT> 页。函数完成时 <TT>pprev</TT> 将与 <TT>next</TT> 相连</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>112</B>如果这不是链表末尾，将 <TT>next</TT>&#X2192;<TT>pprev_hash</TT> 更新为指向 <TT>pprev</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>114</B>类似地，将 <TT>pprev</TT> 向前指向 <TT>next</TT>。<TT>page</TT> 现已脱链</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>116</B>递减页缓存的大小</DD></DL><H3 CLASS="subsection"><A NAME="htoc411">J.1.3</A>　获取／释放页缓存中的页</H3><H4 CLASS="subsubsection"><A NAME="htoc412">J.1.3.1</A>　函数：page_cache_get</H4><P> <EM>来源： include/linux/pagemap.h</EM> <A NAME="func: page_cache_get"></A> <A NAME="@codeindex297"></A></P><PRE CLASS="verbatim"> 31 #define page_cache_get(x)       get_page(x)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>31</B>仅调用 <TT>get_page()</TT>，后者用 <TT>atomic_inc()</TT> 递增页的引用计数</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc413">J.1.3.2</A>　函数：page_cache_release</H4><P> <EM>来源： include/linux/pagemap.h</EM> <A NAME="func: page_cache_release"></A> <A NAME="@codeindex298"></A></P><PRE CLASS="verbatim"> 32 #define page_cache_release(x)   __free_page(x)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>32</B>调用 <TT>__free_page()</TT>，它递减页计数。如果计数变为 0，页将被释放</DD></DL><H3 CLASS="subsection"><A NAME="htoc414">J.1.4</A>　搜索页缓存</H3><H4 CLASS="subsubsection"><A NAME="htoc415">J.1.4.1</A>　函数：find_get_page</H4><P> <EM>来源： include/linux/pagemap.h</EM> <A NAME="func: find_get_page"></A> <A NAME="@codeindex299"></A></P><P>查找页缓存中页的顶层宏。它仅查询页哈希</P><PRE CLASS="verbatim"> 75 #define find_get_page(mapping, index) \
+ 76     __find_get_page(mapping, index, page_hash(mapping, index))
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>76</B><TT>page_hash()</TT> 根据 <TT>address_space</TT> 和偏移在 <TT>page_hash_table</TT> 中定位一个表项</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc416">J.1.4.2</A>　函数：__find_get_page</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: __find_get_page"></A> <A NAME="@codeindex300"></A></P><P>该函数以 <TT>page_hash_table</TT> 中的某个表项为起点，负责查找一个 struct page。</P><PRE CLASS="verbatim">931 struct page * __find_get_page(struct address_space *mapping,
+932                 unsigned long offset, struct page **hash)
+933 {
+934     struct page *page;
+935 
+936     /*
+937      * We scan the hash list read-only. Addition to and removal from
+938      * the hash-list needs a held write-lock.
+939      */
+940     spin_lock(&amp;pagecache_lock);
+941     page = __find_page_nolock(mapping, offset, *hash);
+942     if (page)
+943         page_cache_get(page);
+944     spin_unlock(&amp;pagecache_lock);
+945     return page;
+946 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>940</B>获取只读的页缓存锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>941</B>调用页缓存遍历函数，它假定锁已被持有</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>942-943</B>如果找到页，使用 <TT>page_cache_get()</TT> 取一次引用（见 <A HREF="#func: page_cache_get">J.1.3.1</A>），以防其被过早释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>944</B>释放页缓存锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>945</B>返回页；若未找到则返回 NULL</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc417">J.1.4.3</A>　函数：__find_page_nolock</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: __find_page_nolock"></A> <A NAME="@codeindex301"></A></P><P>该函数遍历哈希冲突链表，查找由 <TT>address_space</TT> 和 <TT>offset</TT> 指定的页。</P><PRE CLASS="verbatim">443 static inline struct page * __find_page_nolock(
+                    struct address_space *mapping, 
+                    unsigned long offset, 
+                    struct page *page)
+444 {
+445     goto inside;
+446 
+447     for (;;) {
+448         page = page-&gt;next_hash;
+449 inside:
+450         if (!page)
+451             goto not_found;
+452         if (page-&gt;mapping != mapping)
+453             continue;
+454         if (page-&gt;index == offset)
+455             break;
+456     }
+457 
+458 not_found:
+459     return page;
+460 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>445</B>从链表中的第一个页开始检查</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>450-451</B>如果页为 NULL，说明没有找到正确的页，返回 NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>452</B>如果 <TT>address_space</TT> 不匹配，移动到冲突链表上的下一个页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>454</B>如果 <TT>offset</TT> 匹配，则返回它，否则继续</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>448</B>移动到哈希链表上的下一个页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>459</B>返回找到的页；若未找到则返回 NULL</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc418">J.1.4.4</A>　函数：find_lock_page</H4><P> <EM>来源： include/linux/pagemap.h</EM> <A NAME="func: find_lock_page"></A> <A NAME="@codeindex302"></A></P><P>这是在页缓存中搜索页并以加锁状态返回页的顶层函数。</P><PRE CLASS="verbatim"> 84 #define find_lock_page(mapping, index) \
+ 85     __find_lock_page(mapping, index, page_hash(mapping, index))
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>85</B>先用 <TT>page_hash()</TT> 查出该页所在的哈希桶，然后调用核心函数 <TT>__find_lock_page()</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc419">J.1.4.5</A>　函数：__find_lock_page</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: __find_lock_page"></A> <A NAME="@codeindex303"></A></P><P>该函数先获取 <TT>pagecache_lock</TT> 自旋锁，然后调用核心函数 <TT>__find_lock_page_helper()</TT> 来定位并锁定页。</P><PRE CLASS="verbatim">1005 struct page * __find_lock_page (struct address_space *mapping,
+1006                     unsigned long offset, struct page **hash)
+1007 {
+1008    struct page *page;
+1009 
+1010    spin_lock(&amp;pagecache_lock);
+1011    page = __find_lock_page_helper(mapping, offset, *hash);
+1012    spin_unlock(&amp;pagecache_lock);
+1013    return page;
+1014 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1010</B>获取 <TT>pagecache_lock</TT> 自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1011</B>调用 <TT>__find_lock_page_helper()</TT>，它会搜索页缓存，找到则将页锁定</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1012</B>释放 <TT>pagecache_lock</TT> 自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1013</B>若找到页，则以加锁状态返回；否则返回 NULL</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc420">J.1.4.6</A>　函数：__find_lock_page_helper</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: __find_lock_page_helper"></A> <A NAME="@codeindex304"></A></P><P>该函数使用 <TT>__find_page_nolock()</TT> 在页缓存中定位一个页。若找到，将该页锁定后返回给调用者。</P><PRE CLASS="verbatim">972 static struct page * __find_lock_page_helper(
+                               struct address_space *mapping,
+973                            unsigned long offset, struct page *hash)
+974 {
+975     struct page *page;
+976 
+977     /*
+978      * We scan the hash list read-only. Addition to and removal from
+979      * the hash-list needs a held write-lock.
+980      */
+981 repeat:
+982     page = __find_page_nolock(mapping, offset, hash);
+983     if (page) {
+984         page_cache_get(page);
+985         if (TryLockPage(page)) {
+986             spin_unlock(&amp;pagecache_lock);
+987             lock_page(page);
+988             spin_lock(&amp;pagecache_lock);
+989 
+990             /* Has the page been re-allocated while we slept?  */
+991             if (page-&gt;mapping != mapping || page-&gt;index != offset) {
+992                 UnlockPage(page);
+993                 page_cache_release(page);
+994                 goto repeat;
+995             }
+996         }
+997     }
+998     return page;
+999 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>982</B>使用 <TT>__find_page_nolock()</TT>（见 <A HREF="#func: __find_page_nolock">J.1.4.3</A>）在页缓存中定位该页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>983-984</B>如果找到页，对其取一次引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>985</B>尝试用 <TT>TryLockPage()</TT> 锁定该页<A NAME="@codeindex305"></A>。该宏只是 <TT>test_and_set_bit()</TT> 的封装，尝试在 <TT>page</TT>&#X2192;<TT>flags</TT> 中设置 <TT>PG_locked</TT> 位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>986-988</B>若加锁失败，释放 <TT>pagecache_lock</TT> 自旋锁并调用 <TT>lock_page()</TT>（见 <A HREF="understand019_zh.html#func: lock_page">B.2.1.1</A>）来锁定页。该函数很可能会睡眠直到获得页锁。页被锁定后，再次获取 <TT>pagecache_lock</TT> 自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>991</B>如果 <TT>mapping</TT> 和 <TT>index</TT> 不再匹配，说明在我们睡眠期间该页被回收了。解锁该页并丢弃引用，然后再次搜索页缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>998</B>以加锁状态返回页；若不在页缓存中则返回 NULL</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc132"></A><A NAME="htoc421">J.2</A>　LRU 链表操作</H2><H3 CLASS="subsection"><A NAME="htoc422">J.2.1</A>　向 LRU 链表添加页</H3><H4 CLASS="subsubsection"><A NAME="htoc423">J.2.1.1</A>　函数：lru_cache_add</H4><P> <EM>来源： mm/swap.c</EM> <A NAME="func: lru_cache_add"></A> <A NAME="@codeindex306"></A></P><P>将一个页添加到 LRU <TT>inactive_list</TT>。</P><PRE CLASS="verbatim"> 58 void lru_cache_add(struct page * page)
+ 59 {
+ 60       if (!PageLRU(page)) {
+ 61             spin_lock(&amp;pagemap_lru_lock);
+ 62             if (!TestSetPageLRU(page))
+ 63                   add_page_to_inactive_list(page);
+ 64             spin_unlock(&amp;pagemap_lru_lock);
+ 65       }
+ 66 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>60</B>如果页尚不在 LRU 链表中，则添加它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>61</B>获取 LRU 锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>62-63</B>测试并设置 LRU 位。若原本为清零，则调用 <TT>add_page_to_inactive_list()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>64</B>释放 LRU 锁</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc424">J.2.1.2</A>　函数：add_page_to_active_list</H4><P> <EM>来源： include/linux/swap.h</EM> <A NAME="func: add_page_to_active_list"></A> <A NAME="@codeindex307"></A></P><P>将页添加到 <TT>active_list</TT></P><PRE CLASS="verbatim">178 #define add_page_to_active_list(page)         \
+179 do {                                          \
+180       DEBUG_LRU_PAGE(page);                   \
+181       SetPageActive(page);                    \
+182       list_add(&amp;(page)-&gt;lru, &amp;active_list);   \
+183       nr_active_pages++;                      \
+184 } while (0)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>180</B>若页已在 LRU 链表上或已被标记为活动，<TT>DEBUG_LRU_PAGE()</TT> 宏会调用 <TT>BUG()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>181</B>更新页的标志，表示其为活动</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>182</B>将页添加到 <TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>183</B>更新 <TT>active_list</TT> 中的页数</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc425">J.2.1.3</A>　函数：add_page_to_inactive_list</H4><P> <EM>来源： include/linux/swap.h</EM> <A NAME="func: add_page_to_inactive_list"></A> <A NAME="@codeindex308"></A></P><P>将页添加到 <TT>inactive_list</TT></P><PRE CLASS="verbatim">186 #define add_page_to_inactive_list(page)       \
+187 do {                                          \
+188       DEBUG_LRU_PAGE(page);                   \
+189       list_add(&amp;(page)-&gt;lru, &amp;inactive_list); \
+190       nr_inactive_pages++;                    \
+191 } while (0)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>188</B>若页已在 LRU 链表上或已被标记为活动，<TT>DEBUG_LRU_PAGE()</TT> 宏会调用 <TT>BUG()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>189</B>将页添加到 <TT>inactive_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>190</B>更新链表上的非活动页数</DD></DL><H3 CLASS="subsection"><A NAME="htoc426">J.2.2</A>　从 LRU 链表删除页</H3><H4 CLASS="subsubsection"><A NAME="htoc427">J.2.2.1</A>　函数：lru_cache_del</H4><P> <EM>来源： mm/swap.c</EM> <A NAME="func: lru_cache_del"></A> <A NAME="@codeindex309"></A></P><P>在调用 <TT>__lru_cache_del()</TT> 之前先获取保护 LRU 链表的锁。</P><PRE CLASS="verbatim"> 90 void lru_cache_del(struct page * page)
+ 91 {
+ 92       spin_lock(&amp;pagemap_lru_lock);
+ 93       __lru_cache_del(page);
+ 94       spin_unlock(&amp;pagemap_lru_lock);
+ 95 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>92</B>获取 LRU 锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>93</B><TT>__lru_cache_del()</TT> 执行将页从 LRU 链表中移除的&#X201C;真正&#X201D;工作</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>94</B>释放 LRU 锁</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc428">J.2.2.2</A>　函数：__lru_cache_del</H4><P> <EM>来源： mm/swap.c</EM> <A NAME="func: __lru_cache_del"></A> <A NAME="@codeindex310"></A></P><P>选择从 LRU 链表中移除页所需的函数。</P><PRE CLASS="verbatim"> 75 void __lru_cache_del(struct page * page)
+ 76 {
+ 77       if (TestClearPageLRU(page)) {
+ 78             if (PageActive(page)) {
+ 79                   del_page_from_active_list(page);
+ 80             } else {
+ 81                   del_page_from_inactive_list(page);
+ 82             }
+ 83       }
+ 84 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>77</B>测试并清除表示页处于 LRU 的标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-82</B>如果页在 LRU 中，选择合适的移除函数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-79</B>如果页是活动的，则调用 <TT>del_page_from_active_list()</TT>，否则用 <TT>del_page_from_inactive_list()</TT> 从非活动链表中删除</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc429">J.2.2.3</A>　函数：del_page_from_active_list</H4><P> <EM>来源： include/linux/swap.h</EM> <A NAME="func: del_page_from_active_list"></A> <A NAME="@codeindex311"></A></P><P>将页从 <TT>active_list</TT> 中移除</P><PRE CLASS="verbatim">193 #define del_page_from_active_list(page)   \
+194 do {                                      \
+195       list_del(&amp;(page)-&gt;lru);             \
+196       ClearPageActive(page);              \
+197       nr_active_pages--;                  \
+198 } while (0)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>195</B>从链表中删除页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>196</B>清除表示其属于 <TT>active_list</TT> 的标志。表示其属于 LRU 链表的标志已被 <TT>__lru_cache_del()</TT> 清除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>197</B>更新 <TT>active_list</TT> 中的页数</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc430">J.2.2.4</A>　函数：del_page_from_inactive_list</H4><P> <EM>来源： include/linux/swap.h</EM> <A NAME="func: del_page_from_inactive_list"></A> <A NAME="@codeindex312"></A></P><PRE CLASS="verbatim">200 #define del_page_from_inactive_list(page) \
+201 do {                                      \
+202       list_del(&amp;(page)-&gt;lru);             \
+203       nr_inactive_pages--;                \
+204 } while (0)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>202</B>将页从 LRU 链表中移除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>203</B>更新 <TT>inactive_list</TT> 中的页数</DD></DL><H3 CLASS="subsection"><A NAME="htoc431">J.2.3</A>　激活页</H3><H4 CLASS="subsubsection"><A NAME="htoc432">J.2.3.1</A>　函数：mark_page_accessed</H4><P> <EM>来源： mm/filemap.c</EM> <A NAME="func: mark_page_accessed"></A> <A NAME="@codeindex313"></A></P><P>这标记一个页被引用过。如果页已经在 <TT>active_list</TT> 中或被引用标志为清零，则仅设置被引用标志。如果页在 <TT>inactive_list</TT> 中且被引用标志已被设置，则调用 <TT>activate_page()</TT> 将该页移动到 <TT>active_list</TT> 的顶部。</P><PRE CLASS="verbatim">1332 void mark_page_accessed(struct page *page)
+1333 {
+1334       if (!PageActive(page) &amp;&amp; PageReferenced(page)) {
+1335             activate_page(page);
+1336             ClearPageReferenced(page);
+1337       } else
+1338             SetPageReferenced(page);
+1339 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1334-1337</B>如果页在 <TT>inactive_list</TT> 中（<TT>!PageActive()</TT>）且最近被引用过（<TT>PageReferenced()</TT>），则调用 <TT>activate_page()</TT> 将其移动到 <TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1338</B>否则，将页标记为被引用过</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc433">J.2.3.2</A>　函数：activate_lock</H4><P> <EM>来源： mm/swap.c</EM> <A NAME="func: activate_lock"></A> <A NAME="@codeindex314"></A></P><P>在调用 <TT>activate_page_nolock()</TT>（将页从 <TT>inactive_list</TT> 移动到 <TT>active_list</TT>）之前先获取 LRU 锁。</P><PRE CLASS="verbatim"> 47 void activate_page(struct page * page)
+ 48 {
+ 49       spin_lock(&amp;pagemap_lru_lock);
+ 50       activate_page_nolock(page);
+ 51       spin_unlock(&amp;pagemap_lru_lock);
+ 52 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>49</B>获取 LRU 锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>50</B>调用主工作函数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>51</B>释放 LRU 锁</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc434">J.2.3.3</A>　函数：activate_page_nolock</H4><P> <EM>来源： mm/swap.c</EM> <A NAME="func: active_page_nolock"></A> <A NAME="@codeindex315"></A></P><P>将页从 <TT>inactive_list</TT> 移动到 <TT>active_list</TT></P><PRE CLASS="verbatim"> 39 static inline void activate_page_nolock(struct page * page)
+ 40 {
+ 41       if (PageLRU(page) &amp;&amp; !PageActive(page)) {
+ 42             del_page_from_inactive_list(page);
+ 43             add_page_to_active_list(page);
+ 44       }
+ 45 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>41</B>确认该页在 LRU 上且还未在 <TT>active_list</TT> 上</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>42-43</B>将页从 <TT>inactive_list</TT> 中删除并加入到 <TT>active_list</TT></DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc133"></A><A NAME="htoc435">J.3</A>　重新填充 <TT>inactive_list</TT></H2><P>本节介绍如何将页从活动链表移动到非活动链表。</P><H3 CLASS="subsection"><A NAME="htoc436">J.3.1</A>　函数：refill_inactive</H3><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: refill_inactive"></A> <A NAME="@codeindex316"></A></P><P>将 <TT>nr_pages</TT> 个页从 <TT>active_list</TT> 移到 <TT>inactive_list</TT>。参数 <TT>nr_pages</TT> 由 <TT>shrink_caches()</TT> 计算得出，该数值力图使活动链表保持为页缓存大小的三分之二。</P><PRE CLASS="verbatim">533 static void refill_inactive(int nr_pages)
+534 {
+535       struct list_head * entry;
+536 
+537       spin_lock(&amp;pagemap_lru_lock);
+538       entry = active_list.prev;
+539       while (nr_pages &amp;&amp; entry != &amp;active_list) {
+540             struct page * page;
+541 
+542             page = list_entry(entry, struct page, lru);
+543             entry = entry-&gt;prev;
+544             if (PageTestandClearReferenced(page)) {
+545                   list_del(&amp;page-&gt;lru);
+546                   list_add(&amp;page-&gt;lru, &amp;active_list);
+547                   continue;
+548             }
+549 
+550             nr_pages--;
+551 
+552             del_page_from_active_list(page);
+553             add_page_to_inactive_list(page);
+554             SetPageReferenced(page);
+555       }
+556       spin_unlock(&amp;pagemap_lru_lock);
+557 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>537</B>获取保护 LRU 链表的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>538</B>取 <TT>active_list</TT> 中的最后一个表项</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>539-555</B>移动 <TT>nr_pages</TT> 个页，或直到 <TT>active_list</TT> 为空</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>542</B>取得该表项对应的 <TT>struct page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>544-548</B>测试并清除被引用标志。如果它被引用过，就把它移回 <TT>active_list</TT> 的顶部</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>550-553</B>将一个页从 <TT>active_list</TT> 移动到 <TT>inactive_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>554</B>将其标记为被引用，这样若它很快再次被引用，无需第二次引用即可被提升回 <TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>556</B>释放保护 LRU 链表的锁</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc134"></A><A NAME="htoc437">J.4</A>　从 LRU 链表回收页</H2><P>本节介绍当一个页被选定换出后，如何对其进行回收。</P><H3 CLASS="subsection"><A NAME="htoc438">J.4.1</A>　函数：shrink_cache</H3><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: shrink_cache"></A> <A NAME="@codeindex317"></A></P><PRE CLASS="verbatim">338 static int shrink_cache(int nr_pages, zone_t * classzone, 
+                            unsigned int gfp_mask, int priority)
+339 {
+340     struct list_head * entry;
+341     int max_scan = nr_inactive_pages / priority;
+342     int max_mapped = min((nr_pages &lt;&lt; (10 - priority)), 
+                             max_scan / 10);
+343 
+344     spin_lock(&amp;pagemap_lru_lock);
+345     while (--max_scan &gt;= 0 &amp;&amp; 
+               (entry = inactive_list.prev) != &amp;inactive_list) {
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>338</B>参数如下；
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>nr_pages</B>要换出的页数
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>classzone</B>我们希望换出页的目标 zone。不属于该 zone 的页会被跳过
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>gfp_mask</B>决定可以采取何种动作的 gfp 掩码，例如是否可以执行文件系统操作
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>priority</B>函数的优先级，从 <TT>DEF_PRIORITY</TT>（6）开始，逐步递减直到最高优先级 1
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>341</B>要扫描的最大页数是 <TT>active_list</TT> 中的页数除以优先级。最低优先级下可扫描链表的 1/6；最高优先级下可扫描整条链表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>342</B>允许被进程映射的页数的最大值，取 <TT>max_scan</TT> 的十分之一或 <I>nr</I>_<I>pages</I> * 2<SUP>10&#X2212;<I>priority</I></SUP>。若发现达到该页数，将把整个进程换出</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>344</B>锁定 LRU 链表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>345</B>持续扫描，直到已扫描 <TT>max_scan</TT> 个页或 <TT>inactive_list</TT> 为空</DD></DL><PRE CLASS="verbatim">346         struct page * page;
+347 
+348         if (unlikely(current-&gt;need_resched)) {
+349             spin_unlock(&amp;pagemap_lru_lock);
+350             __set_current_state(TASK_RUNNING);
+351             schedule();
+352             spin_lock(&amp;pagemap_lru_lock);
+353             continue;
+354         }
+355 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>348-354</B>如果时间片已用尽则重新调度</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>349</B>因为我们即将睡眠，释放 LRU 锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>350</B>表明我们仍在运行</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>351</B>调用 <TT>schedule()</TT> 让另一个进程被切换进来</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>352</B>重新获取 LRU 锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>353</B>重新进入循环，再次从 <TT>inactive_list</TT> 取一个表项。由于我们睡眠期间，其他进程可能已经修改了链表上的表项，所以必须在持有自旋锁的情况下重新取一个表项</DD></DL><PRE CLASS="verbatim">356         page = list_entry(entry, struct page, lru);
+357 
+358         BUG_ON(!PageLRU(page));
+359         BUG_ON(PageActive(page));
+360 
+361         list_del(entry);
+362         list_add(entry, &amp;inactive_list);
+363 
+364         /*
+365          * Zero page counts can happen because we unlink the pages
+366          * _after_ decrementing the usage count..
+367          */
+368         if (unlikely(!page_count(page)))
+369             continue;
+370 
+371         if (!memclass(page_zone(page), classzone))
+372             continue;
+373 
+374         /* Racy check to avoid trylocking when not worthwhile */
+375         if (!page-&gt;buffers &amp;&amp; (page_count(page) != 1 || !page-&gt;mapping))
+376             goto page_mapped;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>356</B>取得 LRU 中该表项对应的 <TT>struct page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>358-359</B>如果该页属于 <TT>active_list</TT> 或者当前被标记为活动，则属于 bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>361-362</B>把该页移到 <TT>inactive_list</TT> 的顶部，这样如果该页没有被释放，我们也可以继续，知道它稍后还会被检查</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>368-369</B>如果页计数已经为 0，则跳过它。在 <TT>__free_pages()</TT> 中，调用 <TT>__free_pages_ok()</TT> 释放页之前会用 <TT>put_page_testzero()</TT> 减少计数，这就留下了一个窗口：在释放之前，一个计数为 0 的页仍留在 LRU 上。<TT>__free_pages_ok()</TT> 开头有特殊处理来捕捉这种情况</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>371-372</B>如果该页属于我们当前不感兴趣的 zone，跳过它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>375-376</B>如果该页被某进程映射，则 goto 到 <TT>page_mapped</TT>，在那里递减 <TT>max_mapped</TT> 并检查下一个页。如果 <TT>max_mapped</TT> 减到 0，进程的页将被换出</DD></DL><PRE CLASS="verbatim">382         if (unlikely(TryLockPage(page))) {
+383             if (PageLaunder(page) &amp;&amp; (gfp_mask &amp; __GFP_FS)) {
+384                 page_cache_get(page);
+385                 spin_unlock(&amp;pagemap_lru_lock);
+386                 wait_on_page(page);
+387                 page_cache_release(page);
+388                 spin_lock(&amp;pagemap_lru_lock);
+389             }
+390             continue;
+391         }
+</PRE><P>页被锁定且 launder 位被置位。在这种情况下，这是该页第二次被发现为脏。第一次时它被安排了 IO 并放回链表。这次我们等待 IO 完成，然后尝试释放该页。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>382-383</B>如果无法锁定该页，且 <TT>PG_launder</TT> 位已设置，并且 GFP 标志允许调用者执行 FS 操作，则……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>384</B>对该页取一次引用，以免我们睡眠期间它消失</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>385</B>释放 LRU 锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>386</B>等待 IO 完成</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>387</B>释放对该页的引用。若计数变为 0，该页将被释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>388</B>重新获取 LRU 锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>390</B>处理下一个页</DD></DL><PRE CLASS="verbatim">392 
+393         if (PageDirty(page) &amp;&amp; 
+                is_page_cache_freeable(page) &amp;&amp; 
+                page-&gt;mapping) {
+394             /*
+395              * It is not critical here to write it only if
+396              * the page is unmapped beause any direct writer
+397              * like O_DIRECT would set the PG_dirty bitflag
+398              * on the phisical page after having successfully
+399              * pinned it and after the I/O to the page is finished,
+400              * so the direct writes to the page cannot get lost.
+401              */
+402             int (*writepage)(struct page *);
+403 
+404             writepage = page-&gt;mapping-&gt;a_ops-&gt;writepage;
+405             if ((gfp_mask &amp; __GFP_FS) &amp;&amp; writepage) {
+406                 ClearPageDirty(page);
+407                 SetPageLaunder(page);
+408                 page_cache_get(page);
+409                 spin_unlock(&amp;pagemap_lru_lock);
+410 
+411                 writepage(page);
+412                 page_cache_release(page);
+413 
+414                 spin_lock(&amp;pagemap_lru_lock);
+415                 continue;
+416             }
+417         }
+</PRE><P>这一段处理这样一种情况：页是脏的、没有被任何进程映射、没有缓冲区，并且由文件或设备映射支持。页将被清洗，IO 完成后由前一段代码回收。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>393</B><TT>PageDirty()</TT> 检查 <TT>PG_dirty</TT> 位；如果页没有被任何进程映射且没有缓冲区，<TT>is_page_cache_freeable()</TT> 返回真</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>404</B>获取该 mapping 或设备所需的 <TT>writepage()</TT> 函数指针</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>405-416</B>仅当 <TT>writepage()</TT> 函数可用且 GFP 标志允许文件操作时，才会执行这段代码</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>406-407</B>清除脏位并标记该页正在被洗刷</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>408</B>对该页取一次引用，以免它被意外释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>409</B>解锁 LRU 链表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>411</B>调用文件系统特定的 <TT>writepage()</TT> 函数，它取自 <TT>page</TT>&#X2192;<TT>mapping</TT> 所属的 <TT>address_space_operations</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>412</B>释放对该页的引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>414-415</B>重新获取 LRU 链表锁并处理下一个页</DD></DL><PRE CLASS="verbatim">424         if (page-&gt;buffers) {
+425             spin_unlock(&amp;pagemap_lru_lock);
+426 
+427             /* avoid to free a locked page */
+428             page_cache_get(page);
+429 
+430             if (try_to_release_page(page, gfp_mask)) {
+431                 if (!page-&gt;mapping) {
+438                     spin_lock(&amp;pagemap_lru_lock);
+439                     UnlockPage(page);
+440                     __lru_cache_del(page);
+441 
+442                     /* effectively free the page here */
+443                     page_cache_release(page);
+444 
+445                     if (--nr_pages)
+446                         continue;
+447                     break;
+448                 } else {
+454                     page_cache_release(page);
+455 
+456                     spin_lock(&amp;pagemap_lru_lock);
+457                 }
+458             } else {
+459                 /* failed to drop the buffers so stop here */
+460                 UnlockPage(page);
+461                 page_cache_release(page);
+462 
+463                 spin_lock(&amp;pagemap_lru_lock);
+464                 continue;
+465             }
+466         }
+</PRE><P>页关联了必须释放的缓冲区。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>425</B>因为可能睡眠，释放 LRU 锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>428</B>对该页取一次引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>430</B>调用 <TT>try_to_release_page()</TT>，它会尝试释放与该页关联的缓冲区。成功时返回 1</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>431-447</B>这种情况是：原本在交换缓存中的匿名页，现在其缓冲区已被清除并移除。由于它曾在交换缓存中，因此被 <TT>add_to_swap_cache()</TT> 放到了 LRU 上，所以现在要把它从 LRU 中移除并丢弃对该页的引用。在 <TT>swap_writepage()</TT> 中，它会调用 <TT>remove_exclusive_swap_page()</TT>，当不再有进程映射该页时将其从交换缓存中删除。如果页由交换文件支持，缓冲区写出后，这段代码会释放该页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>438-440</B>获取 LRU 链表锁，解锁该页，从页缓存中删除并释放它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>445-446</B>更新 <TT>nr_pages</TT>，表示已释放一个页，并处理下一个页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>447</B>如果 <TT>nr_pages</TT> 降为 0，工作已完成，退出循环</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>449-456</B>如果页确实有关联的 mapping，则仅丢弃对该页的引用并重新获取 LRU 锁。稍后会在第 499 行进行更多工作以将页从页缓存中移除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>459-464</B>如果缓冲区无法释放，则解锁该页、丢弃引用、重新获取 LRU 锁，然后处理下一个页</DD></DL><PRE CLASS="verbatim">468         spin_lock(&amp;pagecache_lock);
+469 
+470         /*
+471          * this is the non-racy check for busy page.
+472          */
+473         if (!page-&gt;mapping || !is_page_cache_freeable(page)) {
+474             spin_unlock(&amp;pagecache_lock);
+475             UnlockPage(page);
+476 page_mapped:
+477             if (--max_mapped &gt;= 0)
+478                 continue;
+479 
+484             spin_unlock(&amp;pagemap_lru_lock);
+485             swap_out(priority, gfp_mask, classzone);
+486             return nr_pages;
+487         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>468</B>从此处开始，可能会检查交换缓存中的页，这些页受 <TT>pagecache_lock</TT> 保护，现在必须持有该锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>473-487</B>没有缓冲区的匿名页被某进程映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>474-475</B>释放页缓存锁和该页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>477-478</B>递减 <TT>max_mapped</TT>。若未减到 0，处理下一个页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>484-485</B>在页缓存中发现了过多被映射的页。释放 LRU 锁并调用 <TT>swap_out()</TT>，开始换出整个进程</DD></DL><PRE CLASS="verbatim">493         if (PageDirty(page)) {
+494             spin_unlock(&amp;pagecache_lock);
+495             UnlockPage(page);
+496             continue;
+497         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>493-497</B>该页已没有引用，但如果 PTE 中的脏位被设置，最后释放它的进程可能将其弄脏。它被留在页缓存中，稍后会被洗刷。被清洗后即可安全删除</DD></DL><PRE CLASS="verbatim">498 
+499         /* point of no return */
+500         if (likely(!PageSwapCache(page))) {
+501             __remove_inode_page(page);
+502             spin_unlock(&amp;pagecache_lock);
+503         } else {
+504             swp_entry_t swap;
+505             swap.val = page-&gt;index;
+506             __delete_from_swap_cache(page);
+507             spin_unlock(&amp;pagecache_lock);
+508             swap_free(swap);
+509         }
+510 
+511         __lru_cache_del(page);
+512         UnlockPage(page);
+513 
+514         /* effectively free the page here */
+515         page_cache_release(page);
+516 
+517         if (--nr_pages)
+518             continue;
+519         break;
+520     }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>500-503</B>如果该页不属于交换缓存，那么它属于 inode 队列，将其移除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>504-508</B>因为不再有对它的引用，将其从交换缓存中移除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>511</B>将其从页缓存中删除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>512</B>解锁页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>515</B>释放页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>517-518</B>递减 <TT>nr_page</TT>，若不为 0 则处理下一个页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>519</B>若减到 0，函数的工作已完成</DD></DL><PRE CLASS="verbatim">521     spin_unlock(&amp;pagemap_lru_lock);
+522 
+523     return nr_pages;
+524 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>521-524</B>函数退出。释放 LRU 锁并返回剩余需释放的页数</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc135"></A><A NAME="htoc439">J.5</A>　收缩所有缓存</H2><H3 CLASS="subsection"><A NAME="htoc440">J.5.1</A>　函数：shrink_caches</H3><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: shrink_caches"></A> <A NAME="@codeindex318"></A></P><P>该函数的调用图见图 <A HREF="understand013_zh.html#fig: shrink_caches">10.4</A>. </P><PRE CLASS="verbatim">560 static int shrink_caches(zone_t * classzone, int priority, 
+                 unsigned int gfp_mask, int nr_pages)
+561 {
+562     int chunk_size = nr_pages;
+563     unsigned long ratio;
+564 
+565     nr_pages -= kmem_cache_reap(gfp_mask);
+566     if (nr_pages &lt;= 0)
+567         return 0;
+568 
+569     nr_pages = chunk_size;
+570     /* try to keep the active list 2/3 of the size of the cache */
+571     ratio = (unsigned long) nr_pages * 
+            nr_active_pages / ((nr_inactive_pages + 1) * 2);
+572     refill_inactive(ratio);
+573 
+574     nr_pages = shrink_cache(nr_pages, classzone, gfp_mask, priority);
+575     if (nr_pages &lt;= 0)
+576         return 0;
+577 
+578     shrink_dcache_memory(priority, gfp_mask);
+579     shrink_icache_memory(priority, gfp_mask);
+580 #ifdef CONFIG_QUOTA
+581     shrink_dqcache_memory(DEF_PRIORITY, gfp_mask);
+582 #endif
+583 
+584     return nr_pages;
+585 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>560</B>参数如下；
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>classzone</B>要从中释放页的 zone
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>priority</B>决定为释放页要做多少工作
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>gfp_mask</B>决定可以采取何种动作
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>nr_pages</B>剩余要释放的页数
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>565-567</B>用 <TT>kmem_cache_reap()</TT> 请求 slab 分配器释放一些页（见 <A HREF="understand025_zh.html#func: kmem_cache_reap">H.1.5.1</A>)。如果释放了足够的页，函数返回；否则将从其他缓存释放 <TT>nr_pages</TT> 个页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>571-572</B>通过调用 <TT>refill_inactive()</TT> 把页从 <TT>active_list</TT> 移到 <TT>inactive_list</TT>（见 <A HREF="#func: refill_inactive">J.3.1</A>)。移动的页数取决于需要释放多少页，以及为使 <TT>active_list</TT> 约为页缓存大小的三分之二</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>574-575</B>收缩页缓存，若释放的页足够，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>578-582</B>收缩 dcache、icache 和 dqcache。它们本身是小对象，但级联效应能释放大量磁盘缓冲区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>584</B>返回剩余需释放的页数</DD></DL><H3 CLASS="subsection"><A NAME="htoc441">J.5.2</A>　函数：try_to_free_pages</H3><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: try_to_free_pages"></A> <A NAME="@codeindex319"></A></P><P>该函数循环遍历所有 <TT>pgdat</TT>，并尝试平衡每个 pgdat 的首选分配 zone（通常是 <TT>ZONE_NORMAL</TT>）。该函数仅在一个地方被调用——<TT>buffer.c:free_more_memory()</TT>——当缓冲区管理器无法创建新缓冲区或扩展已有缓冲区时。它以 <TT>GFP_NOIO</TT> 作为 <TT>gfp_mask</TT> 调用 <TT>try_to_free_pages()</TT>。</P><P>这会使 <TT>pg_data_t</TT>&#X2192;<TT>node_zonelists</TT> 中第一个 zone 释放页，以便缓冲区能够扩展。该数组是分配 zone 的首选顺序，通常以缓冲区管理器所需的 <TT>ZONE_NORMAL</TT> 开头。在 NUMA 架构中，如果某个内存银行专用于 IO 设备，则某些节点的首选 zone 可能是 <TT>ZONE_DMA</TT>，UML 也只使用该 zone。由于缓冲区管理器使用的 zone 受限，平衡其他 zone 没有意义。</P><PRE CLASS="verbatim">607 int try_to_free_pages(unsigned int gfp_mask)
+608 {
+609     pg_data_t *pgdat;
+610     zonelist_t *zonelist;
+611     unsigned long pf_free_pages;
+612     int error = 0;
+613 
+614     pf_free_pages = current-&gt;flags &amp; PF_FREE_PAGES;
+615     current-&gt;flags &amp;= ~PF_FREE_PAGES;
+616 
+617     for_each_pgdat(pgdat) {
+618         zonelist = pgdat-&gt;node_zonelists + 
+                 (gfp_mask &amp; GFP_ZONEMASK);
+619         error |= try_to_free_pages_zone(
+                    zonelist-&gt;zones[0], gfp_mask);
+620     }
+621 
+622     current-&gt;flags |= pf_free_pages;
+623     return error;
+624 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>614-615</B>如果 <TT>PF_FREE_PAGES</TT> 标志被置位则将其清除，使该进程释放的页归还到全局池而非保留给进程自身</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>617-620</B>遍历所有节点，对每个节点的首选 zone 调用 <TT>try_to_free_pages()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>618</B>该函数只会以 <TT>GFP_NOIO</TT> 作参数调用。它与 <TT>GFP_ZONEMASK</TT> 进行 AND 后总是为 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>622-623</B>恢复进程标志并返回结果</DD></DL><H3 CLASS="subsection"><A NAME="htoc442">J.5.3</A>　函数：try_to_free_pages_zone</H3><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: try_to_free_pages_zone"></A> <A NAME="@codeindex320"></A></P><P>尝试从指定 zone 中释放 <TT>SWAP_CLUSTER_MAX</TT> 个页。除了被 <B>kswapd</B> 使用外，该函数也是伙伴分配器直接回收路径的入口。</P><PRE CLASS="verbatim">587 int try_to_free_pages_zone(zone_t *classzone, 
+                               unsigned int gfp_mask)
+588 {
+589     int priority = DEF_PRIORITY;
+590     int nr_pages = SWAP_CLUSTER_MAX;
+591 
+592     gfp_mask = pf_gfp_mask(gfp_mask);
+593     do {
+594         nr_pages = shrink_caches(classzone, priority, 
+                         gfp_mask, nr_pages);
+595         if (nr_pages &lt;= 0)
+596             return 1;
+597     } while (--priority);
+598 
+599     /*
+600      * Hmm.. Cache shrink failed - time to kill something?
+601      * Mhwahahhaha! This is the part I really like. Giggle.
+602      */
+603     out_of_memory();
+604     return 0;
+605 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>589</B>从最低优先级开始。静态定义为 6</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>590</B>尝试释放 <TT>SWAP_CLUSTER_MAX</TT> 个页。静态定义为 32</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>592</B><TT>pf_gfp_mask()</TT> 检查当前进程标志中的 <TT>PF_NOIO</TT> 标志。如果不能执行 IO，它会确保 GFP 掩码中没有不兼容的标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>593-597</B>从最低优先级开始，每次循环提高优先级，调用 <TT>shrink_caches()</TT> 直到 nr_pages 被释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>595-596</B>若释放了足够的页，返回表示工作已完成</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>603</B>如果即使在最高优先级（最坏情况下扫描整个 <TT>inactive_list</TT>）也无法释放足够的页，则检查是否内存耗尽。如果是，将选择一个进程予以杀掉</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>604</B>返回，表示未能释放足够的页</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc136"></A><A NAME="htoc443">J.6</A>　换出进程的页</H2><P>本节介绍当 LRU 链表中发现过多被进程映射的页时所走的路径。该路径会开始扫描整个进程并回收被映射的页。</P><H3 CLASS="subsection"><A NAME="htoc444">J.6.1</A>　函数：swap_out</H3><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: swap_out"></A> <A NAME="@codeindex321"></A></P><P>该函数的调用图见图 <A HREF="understand013_zh.html#fig: swap_out">10.5</A>。该函数线性地遍历每个进程的页表，尝试换出 <TT>SWAP_CLUSTER_MAX</TT> 个页。起始进程是 <TT>swap_mm</TT>，起始地址是 <TT>mm</TT>&#X2192;<TT>swap_address</TT></P><PRE CLASS="verbatim">296 static int swap_out(unsigned int priority, unsigned int gfp_mask, 
+            zone_t * classzone)
+297 {
+298     int counter, nr_pages = SWAP_CLUSTER_MAX;
+299     struct mm_struct *mm;
+300 
+301     counter = mmlist_nr;
+302     do {
+303         if (unlikely(current-&gt;need_resched)) {
+304             __set_current_state(TASK_RUNNING);
+305             schedule();
+306         }
+307 
+308         spin_lock(&amp;mmlist_lock);
+309         mm = swap_mm;
+310         while (mm-&gt;swap_address == TASK_SIZE || mm == &amp;init_mm) {
+311             mm-&gt;swap_address = 0;
+312             mm = list_entry(mm-&gt;mmlist.next, 
+                        struct mm_struct, mmlist);
+313             if (mm == swap_mm)
+314                 goto empty;
+315             swap_mm = mm;
+316         }
+317 
+318         /* Make sure the mm doesn't disappear 
+             when we drop the lock.. */
+319         atomic_inc(&amp;mm-&gt;mm_users);
+320         spin_unlock(&amp;mmlist_lock);
+321 
+322         nr_pages = swap_out_mm(mm, nr_pages, &amp;counter, classzone);
+323 
+324         mmput(mm);
+325 
+326         if (!nr_pages)
+327             return 1;
+328     } while (--counter &gt;= 0);
+329 
+330     return 0;
+331 
+332 empty:
+333     spin_unlock(&amp;mmlist_lock);
+334     return 0;
+335 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>301</B>设置计数器，使进程链表只被扫描一次</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>303-306</B>若时间片已用尽则重新调度，避免独占 CPU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>308</B>获取保护 mm 链表的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>309</B>从 <TT>swap_mm</TT> 开始。值得注意的是这里从未检查其是否有效。虽然可能性不大，但拥有该 <TT>mm</TT> 的进程在上次扫描后可能已退出 <EM>且</EM> 保存 <TT>mm_struct</TT> 的 slab 已在某次缓存收缩中被回收，使得指针完全无效。缺少 bug 报告可能是因为该 slab 很少被回收，在现实中也难以触发</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>310-316</B>如果 <TT>swap_address</TT> 已到 <TT>TASK_SIZE</TT> 或 mm 为 <TT>init_mm</TT>，则切换到下一个进程</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>311</B>从进程地址空间的开头开始</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>312</B>取得该进程的 mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>313-314</B>如果相同，则没有可检查的运行中进程</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>315</B>记录下一轮要用的 <TT>swap_mm</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>319</B>增加引用计数，使我们扫描期间 mm 不被释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>320</B>释放 mm 锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>322</B>用 <TT>swap_out_mm()</TT> 开始扫描该 mm（见 <A HREF="#func: swap_out_mm">J.6.2</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>324</B>丢弃对 mm 的引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>326-327</B>如果已释放了所需数量的页，返回成功</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>328</B>如果本轮失败，提高优先级以扫描更多进程</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>330</B>返回失败</DD></DL><H3 CLASS="subsection"><A NAME="htoc445">J.6.2</A>　函数：swap_out_mm</H3><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: swap_out_mm"></A> <A NAME="@codeindex322"></A></P><P>遍历每个 VMA，对每个 VMA 调用 <TT>swap_out_mm()</TT>。</P><PRE CLASS="verbatim">256 static inline int swap_out_mm(struct mm_struct * mm, int count, 
+                  int * mmcounter, zone_t * classzone)
+257 {
+258     unsigned long address;
+259     struct vm_area_struct* vma;
+260 
+265     spin_lock(&amp;mm-&gt;page_table_lock);
+266     address = mm-&gt;swap_address;
+267     if (address == TASK_SIZE || swap_mm != mm) {
+268         /* We raced: don't count this mm but try again */
+269         ++*mmcounter;
+270         goto out_unlock;
+271     }
+272     vma = find_vma(mm, address);
+273     if (vma) {
+274         if (address &lt; vma-&gt;vm_start)
+275             address = vma-&gt;vm_start;
+276 
+277         for (;;) {
+278             count = swap_out_vma(mm, vma, address, 
+                         count, classzone);
+279             vma = vma-&gt;vm_next;
+280             if (!vma)
+281                 break;
+282             if (!count)
+283                 goto out_unlock;
+284             address = vma-&gt;vm_start;
+285         }
+286     }
+287     /* Indicate that we reached the end of address space */
+288     mm-&gt;swap_address = TASK_SIZE;
+289 
+290 out_unlock:
+291     spin_unlock(&amp;mm-&gt;page_table_lock);
+292     return count;
+293 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>265</B>获取该 mm 的页表锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>266</B>从 swap_address 中保存的地址开始</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>267-271</B>如果地址为 <TT>TASK_SIZE</TT>，意味着某个线程已经竞争先行扫描了该进程。增加 mmcounter，使 <TT>swap_out_mm()</TT> 知道要换到另一个进程</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>272</B>查找该地址所属的 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>273</B>假设找到了 VMA，则……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>274-275</B>从 VMA 的开头开始</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>277-285</B>扫描该 VMA 及随后的每个 VMA，调用 <TT>swap_out_vma()</TT>（见 <A HREF="#func: swap_out_vma">J.6.3</A>)。如果释放了所需页数（count），则结束扫描并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>288</B>最后一个 VMA 扫描完后，将 <TT>swap_address</TT> 设为 <TT>TASK_SIZE</TT>，使下次 <TT>swap_out_mm()</TT> 跳过该进程</DD></DL><H3 CLASS="subsection"><A NAME="htoc446">J.6.3</A>　函数：swap_out_vma</H3><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: swap_out_vma"></A> <A NAME="@codeindex323"></A></P><P>遍历该 VMA，对其中每个 PGD 调用 <TT>swap_out_pgd()</TT>。</P><PRE CLASS="verbatim">227 static inline int swap_out_vma(struct mm_struct * mm, 
+                   struct vm_area_struct * vma, 
+                   unsigned long address, int count, 
+                   zone_t * classzone)
+228 {
+229     pgd_t *pgdir;
+230     unsigned long end;
+231 
+232     /* Don't swap out areas which are reserved */
+233     if (vma-&gt;vm_flags &amp; VM_RESERVED)
+234         return count;
+235 
+236     pgdir = pgd_offset(mm, address);
+237 
+238     end = vma-&gt;vm_end;
+239     BUG_ON(address &gt;= end);
+240     do {
+241         count = swap_out_pgd(mm, vma, pgdir, 
+                     address, end, count, classzone);
+242         if (!count)
+243             break;
+244         address = (address + PGDIR_SIZE) &amp; PGDIR_MASK;
+245         pgdir++;
+246     } while (address &amp;&amp; (address &lt; end));
+247     return count;
+248 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>233-234</B>若设置了 <TT>VM_RESERVED</TT> 标志，则跳过该 VMA。某些设备驱动会使用此标志，例如 SCSI 通用驱动</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>236</B>取得该地址对应的起始 PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>238</B>标记末尾位置；若起始地址不知何故越过了末尾，则触发 <TT>BUG()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>240</B>循环遍历 PGD，直到到达末尾地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>241</B>调用 <TT>swap_out_pgd()</TT>（见 <A HREF="#func: swap_out_pgd">J.6.4</A>)，记录还需释放多少页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>242-243</B>若释放了足够的页，break 并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>244-245</B>移动到下一个 PGD，并将地址前进到下一个 PGD 对齐地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>247</B>返回剩余需释放的页数</DD></DL><H3 CLASS="subsection"><A NAME="htoc447">J.6.4</A>　函数：swap_out_pgd</H3><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: swap_out_pgd"></A> <A NAME="@codeindex324"></A></P><P>逐一遍历所给 PGD 中的所有 PMD，并调用 <TT>swap_out_pmd()</TT></P><PRE CLASS="verbatim">197 static inline int swap_out_pgd(struct mm_struct * mm, 
+                   struct vm_area_struct * vma, pgd_t *dir, 
+                   unsigned long address, unsigned long end, 
+                   int count, zone_t * classzone)
+198 {
+199     pmd_t * pmd;
+200     unsigned long pgd_end;
+201 
+202     if (pgd_none(*dir))
+203         return count;
+204     if (pgd_bad(*dir)) {
+205         pgd_ERROR(*dir);
+206         pgd_clear(dir);
+207         return count;
+208     }
+209 
+210     pmd = pmd_offset(dir, address);
+211 
+212     pgd_end = (address + PGDIR_SIZE) &amp; PGDIR_MASK;  
+213     if (pgd_end &amp;&amp; (end &gt; pgd_end))
+214         end = pgd_end;
+215     
+216     do {
+217         count = swap_out_pmd(mm, vma, pmd, 
+                                 address, end, count, classzone);
+218         if (!count)
+219             break;
+220         address = (address + PMD_SIZE) &amp; PMD_MASK;
+221         pmd++;
+222     } while (address &amp;&amp; (address &lt; end));
+223     return count;
+224 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>202-203</B>若 PGD 不存在则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>204-208</B>若 PGD 异常，将其标记为异常并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>210</B>取得起始 PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>212-214</B>将末尾计算为该 PGD 的末尾或正在扫描的 VMA 的末尾中较近的那个</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>216-222</B>对该 PGD 中的每个 PMD，调用 <TT>swap_out_pmd()</TT>（见 <A HREF="#func: swap_out_pmd">J.6.5</A>)。若释放了足够的页，break 并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>223</B>返回剩余需释放的页数</DD></DL><H3 CLASS="subsection"><A NAME="htoc448">J.6.5</A>　函数：swap_out_pmd</H3><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: swap_out_pmd"></A> <A NAME="@codeindex325"></A></P><P>对该 PMD 中的每个 PTE，调用 <TT>try_to_swap_out()</TT>。完成后会更新 <TT>mm</TT>&#X2192;<TT>swap_address</TT>，记录我们结束的位置，避免此次扫描后很快又检查到同一个页。</P><PRE CLASS="verbatim">158 static inline int swap_out_pmd(struct mm_struct * mm, 
+                   struct vm_area_struct * vma, pmd_t *dir, 
+                   unsigned long address, unsigned long end, 
+                   int count, zone_t * classzone)
+159 {
+160     pte_t * pte;
+161     unsigned long pmd_end;
+162 
+163     if (pmd_none(*dir))
+164         return count;
+165     if (pmd_bad(*dir)) {
+166         pmd_ERROR(*dir);
+167         pmd_clear(dir);
+168         return count;
+169     }
+170     
+171     pte = pte_offset(dir, address);
+172     
+173     pmd_end = (address + PMD_SIZE) &amp; PMD_MASK;
+174     if (end &gt; pmd_end)
+175         end = pmd_end;
+176 
+177     do {
+178         if (pte_present(*pte)) {
+179             struct page *page = pte_page(*pte);
+180 
+181             if (VALID_PAGE(page) &amp;&amp; !PageReserved(page)) {
+182                 count -= try_to_swap_out(mm, vma, 
+                                 address, pte, 
+                                 page, classzone);
+183                 if (!count) {
+184                     address += PAGE_SIZE;
+185                     break;
+186                 }
+187             }
+188         }
+189         address += PAGE_SIZE;
+190         pte++;
+191     } while (address &amp;&amp; (address &lt; end));
+192     mm-&gt;swap_address = address;
+193     return count;
+194 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>163-164</B>若 PMD 不存在则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>165-169</B>若 PMD 异常，将其标记为异常并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>171</B>取得起始 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>173-175</B>将末尾计算为该 PMD 的末尾或 VMA 的末尾中较近的那个</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>177-191</B>循环遍历每个 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>178</B>确认 PTE 标记为 present</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>179</B>取得该 PTE 对应的 struct page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>181</B>若它是有效页且未保留，则……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>182</B>调用 <TT>try_to_swap_out()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>183-186</B>若已换出足够的页，将地址前进到下一页并 break 返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>189-190</B>前进到下一页和下一个 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>192</B>更新 swap_address，记录上次结束的位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>193</B>返回剩余需释放的页数</DD></DL><H3 CLASS="subsection"><A NAME="htoc449">J.6.6</A>　函数：try_to_swap_out</H3><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: try_to_swap_out"></A> <A NAME="@codeindex326"></A></P><P>该函数尝试从某进程换出一个页。它是一个相当大的函数，因此将分段处理。大致分为</P><UL CLASS="itemize"><LI CLASS="li-itemize">函数前导，确认此页应被换出</LI><LI CLASS="li-itemize">将页和 PTE 从页表中移除</LI><LI CLASS="li-itemize">处理页已在交换缓存中的情况</LI><LI CLASS="li-itemize">处理页为脏或有关联缓冲区的情况</LI><LI CLASS="li-itemize">处理页正被加入交换缓存的情况</LI></UL><PRE CLASS="verbatim"> 47 static inline int try_to_swap_out(struct mm_struct * mm, 
+                    struct vm_area_struct* vma, 
+                    unsigned long address, 
+                    pte_t * page_table, 
+                    struct page *page, 
+                    zone_t * classzone)
+ 48 {
+ 49     pte_t pte;
+ 50     swp_entry_t entry;
+ 51 
+ 52     /* Don't look at this pte if it's been accessed recently. */
+ 53     if ((vma-&gt;vm_flags &amp; VM_LOCKED) ||
+        ptep_test_and_clear_young(page_table)) {
+ 54         mark_page_accessed(page);
+ 55         return 0;
+ 56     }
+ 57 
+ 58     /* Don't bother unmapping pages that are active */
+ 59     if (PageActive(page))
+ 60         return 0;
+ 61 
+ 62     /* Don't bother replenishing zones not under pressure.. */
+ 63     if (!memclass(page_zone(page), classzone))
+ 64         return 0;
+ 65 
+ 66     if (TryLockPage(page))
+ 67         return 0;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>53-56</B>如果页被锁定（如用于 IO）或 PTE 显示该页最近被访问过，则清除引用位并调用 <TT>mark_page_accessed()</TT>（见 <A HREF="#func: mark_page_accessed">J.2.3.1</A>）以使 struct page 反映其活跃度。返回 0 表示未被换出</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>59-60</B>若页位于 <TT>active_list</TT>，则不将其换出</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>63-64</B>若页属于我们不感兴趣的 zone，则不将其换出</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>66-67</B>若页已被锁定用于 IO，则跳过它</DD></DL><PRE CLASS="verbatim"> 74     flush_cache_page(vma, address);
+ 75     pte = ptep_get_and_clear(page_table);
+ 76     flush_tlb_page(vma, address);
+ 77 
+ 78     if (pte_dirty(pte))
+ 79         set_page_dirty(page);
+ 80 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>74</B>调用架构相关的钩子，从所有 CPU 上刷新该页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>75</B>从页表中取出 PTE 并清除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>76</B>调用架构相关的钩子刷新 TLB</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-79</B>若 PTE 被标记为脏，将 <TT>struct page</TT> 标为脏，以便正确进行洗刷</DD></DL><PRE CLASS="verbatim"> 86     if (PageSwapCache(page)) {
+ 87         entry.val = page-&gt;index;
+ 88         swap_duplicate(entry);
+ 89 set_swap_pte:
+ 90         set_pte(page_table, swp_entry_to_pte(entry));
+ 91 drop_pte:
+ 92         mm-&gt;rss--;
+ 93         UnlockPage(page);
+ 94         {
+ 95             int freeable = 
+                 page_count(page) - !!page-&gt;buffers &lt;= 2;
+ 96             page_cache_release(page);
+ 97             return freeable;
+ 98         }
+ 99     }
+</PRE><P>处理页已在交换缓存中的情况</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>86</B>仅当页已在交换缓存中时进入此块。注意，也可以通过 goto 到 <TT>set_swap_pte</TT> 和 <TT>drop_pte</TT> 标签进入</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>87-88</B>填入 swap 表项的 index 值。<TT>swap_duplicate()</TT> 验证 swap 标识符是否有效，若有效则在 swap_map 中递增计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>90</B>用从交换区取回页所需的信息填充 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>92</B>更新 RSS，表示该进程映射的页减少了一个</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>93</B>解锁该页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>95</B>若计数当前为 2 或更小且没有缓冲区，则页可以被释放。如果计数更大，则它要么被其他进程映射，要么是文件支持的页，其&#X201C;用户&#X201D;是页缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>96</B>递减引用计数，若变为 0 则释放该页。注意，如果是文件支持的页，即使没有进程映射它，引用计数也不会变为 0。该页稍后会由 <TT>shrink_cache()</TT> 从页缓存中回收（见 <A HREF="#func: shrink_cache">J.4.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>97</B>返回该页是否被释放</DD></DL><PRE CLASS="verbatim">115     if (page-&gt;mapping)
+116         goto drop_pte;
+117     if (!PageDirty(page))
+118         goto drop_pte;
+124     if (page-&gt;buffers)
+125         goto preserve;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>115-116</B>如果页有关联的 mapping，只需将其从页表中移除。当没有进程再映射它时，它会被 <TT>shrink_cache()</TT> 从页缓存中回收</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>117-118</B>如果页是干净的，可以安全地直接丢弃</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>124-125</B>如果由于 truncate 后又发生缺页而导致它有关联的缓冲区，则将页和 PTE 重新连接回页表，因为目前还无法处理它</DD></DL><PRE CLASS="verbatim">126 
+127     /*
+128      * This is a dirty, swappable page.  First of all,
+129      * get a suitable swap entry for it, and make sure
+130      * we have the swap cache set up to associate the
+131      * page with that swap entry.
+132      */
+133     for (;;) {
+134         entry = get_swap_page();
+135         if (!entry.val)
+136             break;
+137         /* Add it to the swap cache and mark it dirty
+138          * (adding to the page cache will clear the dirty
+139          * and uptodate bits, so we need to do it again)
+140          */
+141         if (add_to_swap_cache(page, entry) == 0) {
+142             SetPageUptodate(page);
+143             set_page_dirty(page);
+144             goto set_swap_pte;
+145         }
+146         /* Raced with "speculative" read_swap_cache_async */
+147         swap_free(entry);
+148     }
+149 
+150     /* No swap space left */
+151 preserve:
+152     set_pte(page_table, pte);
+153     UnlockPage(page);
+154     return 0;
+155 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>134</B>为该页分配一个 swap 表项</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>135-136</B>若无法分配，则跳出，到 PTE 和页被重新挂回进程页表之处</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>141</B>将该页加入交换缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>142</B>将该页在内存中标记为最新（up to date）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>143</B>将该页标记为脏，使其很快被写出到 swap</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>144</B>goto 到 <TT>set_swap_pte</TT>，那里会用稍后从 swap 取回页所需的信息更新 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>147</B>如果加入交换缓存失败，意味着该页已被 readahead 放入交换缓存，因此放弃此处所做的工作</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>152</B>将 PTE 重新挂回页表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>153</B>解锁该页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>154</B>返回，表示未释放页</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc137"></A><A NAME="htoc450">J.7</A>　页交换守护进程</H2><P>本节详细描述 <B>kswapd</B> 守护进程使用的主循环。当内存不足时 <B>kswapd</B> 会被唤醒。这里主要讨论的函数包括：判断 <B>kswapd</B> 是否可以睡眠的函数，以及它如何确定哪些节点需要平衡。</P><H3 CLASS="subsection"><A NAME="htoc451">J.7.1</A>　初始化 kswapd</H3><H4 CLASS="subsubsection"><A NAME="htoc452">J.7.1.1</A>　函数：kswapd_init</H4><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: kswapd_init"></A> <A NAME="@codeindex327"></A></P><P>启动 kswapd 内核线程</P><PRE CLASS="verbatim">767 static int __init kswapd_init(void)
+768 {
+769     printk("Starting kswapd\n");
+770     swap_setup();
+771     kernel_thread(kswapd, NULL, CLONE_FS 
+                                  | CLONE_FILES 
+                                  | CLONE_SIGNAL);
+772     return 0;
+773 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>770</B><TT>swap_setup()</TT>（见 <A HREF="../original_html/understand028.html#func: swap_setup">K.4.2</A>）根据物理内存的大小，设置从后备存储读取时预取多少页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>771</B>启动 <B>kswapd</B> 内核线程</DD></DL><H3 CLASS="subsection"><A NAME="htoc453">J.7.2</A>　kswapd 守护进程</H3><H4 CLASS="subsubsection"><A NAME="htoc454">J.7.2.1</A>　函数：kswapd</H4><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: kswapd"></A> <A NAME="@codeindex328"></A></P><P><B>kswapd</B> 内核线程的主函数。</P><PRE CLASS="verbatim">720 int kswapd(void *unused)
+721 {
+722     struct task_struct *tsk = current;
+723     DECLARE_WAITQUEUE(wait, tsk);
+724 
+725     daemonize();
+726     strcpy(tsk-&gt;comm, "kswapd");
+727     sigfillset(&amp;tsk-&gt;blocked);
+728     
+741     tsk-&gt;flags |= PF_MEMALLOC;
+742 
+746     for (;;) {
+747         __set_current_state(TASK_INTERRUPTIBLE);
+748         add_wait_queue(&amp;kswapd_wait, &amp;wait);
+749 
+750         mb();
+751         if (kswapd_can_sleep())
+752             schedule();
+753 
+754         __set_current_state(TASK_RUNNING);
+755         remove_wait_queue(&amp;kswapd_wait, &amp;wait);
+756 
+762         kswapd_balance();
+763         run_task_queue(&amp;tq_disk);
+764     }
+765 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>725</B>调用 <TT>daemonize()</TT>，它会使本进程变为内核线程，移除 mm 上下文、关闭所有文件并重新指定父进程</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>726</B>设置进程名</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>727</B>忽略所有信号</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>741</B>设置该标志后，物理页分配器将始终尝试满足页请求。由于本进程会一直试图释放页，满足其请求是值得的</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>746-764</B>无限循环</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>747-748</B>将 <B>kswapd</B> 加入等待队列，准备睡眠</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>750</B>内存屏障函数 <TT>mb()</TT> 确保此行之前发生的所有读写对所有 CPU 都可见</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>751</B><TT>kswapd_can_sleep()</TT>（见 <A HREF="#func: kswapd_can_sleep">J.7.2.2</A>）遍历所有节点和 zone，检查 <TT>need_balance</TT> 字段。如果其中任意一个为 1，则 kswapd 不能睡眠</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>752</B>通过调用 <TT>schedule()</TT>，<B>kswapd</B> 现在会睡眠，直到再次被 <TT>__alloc_pages()</TT> 中的物理页分配器唤醒（见 <A HREF="understand023_zh.html#func: __alloc_pages">F.1.3</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>754-755</B>一旦被唤醒，<B>kswapd</B> 已在运行，将其从等待队列中移除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>762</B><TT>kswapd_balance()</TT>（见 <A HREF="#func: kswapd_balance">J.7.2.4</A>）遍历所有 zone，对每个需要平衡的 zone 调用 <TT>try_to_free_pages_zone()</TT>（见 <A HREF="#func: try_to_free_pages_zone">J.5.3</A>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>763</B>运行 IO 任务队列，开始将数据写出到磁盘</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc455">J.7.2.2</A>　函数：kswapd_can_sleep</H4><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: kswapd_can_sleep"></A> <A NAME="@codeindex329"></A></P><P>一个简单的函数，遍历所有 pgdat，对每个调用 <TT>kswapd_can_sleep_pgdat()</TT>。</P><PRE CLASS="verbatim">695 static int kswapd_can_sleep(void)
+696 {
+697     pg_data_t * pgdat;
+698 
+699     for_each_pgdat(pgdat) {
+700         if (!kswapd_can_sleep_pgdat(pgdat))
+701             return 0;
+702     }
+703 
+704     return 1;
+705 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>699-702</B><TT>for_each_pgdat()</TT> 正如其名所示，遍历所有可用的 pgdat，在此处对每个调用 <TT>kswapd_can_sleep_pgdat()</TT>（见 <A HREF="#func: kswapd_can_sleep_pgdat">J.7.2.3</A>）。在 x86 上只有一个 <TT>pgdat</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc456">J.7.2.3</A>　函数：kswapd_can_sleep_pgdat</H4><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: kswapd_can_sleep_pgdat"></A> <A NAME="@codeindex330"></A></P><P>遍历所有 zone，确认没有 zone 需要平衡。当某个 zone 的空闲页数达到 <TT>pages_low</TT> 水位线时，<TT>__alloc_pages()</TT> 会设置 <TT>zone</TT>&#X2192;<TT>need_balanace</TT> 标志。</P><PRE CLASS="verbatim">680 static int kswapd_can_sleep_pgdat(pg_data_t * pgdat)
+681 {
+682     zone_t * zone;
+683     int i;
+684 
+685     for (i = pgdat-&gt;nr_zones-1; i &gt;= 0; i--) {
+686         zone = pgdat-&gt;node_zones + i;
+687         if (!zone-&gt;need_balance)
+688             continue;
+689         return 0;
+690     }
+691 
+692     return 1;
+693 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>685-689</B>用一个简单的 for 循环遍历所有 zone</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>686</B><TT>node_zones</TT> 字段是所有可用 zone 的数组，加上 <TT>i</TT> 即得到索引</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>687-688</B>若 zone 不需要平衡，则继续</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>689</B>只要有任一 zone 需要平衡就返回 0，表示 <B>kswapd</B> 不能睡眠</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>692</B>若 for 循环正常结束，则返回，表示 kswapd 可以睡眠</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc457">J.7.2.4</A>　函数：kswapd_balance</H4><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: kswapd_balance"></A> <A NAME="@codeindex331"></A></P><P>不断循环遍历每个 pgdat，直到没有任何 pgdat 需要平衡</P><PRE CLASS="verbatim">667 static void kswapd_balance(void)
+668 {
+669     int need_more_balance;
+670     pg_data_t * pgdat;
+671 
+672     do {
+673         need_more_balance = 0;
+674 
+675         for_each_pgdat(pgdat)
+676             need_more_balance |= kswapd_balance_pgdat(pgdat);
+677     } while (need_more_balance);
+678 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>672-677</B>循环遍历所有 <TT>pgdat</TT>，直到没有一个报告需要平衡</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>675</B>对每个 pgdat 调用 <TT>kswapd_balance_pgdat()</TT> 检查该节点是否需要平衡。如果任一节点需要平衡，则将 <TT>need_more_balance</TT> 设为 1</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc458">J.7.2.5</A>　函数：kswapd_balance_pgdat</H4><P> <EM>来源： mm/vmscan.c</EM> <A NAME="func: kswapd_balance_pgdat"></A> <A NAME="@codeindex332"></A></P><P>该函数通过检查节点中的每个 zone，判断该节点是否需要平衡。如果任一 zone 需要平衡，将调用 <TT>try_to_free_pages_zone()</TT>。</P><PRE CLASS="verbatim">641 static int kswapd_balance_pgdat(pg_data_t * pgdat)
+642 {
+643     int need_more_balance = 0, i;
+644     zone_t * zone;
+645 
+646     for (i = pgdat-&gt;nr_zones-1; i &gt;= 0; i--) {
+647         zone = pgdat-&gt;node_zones + i;
+648         if (unlikely(current-&gt;need_resched))
+649             schedule();
+650         if (!zone-&gt;need_balance)
+651             continue;
+652         if (!try_to_free_pages_zone(zone, GFP_KSWAPD)) {
+653             zone-&gt;need_balance = 0;
+654             __set_current_state(TASK_INTERRUPTIBLE);
+655             schedule_timeout(HZ);
+656             continue;
+657         }
+658         if (check_classzone_need_balance(zone))
+659             need_more_balance = 1;
+660         else
+661             zone-&gt;need_balance = 0;
+662     }
+663 
+664     return need_more_balance;
+665 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>646-662</B>循环遍历每个 zone，对需要重新平衡的调用 <TT>try_to_free_pages_zone()</TT>（见 <A HREF="#func: try_to_free_pages_zone">J.5.3</A>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>647</B><TT>node_zones</TT> 是一个数组，i 是其中的索引</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>648-649</B>若时间片已过期，则调用 <TT>schedule()</TT>，避免 <B>kswapd</B> 独占 CPU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>650-651</B>若该 zone 不需要平衡，转到下一个</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>652-657</B>如果该函数返回 0，意味着因无法释放足够的页而调用了 <TT>out_of_memory()</TT>。<B>kswapd</B> 睡眠 1 秒，给系统机会回收被杀进程的页并完成 IO。将该 zone 标记为已平衡，使 <B>kswapd</B> 忽略它，直到分配器函数 <TT>__alloc_pages()</TT> 再次报告问题</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>658-661</B>若成功，则调用 <TT>check_classzone_need_balance()</TT> 检查该 zone 是否需要进一步平衡</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>664</B>如果有 zone 需要进一步平衡，返回 1</DD></DL><P>	</P><HR>
+[ <A HREF="understand026_zh.html">&laquo; 上一章</A> ]
+[ <A HREF="index.html">&uarr; 上级</A> ]
+[ <A HREF="../original_html/understand028.html">下一章 &raquo;</A> ]
+</BODY>
+</HTML>
