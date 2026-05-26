@@ -195,7 +195,57 @@
   <p>每个 zone 有三条水位线：<tt>pages_low</tt>、<tt>pages_min</tt> 和 <tt>pages_high</tt>，用于跟踪 zone 承受的压力。它们之间的关系如图 2.2 所示。<tt>pages_min</tt> 的值在内存初始化时由 <tt>free_area_init_core()</tt> 计算，与 zone 的页数大小成比例，初值为 <i>ZoneSizeInPages / 128</i>。其最小值为 20 页（在 x86 上约 80 KiB），最大值为 255 页（在 x86 上约 1 MiB）。</p>
 
   <div class="figure">
-    <img src="../original_html/figures/understand-html002.png" alt="图 2.2">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 300" width="500" role="img" aria-labelledby="fig002-title fig002-desc" font-family="sans-serif" font-size="13">
+      <title id="fig002-title">图 2.2：Zone 水位线</title>
+      <desc id="fig002-desc">竖向内存柱图，从下到上显示 pages_min、pages_low、pages_high 三条水位线，标注各水位对应的内核行为：到达 pages_min 时触发直接回收，到达 pages_low 时唤醒 kswapd，到达 pages_high 时 kswapd 重新进入睡眠。</desc>
+
+      <!-- Memory bar background -->
+      <rect x="160" y="30" width="100" height="220" rx="4" fill="#f4f4f4" stroke="#444" stroke-width="1.5"/>
+
+      <!-- Filled free memory area (below pages_min - in use) -->
+      <rect x="160" y="200" width="100" height="50" rx="0" fill="#f8d7da" stroke="none"/>
+      <!-- Between pages_min and pages_low -->
+      <rect x="160" y="150" width="100" height="50" fill="#fff3cd" stroke="none"/>
+      <!-- Between pages_low and pages_high -->
+      <rect x="160" y="90" width="100" height="60" fill="#d4edda" stroke="none"/>
+      <!-- Above pages_high -->
+      <rect x="160" y="30" width="100" height="60" fill="#cfe2ff" stroke="none"/>
+      <!-- Redraw border on top -->
+      <rect x="160" y="30" width="100" height="220" rx="4" fill="none" stroke="#444" stroke-width="1.5"/>
+
+      <!-- pages_high line -->
+      <line x1="150" y1="90" x2="270" y2="90" stroke="#1f4e8a" stroke-width="2" stroke-dasharray="5,3"/>
+      <text x="275" y="94" font-size="12" fill="#1f4e8a" font-weight="bold">pages_high</text>
+      <text x="275" y="108" font-size="10" fill="#555">（kswapd 重新睡眠）</text>
+
+      <!-- pages_low line -->
+      <line x1="150" y1="150" x2="270" y2="150" stroke="#856404" stroke-width="2" stroke-dasharray="5,3"/>
+      <text x="275" y="154" font-size="12" fill="#856404" font-weight="bold">pages_low</text>
+      <text x="275" y="168" font-size="10" fill="#555">（唤醒 kswapd）</text>
+
+      <!-- pages_min line -->
+      <line x1="150" y1="200" x2="270" y2="200" stroke="#842029" stroke-width="2" stroke-dasharray="5,3"/>
+      <text x="275" y="204" font-size="12" fill="#842029" font-weight="bold">pages_min</text>
+      <text x="275" y="218" font-size="10" fill="#555">（直接回收）</text>
+
+      <!-- Axis label -->
+      <text x="210" y="265" text-anchor="middle" font-size="11" fill="#444">空闲页数</text>
+      <line x1="210" y1="250" x2="210" y2="30" stroke="#444" stroke-width="1" marker-end="url(#arr001b)"/>
+      <defs>
+        <marker id="arr001b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#444"/>
+        </marker>
+      </defs>
+
+      <!-- Left labels -->
+      <text x="148" y="55" text-anchor="end" font-size="11" fill="#333">充足</text>
+      <text x="148" y="120" text-anchor="end" font-size="11" fill="#333">适中</text>
+      <text x="148" y="175" text-anchor="end" font-size="11" fill="#333">偏低</text>
+      <text x="148" y="235" text-anchor="end" font-size="11" fill="#333">不足</text>
+
+      <!-- Title -->
+      <text x="250" y="290" text-anchor="middle" font-size="13" font-weight="bold">Zone 水位线</text>
+    </svg>
     <div class="caption">图 2.2：Zone 水位线</div>
   </div>
 
