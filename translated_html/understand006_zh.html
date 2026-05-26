@@ -110,7 +110,52 @@
   <p>任意一个线性地址都可以拆分为三个页表层级中各自的偏移和页内偏移。为便于拆分，每个页表层级都提供一组三个宏：<tt>SHIFT</tt>、<tt>SIZE</tt> 和 <tt>MASK</tt>。<tt>SHIFT</tt> 指明每个页表级别所映射的位数，见图 3.2。</p>
 
   <div class="figure">
-    <img src="../original_html/figures/understand-html007.png" alt="图 3.2">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 220" width="640" role="img" aria-labelledby="fig007-title fig007-desc" font-family="sans-serif" font-size="12">
+      <title id="fig007-title">图 3.2：线性地址位长宏</title>
+      <desc id="fig007-desc">32 位线性地址被划分为三个字段，分别对应 PGDIR_SHIFT（位 31–22）、PMD_SHIFT（位 21–12）和 PAGE_SHIFT（位 11–0），各宏表示从位 0 起到对应级别的位宽。</desc>
+      <defs>
+        <marker id="arr007" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+        </marker>
+        <marker id="arr007r" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M10,0 L0,5 L10,10 z" fill="#222"/>
+        </marker>
+      </defs>
+
+      <!-- Title -->
+      <text x="320" y="22" text-anchor="middle" font-size="13" font-weight="bold">图 3.2：线性地址位长宏</text>
+
+      <!-- Bit range labels above the bar -->
+      <text x="150" y="48" text-anchor="middle" font-size="11" fill="#555">位 31–22</text>
+      <text x="310" y="48" text-anchor="middle" font-size="11" fill="#555">位 21–12</text>
+      <text x="486" y="48" text-anchor="middle" font-size="11" fill="#555">位 11–0</text>
+
+      <!-- Linear address bar: 3 sections -->
+      <!-- PGDIR section: x=64, width=172 -->
+      <rect x="64" y="54" width="172" height="30" fill="#cfe2ff" stroke="#1f4e8a"/>
+      <text x="150" y="73" text-anchor="middle" font-size="11">PGDIR 索引（10位）</text>
+      <!-- PMD/PTE section: x=236, width=172 -->
+      <rect x="236" y="54" width="172" height="30" fill="#d4edda" stroke="#155724"/>
+      <text x="322" y="73" text-anchor="middle" font-size="11">PMD/PTE 索引（10位）</text>
+      <!-- Offset section: x=408, width=168 -->
+      <rect x="408" y="54" width="168" height="30" fill="#fff3cd" stroke="#856404"/>
+      <text x="492" y="73" text-anchor="middle" font-size="11">页内偏移（12位）</text>
+
+      <!-- PAGE_SHIFT bracket: from x=408 to x=576, below bar -->
+      <line x1="408" y1="95" x2="576" y2="95" stroke="#856404" marker-start="url(#arr007r)" marker-end="url(#arr007)"/>
+      <text x="492" y="110" text-anchor="middle" font-size="11" fill="#856404">PAGE_SHIFT = 12</text>
+
+      <!-- PMD_SHIFT bracket: from x=236 to x=576 -->
+      <line x1="236" y1="125" x2="576" y2="125" stroke="#155724" marker-start="url(#arr007r)" marker-end="url(#arr007)"/>
+      <text x="406" y="140" text-anchor="middle" font-size="11" fill="#155724">PMD_SHIFT = 12（x86 无 PAE 时与 PAGE_SHIFT 相同）</text>
+
+      <!-- PGDIR_SHIFT bracket: from x=64 to x=576 -->
+      <line x1="64" y1="155" x2="576" y2="155" stroke="#1f4e8a" marker-start="url(#arr007r)" marker-end="url(#arr007)"/>
+      <text x="320" y="170" text-anchor="middle" font-size="11" fill="#1f4e8a">PGDIR_SHIFT = 22</text>
+
+      <!-- Legend note -->
+      <text x="320" y="195" text-anchor="middle" font-size="10" fill="#666">注：各 SHIFT 宏表示从位 0 起到该页表级别边界的总位数</text>
+    </svg>
     <div class="caption">图 3.2：线性地址位长宏</div>
   </div>
 
