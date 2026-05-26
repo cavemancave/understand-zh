@@ -1,0 +1,432 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand_zh.css">
+<TITLE>高端内存管理</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand025_zh.html">&laquo; 上一章</A> ]
+[ <A HREF="index.html">&uarr; 上级</A> ]
+[ <A HREF="../original_html/understand027.html">下一章 &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc370">附录 I</A>　高端内存管理</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc125"></A><A NAME="htoc371">I.1</A>　映射高端内存页</H2><H4 CLASS="subsubsection"><A NAME="htoc372">I.1.0.5</A>　函数：kmap</H4><P> <EM>来源：include/asm-i386/highmem.c</EM> <A NAME="func: kmap"></A> <A NAME="@codeindex265"></A></P><P>该 API 供愿意阻塞的调用者使用。</P><PRE CLASS="verbatim">   62 #define kmap(page) __kmap(page, 0)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>62</B>调用核心函数 <TT>__kmap()</TT>，第二个参数表示调用者愿意阻塞</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc373">I.1.0.6</A>　函数：kmap_nonblock</H4><P> <EM>来源：include/asm-i386/highmem.c</EM> <A NAME="func: kmap_nonblock"></A> <A NAME="@codeindex266"></A></P><PRE CLASS="verbatim"> 63 #define kmap_nonblock(page) __kmap(page, 1)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>62</B>调用核心函数 <TT>__kmap()</TT>，第二个参数表示调用者不愿意阻塞</DD></DL><H3 CLASS="subsection"><A NAME="htoc374">I.1.1</A>　函数：__kmap</H3><P> <EM>来源：include/asm-i386/highmem.h</EM> <A NAME="func: __kmap"></A> <A NAME="@codeindex267"></A></P><P>该函数的调用图见 <A HREF="understand012_zh.html#fig: kmap">图 9.1</A>。</P><PRE CLASS="verbatim"> 65 static inline void *kmap(struct page *page, int nonblocking)
+ 66 {
+ 67     if (in_interrupt())
+ 68         out_of_line_bug();
+ 69     if (page &lt; highmem_start_page)
+ 70         return page_address(page);
+ 71     return kmap_high(page);
+ 72 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>67-68</B>此函数不能从中断中使用，因为它可能会睡眠。这里使用 <TT>out_of_line_bug()</TT> 而不是 <TT>BUG()</TT>，前者会调用 <TT>do_exit()</TT> 并返回错误码。不使用 <TT>BUG()</TT> 是因为 <TT>BUG()</TT> 会以极端方式杀死进程，这将导致那个著名的 &#X201C;Aiee, killing interrupt handler!&#X201D; 内核 panic</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>69-70</B>如果该页已经在低端内存中，则返回一个直接映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>71</B>调用 <TT>kmap_high()</TT>（见 <A HREF="#func: kmap_high">I.1.2</A> 节）开始执行架构无关的工作</DD></DL><H3 CLASS="subsection"><A NAME="htoc375">I.1.2</A>　函数：kmap_high</H3><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: kmap_high"></A> <A NAME="@codeindex268"></A></P><PRE CLASS="verbatim">132 void *kmap_high(struct page *page, int nonblocking)
+133 {
+134     unsigned long vaddr;
+135 
+142     spin_lock(&amp;kmap_lock);
+143     vaddr = (unsigned long) page-&gt;virtual;
+144     if (!vaddr) {
+145         vaddr = map_new_virtual(page, nonblocking);
+146         if (!vaddr)
+147             goto out;
+148     }
+149     pkmap_count[PKMAP_NR(vaddr)]++;
+150     if (pkmap_count[PKMAP_NR(vaddr)] &lt; 2)
+151         BUG();
+152 out:
+153     spin_unlock(&amp;kmap_lock);
+154     return (void*) vaddr;
+155 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>142</B><TT>kmap_lock</TT> 保护页的 <TT>virtual</TT> 字段和 <TT>pkmap_count</TT> 数组</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>143</B>获取该页的虚拟地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>144-148</B>如果它尚未被映射，调用 <TT>map_new_virtual()</TT> 完成映射并返回虚拟地址。如果失败，goto <TT>out</TT> 释放自旋锁并返回 NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>149</B>增加该页映射的引用计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>150-151</B>如果当前计数小于 2，则是严重的 bug。实际上，要触发这种情况需要严重的代码错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>153</B>释放 <TT>kmap_lock</TT></DD></DL><H3 CLASS="subsection"><A NAME="htoc376">I.1.3</A>　函数：map_new_virtual</H3><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: map_new_virtual"></A> <A NAME="@codeindex269"></A></P><P>该函数主要分为三个部分：扫描空闲槽位、若无可用槽则在队列上等待、以及映射页面。</P><PRE CLASS="verbatim"> 80 static inline unsigned long map_new_virtual(struct page *page)
+ 81 {
+ 82     unsigned long vaddr;
+ 83     int count;
+ 84 
+ 85 start:
+ 86     count = LAST_PKMAP;
+ 87     /* Find an empty entry */
+ 88     for (;;) {
+ 89         last_pkmap_nr = (last_pkmap_nr + 1) &amp; LAST_PKMAP_MASK;
+ 90         if (!last_pkmap_nr) {
+ 91             flush_all_zero_pkmaps();
+ 92             count = LAST_PKMAP;
+ 93         }
+ 94         if (!pkmap_count[last_pkmap_nr])
+ 95             break;  /* Found a usable entry */
+ 96         if (--count)
+ 97             continue;
+ 98 
+ 99         if (nonblocking)
+100             return 0;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>86</B>从最后一个可能的槽位开始扫描</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>88-119</B>该循环持续扫描和等待，直到出现空闲槽位。对某些不走运的进程，这可能产生无限循环</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B><TT>last_pkmap_nr</TT> 是上次扫描的 pkmap。为了避免在相同的页面上重复搜索，该值会被记录下来，以便循环地搜索列表。当达到 <TT>LAST_PKMAP</TT> 时，它会回绕到 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>90-93</B>当 <TT>last_pkmap_nr</TT> 回绕时，调用 <TT>flush_all_zero_pkmaps()</TT>（见 <A HREF="#func: flush_all_zero_pkmaps">I.1.4</A> 节），它会将 <TT>pkmap_count</TT> 数组中所有为 1 的项设置为 0，然后刷新 TLB。count 被重新设置为 <TT>LAST_PKMAP</TT>，以重新开始扫描</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>94-95</B>如果该元素为 0，则为该页找到了一个可用槽位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>96-96</B>移到下一个要扫描的索引</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>99-100</B>接下来的代码块将进入睡眠等待空闲槽位。如果调用者要求该函数不阻塞，则立即返回</DD></DL><PRE CLASS="verbatim">105         {
+106             DECLARE_WAITQUEUE(wait, current);
+107 
+108             current-&gt;state = TASK_UNINTERRUPTIBLE;
+109             add_wait_queue(&amp;pkmap_map_wait, &amp;wait);
+110             spin_unlock(&amp;kmap_lock);
+111             schedule();
+112             remove_wait_queue(&amp;pkmap_map_wait, &amp;wait);
+113             spin_lock(&amp;kmap_lock);
+114 
+115             /* Somebody else might have mapped it while we
+                   slept */
+116             if (page-&gt;virtual)
+117                 return (unsigned long) page-&gt;virtual;
+118 
+119             /* Re-start */
+120             goto start;
+121         }
+122     }
+</PRE><P>如果扫描完所有页面后仍然没有可用槽位，我们就在 <TT>pkmap_map_wait</TT> 队列上睡眠，直到某次取消映射后被唤醒</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>106</B>声明等待队列</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>108</B>将该任务设置为可中断的，因为我们是在内核空间中睡眠</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>109</B>将自己加入 <TT>pkmap_map_wait</TT> 队列</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>110</B>释放 <TT>kmap_lock</TT> 自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>111</B>调用 <TT>schedule()</TT> 让自己睡眠。在某次取消映射后槽位变得空闲时我们会被唤醒</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>112</B>将自己从等待队列中移除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>113</B>重新获取 <TT>kmap_lock</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>116-117</B>如果在我们睡眠时其他人已经映射了该页，直接返回地址，引用计数将由 <TT>kmap_high()</TT> 增加</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>120</B>重新开始扫描</DD></DL><PRE CLASS="verbatim">123     vaddr = PKMAP_ADDR(last_pkmap_nr);
+124     set_pte(&amp;(pkmap_page_table[last_pkmap_nr]), mk_pte(page,
+            kmap_prot));
+125 
+126     pkmap_count[last_pkmap_nr] = 1;
+127     page-&gt;virtual = (void *) vaddr;
+128 
+129     return vaddr;
+130 }
+</PRE><P>找到了一个槽位，映射该页</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>123</B>获取找到的槽位对应的虚拟地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>124</B>用该页和所需保护标志构造 PTE 项，并放入找到的槽位对应的页表项中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>126</B>将 <TT>pkmap_count</TT> 数组中的值初始化为 1。计数会在父函数中递增，而如果我们能进入本函数，就可以确定这是首次映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>127</B>设置该页的 <TT>virtual</TT> 字段</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>129</B>返回虚拟地址</DD></DL><H3 CLASS="subsection"><A NAME="htoc377">I.1.4</A>　函数：flush_all_zero_pkmaps</H3><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: flush_all_zero_pkmaps"></A> <A NAME="@codeindex270"></A></P><P>该函数遍历 <TT>pkmap_count</TT> 数组，将所有为 1 的项设置为 0，然后刷新 TLB。</P><PRE CLASS="verbatim"> 42 static void flush_all_zero_pkmaps(void)
+ 43 {
+ 44     int i;
+ 45 
+ 46     flush_cache_all();
+ 47 
+ 48     for (i = 0; i &lt; LAST_PKMAP; i++) {
+ 49         struct page *page;
+ 50 
+ 57         if (pkmap_count[i] != 1)
+ 58             continue;
+ 59         pkmap_count[i] = 0;
+ 60 
+ 61         /* sanity check */
+ 62         if (pte_none(pkmap_page_table[i]))
+ 63             BUG();
+ 64 
+ 72         page = pte_page(pkmap_page_table[i]);
+ 73         pte_clear(&amp;pkmap_page_table[i]);
+ 74 
+ 75         page-&gt;virtual = NULL;
+ 76     }
+ 77     flush_tlb_all();
+ 78 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>46</B>由于全局页表即将更改，所有处理器的 CPU 缓存都必须被刷新</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>48-76</B>遍历整个 <TT>pkmap_count</TT> 数组</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>57-58</B>如果该元素不是 1，跳到下一个元素</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>59</B>将其从 1 设置为 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>62-63</B>确保 PTE 没有以某种方式被映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>72-73</B>从 PTE 取消映射该页并清空 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>75</B>由于该页已取消映射，更新 <TT>virtual</TT> 字段</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>77</B>刷新 TLB</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc126"></A><A NAME="htoc378">I.2</A>　原子地映射高端内存页</H2><P>下面是 x86 上 <TT>km_type</TT><A NAME="@codeindex271"></A> 枚举的示例。它列出了中断在原子调用 kmap 时的各种用途。注意 <TT>KM_TYPE_NR</TT> 是最后一个元素，因此它同时也充当了元素数量的计数。</P><PRE CLASS="verbatim"> 4 enum km_type {
+  5     KM_BOUNCE_READ,
+  6     KM_SKB_SUNRPC_DATA,
+  7     KM_SKB_DATA_SOFTIRQ,
+  8     KM_USER0,
+  9     KM_USER1,
+ 10     KM_BH_IRQ,
+ 11     KM_TYPE_NR
+ 12 };
+</PRE><H3 CLASS="subsection"><A NAME="htoc379">I.2.1</A>　函数：kmap_atomic</H3><P> <EM>来源：include/asm-i386/highmem.h</EM> <A NAME="func: kmap_atomic"></A> <A NAME="@codeindex272"></A></P><P>这是 <TT>kmap()</TT> 的原子版本。注意它在任何时候都不持有自旋锁，也不会睡眠。不需要自旋锁是因为每个处理器都有自己的保留空间。</P><PRE CLASS="verbatim"> 89 static inline void *kmap_atomic(struct page *page, 
+                                    enum km_type type)
+ 90 {
+ 91     enum fixed_addresses idx;
+ 92     unsigned long vaddr;
+ 93 
+ 94     if (page &lt; highmem_start_page)
+ 95         return page_address(page);
+ 96 
+ 97     idx = type + KM_TYPE_NR*smp_processor_id();
+ 98     vaddr = __fix_to_virt(FIX_KMAP_BEGIN + idx);
+ 99 #if HIGHMEM_DEBUG
+100    if (!pte_none(*(kmap_pte-idx)))
+101        out_of_line_bug();
+102 #endif
+103     set_pte(kmap_pte-idx, mk_pte(page, kmap_prot));
+104     __flush_tlb_one(vaddr);
+105 
+106     return (void*) vaddr;
+107 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B>参数为要映射的页以及所需的使用类型。每种使用类型在每个处理器上各维护一个槽位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>94-95</B>如果该页位于低端内存，则返回一个直接映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>97</B><TT>type</TT> 指示使用哪个槽位。<TT>KM_TYPE_NR * smp_processor_id()</TT> 给出为该处理器保留的槽位集合</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>98</B>获取虚拟地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>100-101</B>调试代码。实际上 PTE 总是存在的</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>103</B>将 PTE 设置到保留的槽位中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>104</B>为该槽位刷新 TLB</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>106</B>返回虚拟地址</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc127"></A><A NAME="htoc380">I.3</A>　取消映射页面</H2><H3 CLASS="subsection"><A NAME="htoc381">I.3.1</A>　函数：kunmap</H3><P> <EM>来源：include/asm-i386/highmem.h</EM> <A NAME="func: kunmap"></A> <A NAME="@codeindex273"></A></P><PRE CLASS="verbatim"> 74 static inline void kunmap(struct page *page)
+ 75 {
+ 76     if (in_interrupt())
+ 77         out_of_line_bug();
+ 78     if (page &lt; highmem_start_page)
+ 79         return;
+ 80     kunmap_high(page);
+ 81 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>76-77</B><TT>kunmap()</TT> 不能从中断中调用，所以优雅地退出</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78-79</B>如果该页已经在低端内存中，无需取消映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>80</B>调用架构无关的函数 <TT>kunmap_high()</TT></DD></DL><H3 CLASS="subsection"><A NAME="htoc382">I.3.2</A>　函数：kunmap_high</H3><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: kunmap_high"></A> <A NAME="@codeindex274"></A></P><P>这是 <TT>kunmap()</TT> 操作中架构无关的部分。</P><PRE CLASS="verbatim">157 void kunmap_high(struct page *page)
+158 {
+159     unsigned long vaddr;
+160     unsigned long nr;
+161     int need_wakeup;
+162 
+163     spin_lock(&amp;kmap_lock);
+164     vaddr = (unsigned long) page-&gt;virtual;
+165     if (!vaddr)
+166         BUG();
+167     nr = PKMAP_NR(vaddr);
+168 
+173     need_wakeup = 0;
+174     switch (--pkmap_count[nr]) {
+175     case 0:
+176         BUG();
+177     case 1:
+188         need_wakeup = waitqueue_active(&amp;pkmap_map_wait);
+189     }
+190     spin_unlock(&amp;kmap_lock);
+191 
+192     /* do wake-up, if needed, race-free outside of the spin lock */
+193     if (need_wakeup)
+194         wake_up(&amp;pkmap_map_wait);
+195 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>163</B>获取保护 <TT>virtual</TT> 字段和 <TT>pkmap_count</TT> 数组的 <TT>kmap_lock</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>164</B>获取虚拟页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>165-166</B>如果 virtual 字段未设置，说明是重复取消映射或对未映射页的取消映射，因此 <TT>BUG()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>167</B>获取该项在 <TT>pkmap_count</TT> 数组中的索引</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>173</B>默认情况下，无需唤醒调用 <TT>kmap()</TT> 的进程</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>174</B>检查递减后的索引值</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>175-176</B>降到 0 是一个 bug，因为需要刷新 TLB 才能使 0 成为有效项</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>177-188</B>如果降到 1（该项现在空闲，但需要刷新 TLB），检查 <TT>pkmap_map_wait</TT> 队列上是否有人在睡眠。如有必要，将在自旋锁释放后唤醒队列</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>190</B>释放 <TT>kmap_lock</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>193-194</B>如果队列上有等待者且有槽位被释放，则唤醒它们</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc128"></A><A NAME="htoc383">I.4</A>　原子地取消映射高端内存页</H2><H3 CLASS="subsection"><A NAME="htoc384">I.4.1</A>　函数：kunmap_atomic</H3><P> <EM>来源：include/asm-i386/highmem.h</EM> <A NAME="func: kunmap_atomic"></A> <A NAME="@codeindex275"></A></P><P>整个函数都是调试代码。原因在于这里的页面只是原子映射的，它们只会在很短的时间内被用于极小的代码片段，然后就会被取消映射。把页面留在那里是安全的，因为它在取消映射后不会再被引用，而对同一槽位的下一次映射只会简单地替换它。</P><PRE CLASS="verbatim">109 static inline void kunmap_atomic(void *kvaddr, enum km_type type)
+110 {
+111 #if HIGHMEM_DEBUG
+112     unsigned long vaddr = (unsigned long) kvaddr &amp; PAGE_MASK;
+113     enum fixed_addresses idx = type + KM_TYPE_NR*smp_processor_id();
+114 
+115     if (vaddr &lt; FIXADDR_START) // FIXME
+116         return;
+117 
+118     if (vaddr != __fix_to_virt(FIX_KMAP_BEGIN+idx))
+119         out_of_line_bug();
+120 
+121     /*
+122      * force other mappings to Oops if they'll try to access
+123      * this pte without first remap it
+124      */
+125     pte_clear(kmap_pte-idx);
+126     __flush_tlb_one(vaddr);
+127 #endif
+128 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>112</B>获取虚拟地址并确保其按页边界对齐</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>115-116</B>如果提供的地址不在固定区域内，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>118-119</B>如果该地址不对应于此使用类型和处理器的保留槽位，则声明它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>125-126</B>现在取消映射该页，这样如果它再次被引用，就会引发 Oops</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc129"></A><A NAME="htoc385">I.5</A>　弹跳缓冲区</H2><H3 CLASS="subsection"><A NAME="htoc386">I.5.1</A>　创建弹跳缓冲区</H3><H4 CLASS="subsubsection"><A NAME="htoc387">I.5.1.1</A>　函数：create_bounce</H4><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: create_bounce"></A> <A NAME="@codeindex276"></A></P><P>该函数的调用图见 <A HREF="understand012_zh.html#fig: create_bounce">图 9.3</A>。这是用于创建弹跳缓冲区的高层函数。它分为两个主要部分：分配必要的资源，以及从模板复制数据。</P><PRE CLASS="verbatim">405 struct buffer_head * create_bounce(int rw, 
+                                       struct buffer_head * bh_orig)
+406 {
+407     struct page *page;
+408     struct buffer_head *bh;
+409 
+410     if (!PageHighMem(bh_orig-&gt;b_page))
+411         return bh_orig;
+412 
+413     bh = alloc_bounce_bh();
+420     page = alloc_bounce_page();
+421 
+422     set_bh_page(bh, page, 0);
+423 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>405</B>该函数的参数为
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>rw</B>	如果这是一个写缓冲区，则设为 1
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>bh_orig</B>	要从中复制的模板 buffer head
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>410-411</B>如果模板 buffer head 已经在低端内存中，直接返回它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>413</B>从 slab 分配器分配一个 buffer head，若失败则从应急池分配</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>420</B>从伙伴分配器分配一个页，若失败则从应急池分配</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>422</B>将分配的页与分配的 <TT>buffer_head</TT> 关联起来</DD></DL><PRE CLASS="verbatim">424     bh-&gt;b_next = NULL;
+425     bh-&gt;b_blocknr = bh_orig-&gt;b_blocknr;
+426     bh-&gt;b_size = bh_orig-&gt;b_size;
+427     bh-&gt;b_list = -1;
+428     bh-&gt;b_dev = bh_orig-&gt;b_dev;
+429     bh-&gt;b_count = bh_orig-&gt;b_count;
+430     bh-&gt;b_rdev = bh_orig-&gt;b_rdev;
+431     bh-&gt;b_state = bh_orig-&gt;b_state;
+432 #ifdef HIGHMEM_DEBUG
+433     bh-&gt;b_flushtime = jiffies;
+434     bh-&gt;b_next_free = NULL;
+435     bh-&gt;b_prev_free = NULL;
+436     /* bh-&gt;b_this_page */
+437     bh-&gt;b_reqnext = NULL;
+438     bh-&gt;b_pprev = NULL;
+439 #endif
+440     /* bh-&gt;b_page */
+441     if (rw == WRITE) {
+442         bh-&gt;b_end_io = bounce_end_io_write;
+443         copy_from_high_bh(bh, bh_orig);
+444     } else
+445         bh-&gt;b_end_io = bounce_end_io_read;
+446     bh-&gt;b_private = (void *)bh_orig;
+447     bh-&gt;b_rsector = bh_orig-&gt;b_rsector;
+448 #ifdef HIGHMEM_DEBUG
+449     memset(&amp;bh-&gt;b_wait, -1, sizeof(bh-&gt;b_wait));
+450 #endif
+451 
+452     return bh;
+453 }
+</PRE><P>填充新创建的 <TT>buffer_head</TT></P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>431</B>除 <TT>b_list</TT> 字段外，基本逐字段复制信息，因为该缓冲区不会直接连接到链表上的其他缓冲区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>433-438</B>仅供调试用途的信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>441-444</B>如果这是一个要写入设备的缓冲区，那么用于结束 IO 的回调函数是 <TT>bounce_end_io_write()</TT>（见 <A HREF="#func: bounce_end_io_write">I.5.2.1</A> 节），它将在设备接收到所有信息后被调用。由于数据位于高端内存，需要使用 <TT>copy_from_high_bh()</TT>（见 <A HREF="#func: copy_from_high_bh">I.5.2.3</A> 节）将其&#X201C;向下&#X201D;复制</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>437-438</B>如果我们在等待设备将数据写入缓冲区，则使用回调函数 <TT>bounce_end_io_read()</TT>（见 <A HREF="#func: bounce_end_io_read">I.5.2.2</A> 节）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>446-447</B>从模板 <TT>buffer_head</TT> 复制剩余信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>452</B>返回新的弹跳缓冲区</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc388">I.5.1.2</A>　函数：alloc_bounce_bh</H4><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: alloc_bounce_bh"></A> <A NAME="@codeindex277"></A></P><P>该函数首先尝试从 slab 分配器分配一个 <TT>buffer_head</TT>，如果失败，则使用应急池。</P><PRE CLASS="verbatim">369 struct buffer_head *alloc_bounce_bh (void)
+370 {
+371     struct list_head *tmp;
+372     struct buffer_head *bh;
+373 
+374     bh = kmem_cache_alloc(bh_cachep, SLAB_NOHIGHIO);
+375     if (bh)
+376         return bh;
+380
+381     wakeup_bdflush();
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>374</B>尝试从 slab 分配器分配一个新的 <TT>buffer_head</TT>。注意请求中指明<EM>不</EM>使用涉及高端 IO 的 IO 操作，以避免递归</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>375-376</B>如果分配成功，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>381</B>如果失败，则唤醒 <B>bdflush</B> 来清洗页面</DD></DL><PRE CLASS="verbatim">383 repeat_alloc:
+387     tmp = &amp;emergency_bhs;
+388     spin_lock_irq(&amp;emergency_lock);
+389     if (!list_empty(tmp)) {
+390         bh = list_entry(tmp-&gt;next, struct buffer_head,
+                    b_inode_buffers);
+391         list_del(tmp-&gt;next);
+392         nr_emergency_bhs--;
+393     }
+394     spin_unlock_irq(&amp;emergency_lock);
+395     if (bh)
+396         return bh;
+397 
+398     /* we need to wait I/O completion */
+399     run_task_queue(&amp;tq_disk);
+400 
+401     yield();
+402     goto repeat_alloc;
+403 }
+</PRE><P>从 slab 分配失败，因此从应急池分配。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>387</B>获取应急 buffer head 链表的末端</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>388</B>获取保护池的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>389-393</B>如果池非空，从链表中取出一个 <TT>buffer_head</TT> 并将 <TT>nr_emergency_bhs</TT> 计数减一</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>394</B>释放锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>395-396</B>如果分配成功，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>399</B>如果不成功，说明我们严重缺乏内存，池得以补充的唯一方式是高端内存 IO 完成。因此启动 <TT>tq_disk</TT> 上的请求，将数据写入磁盘，可能在此过程中释放页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>401</B>让出处理器</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>402</B>再次尝试从应急池分配</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc389">I.5.1.3</A>　函数：alloc_bounce_page</H4><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: alloc_bounce_page"></A> <A NAME="@codeindex278"></A></P><P>该函数与 <TT>alloc_bounce_bh()</TT> 基本相同。它首先尝试从伙伴分配器分配一个页，若失败则使用应急池。</P><PRE CLASS="verbatim">333 struct page *alloc_bounce_page (void)
+334 {
+335     struct list_head *tmp;
+336     struct page *page;
+337 
+338     page = alloc_page(GFP_NOHIGHIO);
+339     if (page)
+340         return page;
+344
+345     wakeup_bdflush();
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>338-340</B>从伙伴分配器分配，成功则返回该页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>345</B>唤醒 <B>bdflush</B> 以清洗页面</DD></DL><PRE CLASS="verbatim">347 repeat_alloc:
+351     tmp = &amp;emergency_pages;
+352     spin_lock_irq(&amp;emergency_lock);
+353     if (!list_empty(tmp)) {
+354         page = list_entry(tmp-&gt;next, struct page, list);
+355         list_del(tmp-&gt;next);
+356         nr_emergency_pages--;
+357     }
+358     spin_unlock_irq(&amp;emergency_lock);
+359     if (page)
+360         return page;
+361 
+362     /* we need to wait I/O completion */
+363     run_task_queue(&amp;tq_disk);
+364 
+365     yield();
+366     goto repeat_alloc;
+367 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>351</B>获取应急 buffer head 链表的末端</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>352</B>获取保护池的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>353-357</B>如果池非空，从链表中取出一页并将可用的 <TT>nr_emergency_pages</TT> 数量减一</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>358</B>释放锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>359-360</B>如果分配成功，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>363</B>运行 IO 任务队列以尝试补充应急池</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>365</B>让出处理器</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>366</B>再次尝试从应急池分配</DD></DL><H3 CLASS="subsection"><A NAME="htoc390">I.5.2</A>　通过弹跳缓冲区复制</H3><H4 CLASS="subsubsection"><A NAME="htoc391">I.5.2.1</A>　函数：bounce_end_io_write</H4><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: bounce_end_io_write"></A> <A NAME="@codeindex279"></A></P><P>当用于向设备写入的弹跳缓冲区完成 IO 时，该函数被调用。由于缓冲区是<EM>从</EM>高端内存复制到设备的，除了回收资源外没有其他事可做</P><PRE CLASS="verbatim">319 static void bounce_end_io_write (struct buffer_head *bh, 
+                                     int uptodate)
+320 {
+321     bounce_end_io(bh, uptodate);
+322 }
+</PRE><H4 CLASS="subsubsection"><A NAME="htoc392">I.5.2.2</A>　函数：bounce_end_io_read</H4><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: bounce_end_io_read"></A> <A NAME="@codeindex280"></A></P><P>当数据从设备读取并需要复制到高端内存时调用该函数。由于它是从中断中调用的，需要更加谨慎</P><PRE CLASS="verbatim">324 static void bounce_end_io_read (struct buffer_head *bh, 
+                                    int uptodate)
+325 {
+326     struct buffer_head *bh_orig = 
+                (struct buffer_head *)(bh-&gt;b_private);
+327 
+328     if (uptodate)
+329         copy_to_high_bh_irq(bh_orig, bh);
+330     bounce_end_io(bh, uptodate);
+331 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>328-329</B>数据只是被复制到弹跳缓冲区，需要使用 <TT>copy_to_high_bh_irq()</TT>（见 <A HREF="#func: copy_to_high_bh_irq">I.5.2.4</A> 节）将其移动到高端内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>330</B>回收资源</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc393">I.5.2.3</A>　函数：copy_from_high_bh</H4><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: copy_from_high_bh"></A> <A NAME="@codeindex281"></A></P><P>该函数将数据从高端内存中的 <TT>buffer_head</TT> 复制到弹跳缓冲区。</P><PRE CLASS="verbatim">215 static inline void copy_from_high_bh (struct buffer_head *to,
+216              struct buffer_head *from)
+217 {
+218     struct page *p_from;
+219     char *vfrom;
+220 
+221     p_from = from-&gt;b_page;
+222 
+223     vfrom = kmap_atomic(p_from, KM_USER0);
+224     memcpy(to-&gt;b_data, vfrom + bh_offset(from), to-&gt;b_size);
+225     kunmap_atomic(vfrom, KM_USER0);
+226 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>223</B>将高端内存页映射到低端内存。此路径受 IRQ 安全锁 <TT>io_request_lock</TT> 保护，因此可以安全地调用 <TT>kmap_atomic()</TT>（见 <A HREF="#func: kmap_atomic">I.2.1</A> 节）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>224</B>复制数据</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>225</B>取消映射该页</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc394">I.5.2.4</A>　函数：copy_to_high_bh_irq</H4><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: copy_to_high_bh_irq"></A> <A NAME="@codeindex282"></A></P><P>设备完成向弹跳缓冲区写入数据后从中断中被调用。该函数将数据复制到高端内存</P><PRE CLASS="verbatim">228 static inline void copy_to_high_bh_irq (struct buffer_head *to,
+229              struct buffer_head *from)
+230 {
+231     struct page *p_to;
+232     char *vto;
+233     unsigned long flags;
+234 
+235     p_to = to-&gt;b_page;
+236     __save_flags(flags);
+237     __cli();
+238     vto = kmap_atomic(p_to, KM_BOUNCE_READ);
+239     memcpy(vto + bh_offset(to), from-&gt;b_data, to-&gt;b_size);
+240     kunmap_atomic(vto, KM_BOUNCE_READ);
+241     __restore_flags(flags);
+242 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>236-237</B>保存标志位并禁用中断</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>238</B>将高端内存页映射到低端内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>239</B>复制数据</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>240</B>取消映射该页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>241</B>恢复中断标志位</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc395">I.5.2.5</A>　函数：bounce_end_io</H4><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: bounce_end_io"></A> <A NAME="@codeindex283"></A></P><P>回收弹跳缓冲区使用的资源。如果应急池耗尽，则将资源加入到应急池中。</P><PRE CLASS="verbatim">244 static inline void bounce_end_io (struct buffer_head *bh, 
+                                      int uptodate)
+245 {
+246     struct page *page;
+247     struct buffer_head *bh_orig = 
+                   (struct buffer_head *)(bh-&gt;b_private);
+248     unsigned long flags;
+249 
+250     bh_orig-&gt;b_end_io(bh_orig, uptodate);
+251 
+252     page = bh-&gt;b_page;
+253 
+254     spin_lock_irqsave(&amp;emergency_lock, flags);
+255     if (nr_emergency_pages &gt;= POOL_SIZE)
+256         __free_page(page);
+257     else {
+258         /*
+259          * We are abusing page-&gt;list to manage
+260          * the highmem emergency pool:
+261          */
+262         list_add(&amp;page-&gt;list, &amp;emergency_pages);
+263         nr_emergency_pages++;
+264     }
+265     
+266     if (nr_emergency_bhs &gt;= POOL_SIZE) {
+267 #ifdef HIGHMEM_DEBUG
+268         /* Don't clobber the constructed slab cache */
+269         init_waitqueue_head(&amp;bh-&gt;b_wait);
+270 #endif
+271         kmem_cache_free(bh_cachep, bh);
+272     } else {
+273         /*
+274          * Ditto in the bh case, here we abuse b_inode_buffers:
+275          */
+276         list_add(&amp;bh-&gt;b_inode_buffers, &amp;emergency_bhs);
+277         nr_emergency_bhs++;
+278     }
+279     spin_unlock_irqrestore(&amp;emergency_lock, flags);
+280 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>250</B>为原始 <TT>buffer_head</TT> 调用 IO 完成回调</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>252</B>获取指向待释放缓冲区页的指针</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>254</B>获取应急池的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>255-256</B>如果页池已满，直接将该页归还给伙伴分配器</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>257-264</B>否则将此页加入应急池</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>266-272</B>如果 <TT>buffer_head</TT> 池已满，直接将其归还给 slab 分配器</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>272-278</B>否则将此 <TT>buffer_head</TT> 加入池中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>279</B>释放锁</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc130"></A><A NAME="htoc396">I.6</A>　应急池</H2><P>对于应急池，只有一个相关的函数，那就是初始化函数。它在系统启动期间被调用，然后由于不再需要，该代码会被删除</P><H3 CLASS="subsection"><A NAME="htoc397">I.6.1</A>　函数：init_emergency_pool</H3><P> <EM>来源：mm/highmem.c</EM> <A NAME="func: init_emergency_pool"></A> <A NAME="@codeindex284"></A></P><P>为应急页和应急 <TT>buffer_head</TT> 创建池</P><PRE CLASS="verbatim">282 static __init int init_emergency_pool(void)
+283 {
+284     struct sysinfo i;
+285     si_meminfo(&amp;i);
+286     si_swapinfo(&amp;i);
+287     
+288     if (!i.totalhigh)
+289         return 0;
+290 
+291     spin_lock_irq(&amp;emergency_lock);
+292     while (nr_emergency_pages &lt; POOL_SIZE) {
+293         struct page * page = alloc_page(GFP_ATOMIC);
+294         if (!page) {
+295             printk("couldn't refill highmem emergency pages");
+296             break;
+297         }
+298         list_add(&amp;page-&gt;list, &amp;emergency_pages);
+299         nr_emergency_pages++;
+300     }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>288-289</B>如果没有可用的高端内存，则无需操作</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>291</B>获取保护池的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>292-300</B>从伙伴分配器分配 <TT>POOL_SIZE</TT> 个页面并将它们添加到链表中。使用 <TT>nr_emergency_pages</TT> 记录池中的页面数</DD></DL><PRE CLASS="verbatim">301     while (nr_emergency_bhs &lt; POOL_SIZE) {
+302         struct buffer_head * bh = 
+                kmem_cache_alloc(bh_cachep, SLAB_ATOMIC);
+303         if (!bh) {
+304             printk("couldn't refill highmem emergency bhs");
+305             break;
+306         }
+307         list_add(&amp;bh-&gt;b_inode_buffers, &amp;emergency_bhs);
+308         nr_emergency_bhs++;
+309     }
+310     spin_unlock_irq(&amp;emergency_lock);
+311     printk("allocated %d pages and %d bhs reserved for the 
+            highmem bounces\n",
+312        nr_emergency_pages, nr_emergency_bhs);
+313 
+314     return 0;
+315 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>301-309</B>从 slab 分配器分配 <TT>POOL_SIZE</TT> 个 <TT>buffer_head</TT> 并将它们添加到由 <TT>b_inode_buffers</TT> 链接的链表中。使用 <TT>nr_emergency_bhs</TT> 跟踪池中的 head 数量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>310</B>释放保护池的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>314</B>返回成功</DD></DL><P>	</P><HR>
+[ <A HREF="understand025_zh.html">&laquo; 上一章</A> ]
+[ <A HREF="index.html">&uarr; 上级</A> ]
+[ <A HREF="../original_html/understand027.html">下一章 &raquo;</A> ]
+</BODY>
+</HTML>
