@@ -1,0 +1,1114 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand_zh.css">
+<TITLE>交换管理</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand027_zh.html">&laquo; 上一章</A> ]
+[ <A HREF="index.html">&uarr; 上级</A> ]
+[ <A HREF="../original_html/understand029.html">下一章 &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc459">附录 K</A>　交换管理</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc138"></A><A NAME="htoc460">K.1</A>　扫描空闲项</H2><H3 CLASS="subsection"><A NAME="htoc461">K.1.1</A>　函数：get_swap_page</H3><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: get_swap_page"></A> <A NAME="@codeindex333"></A></P><P>该函数的调用图见图 <A HREF="understand014_zh.html#fig: get_swap_page">11.2</A>。
+这是用于在交换区中搜索空闲交换槽位并返回所得 <TT>swp_entry_t</TT> 的高层 API 函数。</P><PRE CLASS="verbatim"> 99 swp_entry_t get_swap_page(void)
+100 {
+101     struct swap_info_struct * p;
+102     unsigned long offset;
+103     swp_entry_t entry;
+104     int type, wrapped = 0;
+105 
+106     entry.val = 0;  /* Out of memory */
+107     swap_list_lock();
+108     type = swap_list.next;
+109     if (type &lt; 0)
+110         goto out;
+111     if (nr_swap_pages &lt;= 0)
+112         goto out;
+113 
+114     while (1) {
+115         p = &amp;swap_info[type];
+116         if ((p-&gt;flags &amp; SWP_WRITEOK) == SWP_WRITEOK) {
+117             swap_device_lock(p);
+118             offset = scan_swap_map(p);
+119             swap_device_unlock(p);
+120             if (offset) {
+121                 entry = SWP_ENTRY(type,offset);
+122                 type = swap_info[type].next;
+123                 if (type &lt; 0 ||
+124                     p-&gt;prio != swap_info[type].prio) {
+125                       swap_list.next = swap_list.head;
+126                 } else {
+127                     swap_list.next = type;
+128                 }
+129                 goto out;
+130             }
+131         }
+132         type = p-&gt;next;
+133         if (!wrapped) {
+134             if (type &lt; 0 || p-&gt;prio != swap_info[type].prio) {
+135                 type = swap_list.head;
+136                 wrapped = 1;
+137             }
+138         } else
+139             if (type &lt; 0)
+140                 goto out;     /* out of swap space */
+141     }
+142 out:
+143     swap_list_unlock();
+144     return entry;
+145 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>107</B>锁定交换区列表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>108</B>取出下一个用于分配的交换区。该列表会按交换区的优先级排序</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>109-110</B>如果没有交换区，返回 NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>111-112</B>如果记账信息表明没有可用的交换槽位，返回 NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>114-141</B>遍历所有交换区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>115</B>从 <TT>swap_info</TT> 数组中取出当前的交换信息结构体</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>116</B>如果该交换区可写且处于活动状态……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>117</B>锁定该交换区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>118</B>调用 <TT>scan_swap_map()</TT>（见 K.1.2 节<A HREF="#func: scan_swap_map"></A>），在所请求的交换映射中搜索空闲槽位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>119</B>解锁交换设备</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>120-130</B>如果找到了空闲槽位……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>121</B>用 <TT>SWP_ENTRY()</TT><A NAME="@codeindex334"></A> 为该项编码一个标识符</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>122</B>记录下一次要使用的交换区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>123-126</B>如果下一个区是列表末尾，或下一个交换区的优先级与当前不同，则回到表头</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>126-128</B>否则移到下一个区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>129</B>跳转到 <TT>out</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>132</B>移到下一个交换区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>133-138</B>检查是否绕回。如果到达交换区列表末尾，则将 <TT>wrapped</TT> 置为 1</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>139-140</B>如果不再有可用的交换区，跳转到 out</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>142</B>该函数的出口</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>143</B>解锁交换区列表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>144</B>如果找到了项，返回该项，否则返回 NULL</DD></DL><H3 CLASS="subsection"><A NAME="htoc462">K.1.2</A>　函数：scan_swap_map</H3><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: scan_swap_map"></A> <A NAME="@codeindex335"></A></P><P>该函数尝试在交换中顺序分配 <TT>SWAPFILE_CLUSTER</TT> 个页。分配满后会搜索下一个 <TT>SWAPFILE_CLUSTER</TT> 大小的空闲块。如果找不到，则退而求其次分配第一个空闲槽位。这种成簇分配方式试图保证槽位以 <TT>SWAPFILE_CLUSTER</TT> 大小的块进行分配和释放。</P><PRE CLASS="verbatim"> 36 static inline int scan_swap_map(struct swap_info_struct *si)
+ 37 {
+ 38     unsigned long offset;
+ 47     if (si-&gt;cluster_nr) {
+ 48         while (si-&gt;cluster_next &lt;= si-&gt;highest_bit) {
+ 49             offset = si-&gt;cluster_next++;
+ 50             if (si-&gt;swap_map[offset])
+ 51                 continue;
+ 52             si-&gt;cluster_nr--;
+ 53             goto got_page;
+ 54         }
+ 55     }
+</PRE><P>顺序分配 <TT>SWAPFILE_CLUSTER</TT> 页。<TT>cluster_nr</TT> 被初始化为 <TT>SWAPFILE_CLUTER</TT>，每次分配后递减</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>47</B>如果 <TT>cluster_nr</TT> 仍为正，分配下一个可用的连续槽位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>48</B>当当前使用的偏移 (<TT>cluster_next</TT>) 小于已知最高空闲槽位 (<TT>highest_bit</TT>) 时……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>49</B>记录该偏移，并将 <TT>cluster_next</TT> 更新到下一个空闲槽位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>50-51</B>如果该槽位实际并不空闲，移到下一个</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>52</B>找到了槽位，递减 <TT>cluster_nr</TT> 字段</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>53</B>跳转到 <TT>out</TT> 分支</DD></DL><PRE CLASS="verbatim"> 56     si-&gt;cluster_nr = SWAPFILE_CLUSTER;
+ 57 
+ 58     /* try to find an empty (even not aligned) cluster. */
+ 59     offset = si-&gt;lowest_bit;
+ 60  check_next_cluster:
+ 61     if (offset+SWAPFILE_CLUSTER-1 &lt;= si-&gt;highest_bit)
+ 62     {
+ 63         int nr;
+ 64         for (nr = offset; nr &lt; offset+SWAPFILE_CLUSTER; nr++)
+ 65             if (si-&gt;swap_map[nr])
+ 66             {
+ 67                 offset = nr+1;
+ 68                 goto check_next_cluster;
+ 69             }
+ 70         /* We found a completly empty cluster, so start
+ 71          * using it.
+ 72          */
+ 73         goto got_page;
+ 74     }
+</PRE><P>此时已顺序分配了 <TT>SWAPFILE_CLUSTER</TT> 页，因此寻找下一个由 <TT>SWAPFILE_CLUSTER</TT> 页组成的空闲块。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>56</B>将顺序分配页数的计数器重新初始化为 <TT>SWAPFILE_CLUSTER</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>59</B>从已知的最低空闲槽位开始搜索</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>61</B>如果偏移加上簇大小仍小于已知的最后一个空闲槽位，则检查这一段连续页是否构成一大块空闲块</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>64</B>从 <TT>offset</TT> 扫描到 <TT>offset + SWAPFILE_CLUSTER</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>65-69</B>如果某槽位已被使用，则从这个已分配槽位之后重新开始寻找空闲槽位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>73</B>找到了一个大的连续簇，使用它</DD></DL><PRE CLASS="verbatim"> 75     /* No luck, so now go finegrined as usual. -Andrea */
+ 76     for (offset = si-&gt;lowest_bit; offset &lt;= si-&gt;highest_bit ;
+                                offset++) {
+ 77         if (si-&gt;swap_map[offset])
+ 78             continue;
+ 79         si-&gt;lowest_bit = offset+1;
+</PRE><P>这段不寻常的 for 循环从 <TT>lowest_bit</TT> 开始扫描空闲页</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>77-78</B>如果槽位已被使用，移到下一个</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>79</B>将已知可能的最低空闲槽位 <TT>lowest_bit</TT> 更新为下一个</DD></DL><PRE CLASS="verbatim"> 80     got_page:
+ 81         if (offset == si-&gt;lowest_bit)
+ 82             si-&gt;lowest_bit++;
+ 83         if (offset == si-&gt;highest_bit)
+ 84             si-&gt;highest_bit--;
+ 85         if (si-&gt;lowest_bit &gt; si-&gt;highest_bit) {
+ 86             si-&gt;lowest_bit = si-&gt;max;
+ 87             si-&gt;highest_bit = 0;
+ 88         }
+ 89         si-&gt;swap_map[offset] = 1;
+ 90         nr_swap_pages--;
+ 91         si-&gt;cluster_next = offset+1;
+ 92         return offset;
+ 93     }
+ 94     si-&gt;lowest_bit = si-&gt;max;
+ 95     si-&gt;highest_bit = 0;
+ 96     return 0;
+ 97 }
+</PRE><P>找到了一个槽位，做一些维护并返回</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>81-82</B>如果该偏移就是已知的最低空闲槽位 (<TT>lowest_bit</TT>)，将其加 1</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>83-84</B>如果该偏移就是已知的最高空闲槽位，将其减 1</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>85-88</B>如果低位和高位标记相遇，说明这块交换区不再值得搜索，因为这两个标记代表已知的最低和最高空闲槽位。将低标记置为最大可能槽位，高标记置为 0，以便后续节省搜索时间。等到下次释放槽位时再修正</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B>设置该槽位的引用计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>90</B>更新可用交换页数 (<TT>nr_swap_pages</TT>) 的记账信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>91</B>将 <TT>cluster_next</TT> 设为相邻的槽位，下一次搜索从这里开始</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>92</B>返回这个空闲槽位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>94-96</B>没有可用的空闲槽位，将该区标记为不可搜索并返回 0</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc139"></A><A NAME="htoc463">K.2</A>　交换缓存</H2><H3 CLASS="subsection"><A NAME="htoc464">K.2.1</A>　向交换缓存添加页</H3><H4 CLASS="subsubsection"><A NAME="htoc465">K.2.1.1</A>　函数：add_to_swap_cache</H4><P> <EM>来源： mm/swap_state.c</EM> <A NAME="func: add_to_swap_cache"></A> <A NAME="@codeindex336"></A></P><P>该函数的调用图见图 <A HREF="understand014_zh.html#fig: add_to_swap_cache">11.3</A>。
+该函数包装了普通的页缓存处理。它先用 <TT>swap_duplicate()</TT> 检查页是否已在交换缓存中，如否则调用 <TT>add_to_page_cache_unique()</TT>。</P><PRE CLASS="verbatim"> 70 int add_to_swap_cache(struct page *page, swp_entry_t entry)
+ 71 {
+ 72     if (page-&gt;mapping)
+ 73         BUG();
+ 74     if (!swap_duplicate(entry)) {
+ 75         INC_CACHE_INFO(noent_race);
+ 76         return -ENOENT;
+ 77     }
+ 78     if (add_to_page_cache_unique(page, &amp;swapper_space, entry.val,
+ 79             page_hash(&amp;swapper_space, entry.val)) != 0) {
+ 80         swap_free(entry);
+ 81         INC_CACHE_INFO(exist_race);
+ 82         return -EEXIST;
+ 83     }
+ 84     if (!PageLocked(page))
+ 85         BUG();
+ 86     if (!PageSwapCache(page))
+ 87         BUG();
+ 88     INC_CACHE_INFO(add_total);
+ 89     return 0;
+ 90 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>72-73</B>调用本函数前会先用 <TT>PageSwapCache()</TT> 检查页是否已经在交换缓存中。这里的检查保证页没有其他已存在的映射，以防调用者粗心未做检查</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>74-77</B>调用 <TT>swap_duplicate()</TT>（见 K.2.1.2 节<A HREF="#func: swap_duplicate"></A>）尝试递增该项的计数。如果 <TT>swap_map</TT> 中已存在该槽位，则递增"向交换缓存添加页发生竞争"的统计计数，并返回 <TT>-ENOENT</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>78</B>尝试用 <TT>add_to_page_cache_unique()</TT>（见 <A HREF="understand027_zh.html#func: add_to_page_cache_unique">J.1.1.2 节</A>）将页加入页缓存。该函数与 <TT>add_to_page_cache()</TT>（见 <A HREF="understand027_zh.html#func: add_to_page_cache">J.1.1.1 节</A>）类似，只是它会用 <TT>__find_page_nolock()</TT> 在页缓存中查找重复项。这里的管理地址空间为 <TT>swapper_space</TT>。本场景下&#X201C;文件内偏移&#X201D;就是 <TT>swap_map</TT> 中的偏移，即 <TT>entry.val</TT>，最后页会基于 <TT>address_space</TT> 与 <TT>swap_map</TT> 内偏移做散列</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>80-83</B>如果它已存在于页缓存中，说明发生了竞争，递增"向交换缓存插入已存在页发生竞争"的统计计数，并返回 <TT>EEXIST</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>84-85</B>如果页被锁定等待 IO，则是一个 bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>86-87</B>如果它此时不在交换缓存中，那一定发生了严重错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>88</B>递增交换缓存中页总数的统计计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B>返回成功</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc466">K.2.1.2</A>　函数：swap_duplicate</H4><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: swap_duplicate"></A> <A NAME="@codeindex337"></A></P><P>该函数验证交换项是否有效，若有效则递增其交换映射计数。</P><PRE CLASS="verbatim">1161 int swap_duplicate(swp_entry_t entry)
+1162 {
+1163     struct swap_info_struct * p;
+1164     unsigned long offset, type;
+1165     int result = 0;
+1166 
+1167     type = SWP_TYPE(entry);
+1168     if (type &gt;= nr_swapfiles)
+1169         goto bad_file;
+1170     p = type + swap_info;
+1171     offset = SWP_OFFSET(entry);
+1172 
+1173     swap_device_lock(p);
+1174     if (offset &lt; p-&gt;max &amp;&amp; p-&gt;swap_map[offset]) {
+1175         if (p-&gt;swap_map[offset] &lt; SWAP_MAP_MAX - 1) {
+1176             p-&gt;swap_map[offset]++;
+1177             result = 1;
+1178         } else if (p-&gt;swap_map[offset] &lt;= SWAP_MAP_MAX) {
+1179             if (swap_overflow++ &lt; 5)
+1180                 printk(KERN_WARNING "swap_dup: swap entry
+                              overflow\n");
+1181             p-&gt;swap_map[offset] = SWAP_MAP_MAX;
+1182             result = 1;
+1183         }
+1184     }
+1185     swap_device_unlock(p);
+1186 out:
+1187     return result;
+1188 
+1189 bad_file:
+1190     printk(KERN_ERR "swap_dup: %s%08lx\n", Bad_file, entry.val);
+1191     goto out;
+1192 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1161</B>参数为要为之增加 <TT>swap_map</TT> 计数的交换项</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1167-1169</B>取得该项所在 <TT>swap_info_struct</TT> 在 <TT>swap_info</TT> 中的偏移。如果该偏移大于交换区数量，跳转到 <TT>bad_file</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1170-1171</B>取得对应的 <TT>swap_info_struct</TT>，并取得它在 <TT>swap_map</TT> 中的偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1173</B>锁定交换设备</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1174</B>做一次快速合理性检查：偏移必须在 <TT>swap_map</TT> 范围内，且对应槽位的计数为正。计数为 0 表示槽位不可用，此时是一个非法的 <TT>swp_entry_t</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1175-1177</B>如果计数还未达到 <TT>SWAP_MAP_MAX</TT>，直接递增并返回 1 表示成功</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1178-1183</B>否则计数会溢出，将其设为 <TT>SWAP_MAP_MAX</TT>，永久保留该槽位。实际上几乎不会发生这种情况</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1185-1187</B>解锁交换设备并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1190-1191</B>如果使用了错误的设备，打印错误信息并返回失败</DD></DL><H3 CLASS="subsection"><A NAME="htoc467">K.2.2</A>　从交换缓存删除页</H3><H4 CLASS="subsubsection"><A NAME="htoc468">K.2.2.1</A>　函数：swap_free</H4><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: swap_free"></A> <A NAME="@codeindex338"></A></P><P>递减与 <TT>swp_entry_t</TT> 对应的 <TT>swap_map</TT> 项</P><PRE CLASS="verbatim">214 void swap_free(swp_entry_t entry)
+215 {
+216     struct swap_info_struct * p;
+217 
+218     p = swap_info_get(entry);
+219     if (p) {
+220         swap_entry_free(p, SWP_OFFSET(entry));
+221         swap_info_put(p);
+222     }
+223 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>218</B><TT>swap_info_get()</TT>（见 K.2.3.1 节<A HREF="#func: swap_info_get"></A>）取得正确的 <TT>swap_info_struct</TT>，并执行若干调试检查以确保它是有效的区和有效的 <TT>swap_map</TT> 项。一切正常时会锁定交换设备</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>219-222</B>如果有效，则用 <TT>swap_entry_free()</TT>（见 K.2.2.2 节<A HREF="#func: swap_entry_free"></A>）递减对应的 <TT>swap_map</TT> 项，并调用 <TT>swap_info_put()</TT>（见 K.2.3.2 节<A HREF="#func: swap_info_put"></A>）释放设备</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc469">K.2.2.2</A>　函数：swap_entry_free</H4><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: swap_entry_free"></A> <A NAME="@codeindex339"></A></P><PRE CLASS="verbatim">192 static int swap_entry_free(struct swap_info_struct *p, 
+                 unsigned long offset)
+193 {
+194     int count = p-&gt;swap_map[offset];
+195 
+196     if (count &lt; SWAP_MAP_MAX) {
+197         count--;
+198         p-&gt;swap_map[offset] = count;
+199         if (!count) {
+200             if (offset &lt; p-&gt;lowest_bit)
+201                 p-&gt;lowest_bit = offset;
+202             if (offset &gt; p-&gt;highest_bit)
+203                 p-&gt;highest_bit = offset;
+204             nr_swap_pages++;
+205         }
+206     }
+207     return count;
+208 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>194</B>取得当前计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>196</B>如果计数表明该槽位不是永久保留的，则……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>197-198</B>递减计数并存回 <TT>swap_map</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>199</B>如果计数减到 0，说明槽位空闲，更新一些信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>200-201</B>如果这个被释放的槽位低于 <TT>lowest_bit</TT>，则更新 <TT>lowest_bit</TT>（它指向已知的最低空闲槽位）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>202-203</B>类似地，如果新释放的槽位高于 <TT>highest_bit</TT>，则更新 <TT>highest_bit</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>204</B>递增表示空闲交换槽位数的计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>207</B>返回当前计数</DD></DL><H3 CLASS="subsection"><A NAME="htoc470">K.2.3</A>　获取/释放交换缓存页</H3><H4 CLASS="subsubsection"><A NAME="htoc471">K.2.3.1</A>　函数：swap_info_get</H4><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: swap_info_get"></A> <A NAME="@codeindex340"></A></P><P>该函数找到给定项对应的 <TT>swap_info_struct</TT>，执行一些基本检查后锁定设备。</P><PRE CLASS="verbatim">147 static struct swap_info_struct * swap_info_get(swp_entry_t entry)
+148 {
+149     struct swap_info_struct * p;
+150     unsigned long offset, type;
+151 
+152     if (!entry.val)
+153         goto out;
+154     type = SWP_TYPE(entry);
+155     if (type &gt;= nr_swapfiles)
+156         goto bad_nofile;
+157     p = &amp; swap_info[type];
+158     if (!(p-&gt;flags &amp; SWP_USED))
+159         goto bad_device;
+160     offset = SWP_OFFSET(entry);
+161     if (offset &gt;= p-&gt;max)
+162         goto bad_offset;
+163     if (!p-&gt;swap_map[offset])
+164         goto bad_free;
+165     swap_list_lock();
+166     if (p-&gt;prio &gt; swap_info[swap_list.next].prio)
+167         swap_list.next = type;
+168     swap_device_lock(p);
+169     return p;
+170 
+171 bad_free:
+172     printk(KERN_ERR "swap_free: %s%08lx\n", Unused_offset, 
+                                                entry.val);
+173     goto out;
+174 bad_offset:
+175     printk(KERN_ERR "swap_free: %s%08lx\n", Bad_offset, 
+                                                entry.val);
+176     goto out;
+177 bad_device:
+178     printk(KERN_ERR "swap_free: %s%08lx\n", Unused_file, 
+                                                entry.val);
+179     goto out;
+180 bad_nofile:
+181     printk(KERN_ERR "swap_free: %s%08lx\n", Bad_file, 
+                                                entry.val);
+182 out:
+183     return NULL;
+184 } 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>152-153</B>如果传入的项为 NULL，返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>154</B>取得在 <TT>swap_info</TT> 数组中的偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>155-156</B>确认它是有效的交换区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>157</B>取得该区的地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>158-159</B>如果该区尚未激活，打印错误信息并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>160</B>取得在 <TT>swap_map</TT> 中的偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>161-162</B>确保该偏移没有超出映射末尾</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>163-164</B>确保槽位当前正在使用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>165</B>锁定交换区列表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>166-167</B>如果该区的优先级高于本应使用的下一个区，确保当前区被使用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>168-169</B>锁定交换设备并返回交换区描述符</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc472">K.2.3.2</A>　函数：swap_info_put</H4><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: swap_info_put"></A> <A NAME="@codeindex341"></A></P><P>该函数仅仅解锁交换区与列表</P><PRE CLASS="verbatim">186 static void swap_info_put(struct swap_info_struct * p)
+187 {
+188     swap_device_unlock(p);
+189     swap_list_unlock();
+190 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>188</B>解锁设备</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>189</B>解锁交换区列表</DD></DL><H3 CLASS="subsection"><A NAME="htoc473">K.2.4</A>　搜索交换缓存</H3><H4 CLASS="subsubsection"><A NAME="htoc474">K.2.4.1</A>　函数：lookup_swap_cache</H4><P> <EM>来源： mm/swap_state.c</EM> <A NAME="func: lookup_swap_cache"></A> <A NAME="@codeindex342"></A></P><P>在交换缓存中查找页的顶层函数</P><PRE CLASS="verbatim">161 struct page * lookup_swap_cache(swp_entry_t entry)
+162 {
+163     struct page *found;
+164 
+165     found = find_get_page(&amp;swapper_space, entry.val);
+166     /*
+167      * Unsafe to assert PageSwapCache and mapping on page found:
+168      * if SMP nothing prevents swapoff from deleting this page from
+169      * the swap cache at this moment.  find_lock_page would prevent
+170      * that, but no need to change: we _have_ got the right page.
+171      */
+172     INC_CACHE_INFO(find_total);
+173     if (found)
+174         INC_CACHE_INFO(find_success);
+175     return found;
+176 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>165</B><TT>find_get_page()</TT>（见 <A HREF="understand027_zh.html#func: find_get_page">J.1.4.1 节</A>）是返回 <TT>struct page</TT> 的主要函数。它使用普通的页散列与缓存机制快速查找</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>172</B>递增"在缓存中搜索页"的统计计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>173-174</B>如果找到了页，递增成功命中计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>175</B>返回 <TT>struct page</TT>；如果不存在则返回 NULL</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc140"></A><A NAME="htoc475">K.3</A>　交换区 IO</H2><H3 CLASS="subsection"><A NAME="htoc476">K.3.1</A>　读取后备存储</H3><H4 CLASS="subsubsection"><A NAME="htoc477">K.3.1.1</A>　函数：read_swap_cache_async</H4><P> <EM>来源： mm/swap_state.c</EM> <A NAME="func: read_swap_cache_async"></A> <A NAME="@codeindex343"></A></P><P>该函数会从交换缓存中返回所请求的页。若不存在，则分配一页，放入交换缓存，并通过 <TT>rw_swap_page()</TT> 安排从磁盘读取数据。</P><PRE CLASS="verbatim">184 struct page * read_swap_cache_async(swp_entry_t entry)
+185 {
+186     struct page *found_page, *new_page = NULL;
+187     int err;
+188 
+189     do {
+196         found_page = find_get_page(&amp;swapper_space, entry.val);
+197         if (found_page)
+198             break;
+199 
+200         /*
+201          * Get a new page to read into from swap.
+202          */
+203         if (!new_page) {
+204             new_page = alloc_page(GFP_HIGHUSER);
+205             if (!new_page)
+206                 break;          /* Out of memory */
+207         }
+208 
+209         /*
+210          * Associate the page with swap entry in the swap cache.
+211          * May fail (-ENOENT) if swap entry has been freed since
+212          * our caller observed it.  May fail (-EEXIST) if there
+213          * is already a page associated with this entry in the
+214          * swap cache: added by a racing read_swap_cache_async,
+215          * or by try_to_swap_out (or shmem_writepage) re-using
+216          * the just freed swap entry for an existing page.
+217          */
+218         err = add_to_swap_cache(new_page, entry);
+219         if (!err) {
+220             /*
+221              * Initiate read into locked page and return.
+222              */
+223             rw_swap_page(READ, new_page);
+224             return new_page;
+225         }
+226     } while (err != -ENOENT);
+227 
+228     if (new_page)
+229         page_cache_release(new_page);
+230     return found_page;
+231 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>189</B>在 <TT>add_to_swap_cache()</TT> 添加页失败时循环</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>196</B>首先用 <TT>find_get_page()</TT>（见 <A HREF="understand027_zh.html#func: find_get_page">J.1.4.1 节</A>）在交换缓存中搜索页是否已经可用。通常应当调用 <TT>lookup_swap_cache()</TT>（见 K.2.4.1 节<A HREF="#func: lookup_swap_cache"></A>），但它会更新统计（如缓存搜索次数），因此这里直接调用 <TT>find_get_page()</TT>（见 <A HREF="understand027_zh.html#func: find_get_page">J.1.4.1 节</A>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>203-207</B>如果页不在交换缓存中且我们还未分配，则用 <TT>alloc_page()</TT> 分配一页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>218</B>用 <TT>add_to_swap_cache()</TT>（见 K.2.1.1 节<A HREF="#func: add_to_swap_cache"></A>）把新分配的页加入交换缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>223</B>用 <TT>rw_swap_page()</TT>（见 K.3.3.1 节<A HREF="#func: rw_swap_page"></A>）安排读入数据。返回的页处于锁定状态，IO 完成后会解锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>224</B>返回新页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>226</B>循环直到 <TT>add_to_swap_cache()</TT> 成功，或其他进程已成功把页插入交换缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>228-229</B>这里要么是错误路径，要么是其他进程为我们把页加入了交换缓存。如果之前分配了新页，用 <TT>page_cache_release()</TT>（见 <A HREF="understand027_zh.html#func: page_cache_release">J.1.3.2 节</A>）释放它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>230</B>返回在交换缓存中找到的页，或错误</DD></DL><H3 CLASS="subsection"><A NAME="htoc478">K.3.2</A>　写入后备存储</H3><H4 CLASS="subsubsection"><A NAME="htoc479">K.3.2.1</A>　函数：swap_writepage</H4><P> <EM>来源： mm/swap_state.c</EM> <A NAME="func: swap_writepage"></A> <A NAME="@codeindex344"></A></P><P>这是注册在 <TT>swap_aops</TT> 中用于写出页的函数。其功能相当简单：先调用 <TT>remove_exclusive_swap_page()</TT> 尝试释放页。若页被释放，则页将在这里被解锁后返回，因为没有挂起的 IO。否则调用 <TT>rw_swap_page()</TT> 把页与后备存储同步。</P><PRE CLASS="verbatim"> 24 static int swap_writepage(struct page *page)
+ 25 {
+ 26     if (remove_exclusive_swap_page(page)) {
+ 27         UnlockPage(page);
+ 28         return 0;
+ 29     }
+ 30     rw_swap_page(WRITE, page);
+ 31     return 0;
+ 32 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>26-29</B><TT>remove_exclusive_swap_page()</TT>（见 K.3.2.2 节<A HREF="#func: remove_exclusive_swap_page"></A>）会在可能时从交换缓存中回收该页。如果页被回收，返回前先解锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>30</B>否则页仍在交换缓存中，调用 <TT>rw_swap_page()</TT>（见 K.3.3.1 节<A HREF="#func: rw_swap_page"></A>）与后备存储同步</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc480">K.3.2.2</A>　函数：remove_exclusive_swap_page</H4><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: remove_exclusive_swap_page"></A> <A NAME="@codeindex345"></A></P><P>该函数尝试判断是否还有其他进程与本进程共享该页。若可能，会将页从交换缓存中移除并释放。一旦从交换缓存中移除，会递减 <TT>swap_free()</TT>，表明交换缓存不再使用该槽位。此时计数反映的是仍持有该槽位 <TT>swp_entry_t</TT> 的 PTE 数。</P><PRE CLASS="verbatim">287 int remove_exclusive_swap_page(struct page *page)
+288 {
+289     int retval;
+290     struct swap_info_struct * p;
+291     swp_entry_t entry;
+292 
+293     if (!PageLocked(page))
+294         BUG();
+295     if (!PageSwapCache(page))
+296         return 0;
+297     if (page_count(page) - !!page-&gt;buffers != 2) /* 2: us + cache */
+298         return 0;
+299 
+300     entry.val = page-&gt;index;
+301     p = swap_info_get(entry);
+302     if (!p)
+303         return 0;
+304 
+305     /* Is the only swap cache user the cache itself? */
+306     retval = 0;
+307     if (p-&gt;swap_map[SWP_OFFSET(entry)] == 1) {
+308         /* Recheck the page count with the pagecache lock held.. */
+309         spin_lock(&amp;pagecache_lock);
+310         if (page_count(page) - !!page-&gt;buffers == 2) {
+311             __delete_from_swap_cache(page);
+312             SetPageDirty(page);
+313             retval = 1;
+314         }
+315         spin_unlock(&amp;pagecache_lock);
+316     }
+317     swap_info_put(p);
+318 
+319     if (retval) {
+320         block_flushpage(page, 0);
+321         swap_free(entry);
+322         page_cache_release(page);
+323     }
+324 
+325     return retval;
+326 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>293-294</B>该操作只应在页被锁定时执行</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>295-296</B>如果页不在交换缓存中，则无需任何操作</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>297-298</B>如果还有其他使用者使用该页，则无法回收，直接返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>300</B>页对应的 <TT>swp_entry_t</TT> 保存在 <TT>page</TT>&#X2192;<TT>index</TT> 中，详见 <A HREF="understand005_zh.html#sec: Pages">2.4 节</A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>301</B>用 <TT>swap_info_get()</TT>（见 K.2.3.1 节<A HREF="#func: swap_info_get"></A>）取得 <TT>swap_info_struct</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>307</B>如果交换槽位唯一的使用者就是交换缓存本身（即没有进程映射它），则将该页从交换缓存中删除以释放槽位。之后由于交换缓存不再使用，交换槽位的使用计数也会被递减</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>310</B>如果当前用户是该页唯一的使用者，从交换缓存中删除是安全的。如果另一个进程也在共享，则必须保留</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>311</B>从交换缓存中删除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>313</B>将 <TT>retval</TT> 设为 1，让调用者知道页已被释放，从而触发 <TT>swap_free()</TT>（见 K.2.2.1 节<A HREF="#func: swap_free"></A>）来递减 <TT>swap_map</TT> 中的使用计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>317</B>释放在 <TT>swap_info_get()</TT>（见 K.2.3.1 节<A HREF="#func: swap_info_get"></A>）中取得的对交换槽位的引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>320</B>槽位正在被释放，调用 <TT>block_flushpage()</TT> 让所有 IO 完成并释放与页相关的任何缓冲</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>321</B>用 <TT>swap_free()</TT> 释放交换槽位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>322</B>释放对页的引用</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc481">K.3.2.3</A>　函数：free_swap_and_cache</H4><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: free_swap_and_cache"></A> <A NAME="@codeindex346"></A></P><P>该函数从交换缓存中释放一项并尝试回收页。注意此函数仅适用于交换缓存。</P><PRE CLASS="verbatim"> 
+332 void free_swap_and_cache(swp_entry_t entry)
+333 {
+334     struct swap_info_struct * p;
+335     struct page *page = NULL;
+336 
+337     p = swap_info_get(entry);
+338     if (p) {
+339         if (swap_entry_free(p, SWP_OFFSET(entry)) == 1)
+340             page = find_trylock_page(&amp;swapper_space, entry.val);
+341         swap_info_put(p);
+342     }
+343     if (page) {
+344         page_cache_get(page);
+345         /* Only cache user (+us), or swap space full? Free it! */
+346         if (page_count(page) - !!page-&gt;buffers == 2 || vm_swap_full()) {
+347             delete_from_swap_cache(page);
+348             SetPageDirty(page);
+349         }
+350         UnlockPage(page);
+351         page_cache_release(page);
+352     }
+353 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>337</B>取得请求 <TT>entry</TT> 对应的 <TT>swap_info</TT> 结构</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>338-342</B>假定交换区信息结构存在，调用 <TT>swap_entry_free()</TT> 释放该交换项。然后用 <TT>find_trylock_page()</TT> 在交换缓存中定位该 <TT>entry</TT> 对应的页。注意返回的页是被锁定的</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>341</B>释放第 337 行获取的对交换区信息结构的引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>343-352</B>如果找到了页，则尝试回收它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>344</B>取得对页的引用，防止它被提前释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>346-349</B>如果没有进程映射该页，或交换区使用超过 50%（由 <TT>vm_swap_full()</TT><A NAME="@codeindex347"></A> 检查），则把页从交换缓存中删除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>350</B>再次解锁页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>351</B>释放第 344 行取得的对页的本地引用</DD></DL><H3 CLASS="subsection"><A NAME="htoc482">K.3.3</A>　块 IO</H3><H4 CLASS="subsubsection"><A NAME="htoc483">K.3.3.1</A>　函数：rw_swap_page</H4><P> <EM>来源： mm/page_io.c</EM> <A NAME="func: rw_swap_page"></A> <A NAME="@codeindex348"></A></P><P>这是从后备存储读入页或把页写入后备存储的主函数。具体执行哪种操作取决于第一个参数 <TT>rw</TT>。它本质上是核心函数 <TT>rw_swap_page_base()</TT> 的包装，仅保证操作只对交换缓存中的页执行。</P><PRE CLASS="verbatim"> 85 void rw_swap_page(int rw, struct page *page)
+ 86 {
+ 87     swp_entry_t entry;
+ 88 
+ 89     entry.val = page-&gt;index;
+ 90 
+ 91     if (!PageLocked(page))
+ 92         PAGE_BUG(page);
+ 93     if (!PageSwapCache(page))
+ 94         PAGE_BUG(page);
+ 95     if (!rw_swap_page_base(rw, entry, page))
+ 96         UnlockPage(page);
+ 97 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>85</B><TT>rw</TT> 指明是读还是写</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>89</B>从 <TT>index</TT> 字段取得 <TT>swp_entry_t</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>91-92</B>如果页没有为 IO 锁定，则是 bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>93-94</B>如果页不在交换缓存中，则是 bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>95</B>调用核心函数 <TT>rw_swap_page_base()</TT>。如果返回失败，用 <TT>UnlockPage()</TT> 解锁该页以便释放</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc484">K.3.3.2</A>　函数：rw_swap_page_base</H4><P> <EM>来源： mm/page_io.c</EM> <A NAME="func: rw_swap_page_base"></A> <A NAME="@codeindex349"></A></P><P>这是读写后备存储的核心函数。无论写入分区还是文件，实际 IO 都由块层 <TT>brw_page()</TT> 完成。该函数为块层准备所需的缓冲信息。<TT>brw_page()</TT> 执行异步 IO，所以返回时页很可能仍处于锁定状态，等到 IO 完成时再解锁。</P><PRE CLASS="verbatim"> 36 static int rw_swap_page_base(int rw, swp_entry_t entry, 
+                                 struct page *page)
+ 37 {
+ 38     unsigned long offset;
+ 39     int zones[PAGE_SIZE/512];
+ 40     int zones_used;
+ 41     kdev_t dev = 0;
+ 42     int block_size;
+ 43     struct inode *swapf = 0;
+ 44 
+ 45     if (rw == READ) {
+ 46         ClearPageUptodate(page);
+ 47         kstat.pswpin++;
+ 48     } else
+ 49         kstat.pswpout++;
+ 50 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>36</B>各参数含义如下：
+<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>rw</B>指明操作是读还是写
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>entry</B>是用于在后备存储中定位数据的交换项
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>page</B>是被读或被写的页
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>39</B><TT>zones</TT> 是块层 <TT>brw_page()</TT><A NAME="@codeindex350"></A> 所需的参数。它应是一个待写入的块号数组。当后备存储是文件而非分区时尤其重要</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>45-47</B>如果要从磁盘读入页，清除 <TT>Uptodate</TT> 标志（既然在从磁盘读，页显然不是最新的）。递增"换入页"统计 (<TT>pswpin</TT><A NAME="@codeindex351"></A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>49</B>否则只更新"换出页"统计 (<TT>pswpout</TT><A NAME="@codeindex352"></A>)</DD></DL><PRE CLASS="verbatim"> 51     get_swaphandle_info(entry, &amp;offset, &amp;dev, &amp;swapf);
+ 52     if (dev) {
+ 53         zones[0] = offset;
+ 54         zones_used = 1;
+ 55         block_size = PAGE_SIZE;
+ 56     } else if (swapf) {
+ 57         int i, j;
+ 58         unsigned int block = 
+ 59              offset &lt;&lt; (PAGE_SHIFT - swapf-&gt;i_sb-&gt;s_blocksize_bits);
+ 60 
+ 61         block_size = swapf-&gt;i_sb-&gt;s_blocksize;
+ 62         for (i=0, j=0; j&lt; PAGE_SIZE ; i++, j += block_size)
+ 63             if (!(zones[i] = bmap(swapf,block++))) {
+ 64                 printk("rw_swap_page: bad swap file\n");
+ 65                 return 0;
+ 66             }
+ 67         zones_used = i;
+ 68         dev = swapf-&gt;i_dev;
+ 69     } else {
+ 70         return 0;
+ 71     }
+ 72 
+ 73     /* block_size == PAGE_SIZE/zones_used */
+ 74     brw_page(rw, page, dev, zones, block_size);
+ 75     return 1;
+ 76 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>51</B><TT>get_swaphandle_info()</TT>（见 K.3.3.3 节<A HREF="#func: get_swaphandle_info"></A>）返回代表该交换区的 <TT>kdev_t</TT> 或 <TT>struct inode</TT>（视情况而定）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>52-55</B>如果存储区是分区，则只需写入一个块，块大小为页大小。因此 <TT>zones</TT> 只有一项，即分区内要写入的偏移，<TT>block_size</TT> 为 <TT>PAGE_SIZE</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>56</B>否则它是交换文件，组成该页的每一个块都必须在调用 <TT>brw_page()</TT> 前用 <TT>bmap()</TT> 映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>58-59</B>计算起始 <TT>block</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>61</B>各个块的大小存放在文件所在文件系统的超级块信息中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>62-66</B>为整页中每一个块调用 <TT>bmap()</TT>。每个块都存入 <TT>zones</TT> 数组以传给 <TT>brw_page()</TT>。如果有任何块映射失败，则返回 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>67</B>在 <TT>zones_used</TT> 中记录该页由多少个块组成</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>68</B>记录正在写入哪个设备</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>74</B>调用块层的 <TT>brw_page()</TT> 安排 IO。由于 IO 异步，该函数立即返回。IO 完成时会调用回调函数 (<TT>end_buffer_io_async()</TT><A NAME="@codeindex353"></A>) 解锁页。任何等待该页的进程会在此时被唤醒</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>75</B>返回成功</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc485">K.3.3.3</A>　函数：get_swaphandle_info</H4><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: get_swaphandle_info"></A> <A NAME="@codeindex354"></A></P><P>该函数负责返回管理 <TT>entry</TT> 所在交换区的 <TT>kdev_t</TT> 或 <TT>struct inode</TT>。</P><PRE CLASS="verbatim">1197 void get_swaphandle_info(swp_entry_t entry, unsigned long *offset, 
+1198                         kdev_t *dev, struct inode **swapf)
+1199 {
+1200     unsigned long type;
+1201     struct swap_info_struct *p;
+1202 
+1203     type = SWP_TYPE(entry);
+1204     if (type &gt;= nr_swapfiles) {
+1205         printk(KERN_ERR "rw_swap_page: %s%08lx\n", Bad_file, 
+                                                        entry.val);
+1206         return;
+1207     }
+1208 
+1209     p = &amp;swap_info[type];
+1210     *offset = SWP_OFFSET(entry);
+1211     if (*offset &gt;= p-&gt;max &amp;&amp; *offset != 0) {
+1212         printk(KERN_ERR "rw_swap_page: %s%08lx\n", Bad_offset, 
+                                                        entry.val);
+1213         return;
+1214     }
+1215     if (p-&gt;swap_map &amp;&amp; !p-&gt;swap_map[*offset]) {
+1216         printk(KERN_ERR "rw_swap_page: %s%08lx\n", Unused_offset, 
+                                                        entry.val);
+1217         return;
+1218     }
+1219     if (!(p-&gt;flags &amp; SWP_USED)) {
+1220         printk(KERN_ERR "rw_swap_page: %s%08lx\n", Unused_file, 
+                                                        entry.val);
+1221         return;
+1222     }
+1223 
+1224     if (p-&gt;swap_device) {
+1225         *dev = p-&gt;swap_device;
+1226     } else if (p-&gt;swap_file) {
+1227         *swapf = p-&gt;swap_file-&gt;d_inode;
+1228     } else {
+1229         printk(KERN_ERR "rw_swap_page: no swap file or device\n");
+1230     }
+1231     return;
+1232 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1203</B>取出该 <TT>entry</TT> 在 <TT>swap_info</TT> 中所属的交换区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1204-1206</B>如果索引指向不存在的交换区，打印信息消息并返回。<TT>Bad_file</TT> 是 <TT>mm/swapfile.c</TT> 顶部声明的静态数组，内容为&#X201C;Bad swap file entry&#X201D;</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1209</B>从 <TT>swap_info</TT> 取得 <TT>swap_info_struct</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1210</B>取出 <TT>entry</TT> 在交换区内的偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1211-1214</B>确认偏移没有超过文件末尾。如有超出则打印 <TT>Bad_offset</TT> 中的消息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1215-1218</B>如果偏移对应的槽位当前未使用，说明 <TT>entry</TT> 是过期项，打印 <TT>Unused_offset</TT> 中的错误消息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1219-1222</B>如果交换区当前未激活，打印 <TT>Unused_file</TT> 中的错误消息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1224</B>如果交换区是设备，返回 <TT>swap_info_struct</TT>&#X2192;<TT>swap_device</TT> 中的 <TT>kdev_t</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1226-1227</B>如果是交换文件，返回可经 <TT>swap_info_struct</TT>&#X2192;<TT>swap_file</TT>&#X2192;<TT>d_inode</TT> 取得的 <TT>struct inode</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1229</B>否则该 <TT>entry</TT> 没有对应的交换文件或设备，打印错误并返回</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc141"></A><A NAME="htoc486">K.4</A>　激活交换区</H2><H3 CLASS="subsection"><A NAME="htoc487">K.4.1</A>　函数：sys_swapon</H3><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: sys_swapon"></A> <A NAME="@codeindex355"></A></P><P>这个相当长的函数负责激活交换空间。它大致执行以下任务：</P><UL CLASS="itemize"><LI CLASS="li-itemize">Find a free <TT>swap_info_struct</TT> in the <TT>swap_info</TT>
+array an initialise it with default values</LI><LI CLASS="li-itemize">Call <TT>user_path_walk()</TT> which traverses the directory tree
+for the supplied <TT>specialfile</TT> and populates a
+<TT>namidata</TT> structure with the available data on the file,
+such as the <TT>dentry</TT> and the filesystem information for where
+it is stored (<TT>vfsmount</TT>)</LI><LI CLASS="li-itemize">Populate <TT>swap_info_struct</TT> fields pertaining to the
+dimensions of the swap area and how to find it. If the swap
+area is a partition, the block size will be configured to the
+<TT>PAGE_SIZE</TT> before calculating the size. If it is a file,
+the information is obtained directly from the <TT>inode</TT></LI><LI CLASS="li-itemize">Ensure the area is not already activated. If not, allocate a page from
+memory and read the first page sized slot from the swap area. This page
+contains information such as the number of good slots and how to populate
+the <TT>swap_info_struct</TT>&#X2192;<TT>swap_map</TT> with the bad entries</LI><LI CLASS="li-itemize">Allocate memory with <TT>vmalloc()</TT> for
+<TT>swap_info_struct</TT>&#X2192;<TT>swap_map</TT> and initialise
+each entry with 0 for good slots and <TT>SWAP_MAP_BAD</TT>
+otherwise. Ideally the header information will be a version 2 file
+format as version 1 was limited to swap areas of just under 128MiB for
+architectures with 4KiB page sizes like the x86</LI><LI CLASS="li-itemize">After ensuring the information indicated in the header
+matches the actual swap area, fill in the remaining information in the
+<TT>swap_info_struct</TT> such as the maximum number of pages and
+the available good pages. Update the global statistics for
+<TT>nr_swap_pages</TT> and <TT>total_swap_pages</TT></LI><LI CLASS="li-itemize">The swap area is now fully active and initialised and so it is inserted
+into the swap list in the correct position based on priority of the newly
+activated area</LI></UL><PRE CLASS="verbatim">855 asmlinkage long sys_swapon(const char * specialfile, 
+                               int swap_flags)
+856 {
+857       struct swap_info_struct * p;
+858       struct nameidata nd;
+859       struct inode * swap_inode;
+860       unsigned int type;
+861       int i, j, prev;
+862       int error;
+863       static int least_priority = 0;
+864       union swap_header *swap_header = 0;
+865       int swap_header_version;
+866       int nr_good_pages = 0;
+867       unsigned long maxpages = 1;
+868       int swapfilesize;
+869       struct block_device *bdev = NULL;
+870       unsigned short *swap_map;
+871       
+872       if (!capable(CAP_SYS_ADMIN))
+873         return -EPERM;
+874       lock_kernel();
+875       swap_list_lock();
+876       p = swap_info;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>855</B>两个参数分别是交换区路径以及激活标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>872-873</B>调用进程必须具备 <TT>CAP_SYS_ADMIN</TT> 能力或为超级用户才能激活交换区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>874</B>获取大内核锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>875</B>锁定交换区列表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>876</B>取得 <TT>swap_info</TT> 数组中的第一个交换区</DD></DL><PRE CLASS="verbatim">877       for (type = 0 ; type &lt; nr_swapfiles ; type++,p++)
+878         if (!(p-&gt;flags &amp; SWP_USED))
+879           break;
+880       error = -EPERM;
+881       if (type &gt;= MAX_SWAPFILES) {
+882         swap_list_unlock();
+883         goto out;
+884       }
+885       if (type &gt;= nr_swapfiles)
+886         nr_swapfiles = type+1;
+887       p-&gt;flags = SWP_USED;
+888       p-&gt;swap_file = NULL;
+889       p-&gt;swap_vfsmnt = NULL;
+890       p-&gt;swap_device = 0;
+891       p-&gt;swap_map = NULL;
+892       p-&gt;lowest_bit = 0;
+893       p-&gt;highest_bit = 0;
+894       p-&gt;cluster_nr = 0;
+895       p-&gt;sdev_lock = SPIN_LOCK_UNLOCKED;
+896       p-&gt;next = -1;
+897       if (swap_flags &amp; SWAP_FLAG_PREFER) {
+898         p-&gt;prio =
+899           (swap_flags &amp; SWAP_FLAG_PRIO_MASK)&gt;&gt;SWAP_FLAG_PRIO_SHIFT;
+900       } else {
+901         p-&gt;prio = --least_priority;
+902       }
+903       swap_list_unlock();
+</PRE><P>找到一个空闲的 <TT>swap_info_struct</TT>，用默认值初始化</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>877-879</B>遍历 <TT>swap_info</TT> 直到找到一个未使用的结构</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>880</B>默认返回的错误是"权限拒绝"，表示调用者没有合适的权限或已使用的交换区过多</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>881</B>如果没有空闲结构，说明已激活了 <TT>MAX_SWAPFILE</TT> 个交换区，解锁交换区列表并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>885-886</B>如果所选交换区在最后已知激活区之后 (<TT>nr_swapfiles</TT>)，则更新 <TT>nr_swapfiles</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>887</B>设置标志位表示该区在使用中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>888-896</B>用默认值初始化字段</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>897-902</B>如果调用者指定了优先级则使用它，否则使用 <TT>least_priority</TT> 并将其递减。这样交换区会按激活顺序排序</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>903</B>释放交换区列表锁</DD></DL><PRE CLASS="verbatim">904       error = user_path_walk(specialfile, &amp;nd);
+905       if (error)
+906         goto bad_swap_2;
+907 
+908       p-&gt;swap_file = nd.dentry;
+909       p-&gt;swap_vfsmnt = nd.mnt;
+910       swap_inode = nd.dentry-&gt;d_inode;
+911       error = -EINVAL;
+912 
+</PRE><P>遍历 VFS，获取关于该特殊文件的一些信息</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>904</B><TT>user_path_walk()</TT> 遍历目录结构，得到描述 <TT>specialfile</TT> 的 <TT>nameidata</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>905-906</B>如果失败，返回失败</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>908</B>用返回的 <TT>dentry</TT> 填充 <TT>swap_file</TT> 字段</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>909</B>类似地填充 <TT>swap_vfsmnt</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>910</B>记录特殊文件的 inode</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>911</B>此时默认错误变为 <TT>-EINVAL</TT>，表示特殊文件已找到但既不是块设备也不是普通文件</DD></DL><PRE CLASS="verbatim">913       if (S_ISBLK(swap_inode-&gt;i_mode)) {
+914         kdev_t dev = swap_inode-&gt;i_rdev;
+915         struct block_device_operations *bdops;
+916         devfs_handle_t de;
+917 
+918         p-&gt;swap_device = dev;
+919         set_blocksize(dev, PAGE_SIZE);
+920         
+921         bd_acquire(swap_inode);
+922         bdev = swap_inode-&gt;i_bdev;
+923         de = devfs_get_handle_from_inode(swap_inode);
+924         bdops = devfs_get_ops(de);
+925         if (bdops) bdev-&gt;bd_op = bdops;
+926 
+927         error = blkdev_get(bdev, FMODE_READ|FMODE_WRITE, 0,
+                   BDEV_SWAP);
+928         devfs_put_ops(de);/* Decrement module use count 
+                               * now we're safe*/
+929         if (error)
+930           goto bad_swap_2;
+931         set_blocksize(dev, PAGE_SIZE);
+932         error = -ENODEV;
+933         if (!dev || (blk_size[MAJOR(dev)] &amp;&amp;
+934          !blk_size[MAJOR(dev)][MINOR(dev)]))
+935           goto bad_swap;
+936         swapfilesize = 0;
+937         if (blk_size[MAJOR(dev)])
+938           swapfilesize = blk_size[MAJOR(dev)][MINOR(dev)]
+939             &gt;&gt; (PAGE_SHIFT - 10);
+940       } else if (S_ISREG(swap_inode-&gt;i_mode))
+941         swapfilesize = swap_inode-&gt;i_size &gt;&gt; PAGE_SHIFT;
+942       else
+943         goto bad_swap;
+</PRE><P>如果是分区，在计算交换区大小之前先配置块设备；如果是文件，则从其 inode 获取大小</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>913</B>检查特殊文件是否为块设备</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>914-939</B>这段代码处理交换区是分区的情况</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>914</B>记录块设备结构的指针</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>918</B>保存指向描述该特殊文件的设备结构的指针，块 IO 操作时会用到</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>919</B>将设备的块大小设为 <TT>PAGE_SIZE</TT>，因为交换只关心页大小的块</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>921</B><TT>bd_acquire()</TT> 递增该块设备的使用计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>922</B>取得 <TT>block_device</TT> 结构的指针，它是设备文件的描述符，打开时需要</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>923</B>如果启用了 devfs，则获取 devfs 句柄。devfs 不在本书讨论范围内</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>924-925</B>递增该设备项的使用计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>927</B>以读写模式打开块设备，并设置 <TT>BDEV_SWAP</TT> 标志。该标志是一个枚举值，但 <TT>do_open()</TT> 调用时会被忽略</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>928</B>递减 devfs 项的使用计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>929-930</B>如果打开时出错，返回失败</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>931</B>再次设置块大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>932</B>此后默认错误改为"找不到设备"</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>933-935</B>确保返回的设备没问题</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>937-939</B>用 <TT>blk_size</TT> 指示的块设备中的页大小块数计算交换文件大小。这样做是为了确保交换区中的信息合理</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>941</B>如果交换区是普通文件，直接从 inode 获取大小并计算其中有多少个页大小的块</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>943</B>如果文件既不是块设备也不是普通文件，返回错误</DD></DL><PRE CLASS="verbatim">945       error = -EBUSY;
+946       for (i = 0 ; i &lt; nr_swapfiles ; i++) {
+947         struct swap_info_struct *q = &amp;swap_info[i];
+948         if (i == type || !q-&gt;swap_file)
+949           continue;
+950         if (swap_inode-&gt;i_mapping ==
+             q-&gt;swap_file-&gt;d_inode-&gt;i_mapping)
+951           goto bad_swap;
+952       }
+953 
+954       swap_header = (void *) __get_free_page(GFP_USER);
+955       if (!swap_header) {
+956         printk("Unable to start swapping: out of memory :-)\n");
+957         error = -ENOMEM;
+958         goto bad_swap;
+959       }
+960 
+961       lock_page(virt_to_page(swap_header));
+962       rw_swap_page_nolock(READ, SWP_ENTRY(type,0), 
+            (char *) swap_header);
+963 
+964       if (!memcmp("SWAP-SPACE",swap_header-&gt;magic.magic,10))
+965         swap_header_version = 1;
+966       else if (!memcmp("SWAPSPACE2",swap_header-&gt;magic.magic,10))
+967         swap_header_version = 2;
+968       else {
+969         printk("Unable to find swap-space signature\n");
+970         error = -EINVAL;
+971         goto bad_swap;
+972       }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>945</B>下一项检查确保该区尚未激活。若已激活，则返回 <TT>-EBUSY</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>946-962</B>遍历整个 <TT>swap_info</TT>，确保要激活的区尚未激活</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>954-959</B>分配一页用于从磁盘读入交换区信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>961</B>函数 <TT>lock_page()</TT><A NAME="@codeindex356"></A> 锁定一页，如果是文件支撑的页还会与磁盘同步。这里它只会将页标记为锁定，<TT>rw_swap_page_nolock()</TT> 函数需要这一点</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>962</B>将交换区第一页槽读入 <TT>swap_header</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>964-672</B>根据交换区信息确定版本并设置 <TT>swap_header_version</TT> 变量。如果无法识别，返回 <TT>-EINVAL</TT></DD></DL><PRE CLASS="verbatim">974       switch (swap_header_version) {
+975       case 1:
+976         memset(((char *) swap_header)+PAGE_SIZE-10,0,10);
+977         j = 0;
+978         p-&gt;lowest_bit = 0;
+979         p-&gt;highest_bit = 0;
+980         for (i = 1 ; i &lt; 8*PAGE_SIZE ; i++) {
+981           if (test_bit(i,(char *) swap_header)) {
+982             if (!p-&gt;lowest_bit)
+983                   p-&gt;lowest_bit = i;
+984             p-&gt;highest_bit = i;
+985             maxpages = i+1;
+986             j++;
+987           }
+988         }
+989         nr_good_pages = j;
+990         p-&gt;swap_map = vmalloc(maxpages * sizeof(short));
+991         if (!p-&gt;swap_map) {
+992           error = -ENOMEM;        
+993           goto bad_swap;
+994         }
+995         for (i = 1 ; i &lt; maxpages ; i++) {
+996           if (test_bit(i,(char *) swap_header))
+997             p-&gt;swap_map[i] = 0;
+998           else
+999             p-&gt;swap_map[i] = SWAP_MAP_BAD;
+1000         }
+1001         break;
+1002 
+</PRE><P>当交换区为第 1 版时，读入填充 <TT>swap_map</TT> 所需的信息</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>976</B>清零标识交换区版本的魔术字符串</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>978-979</B>将 <TT>swap_info_struct</TT> 中的字段初始化为 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>980-988</B>交换区中保存有 8*<TT>PAGE_SIZE</TT> 项的位图。整页（减去用于魔术字符串的 10 位）用于描述交换映射，使交换区大小限制在略小于 128MiB。位为 1 表示该槽位在磁盘上可用。本遍计算可用槽位数，以便分配 <TT>swap_map</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>981</B>测试该槽位的位是否被置位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>982-983</B>如果 <TT>lowest_bit</TT> 字段尚未设置，将其设为当前槽位。大多数情况下 <TT>lowest_bit</TT> 会被初始化为 1</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>984</B>只要找到新槽位就更新 <TT>highest_bit</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>985</B>统计页数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>986</B><TT>j</TT> 是交换区中的有效页数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>990</B>用 <TT>vmalloc()</TT> 为 <TT>swap_map</TT> 分配内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>991-994</B>如果无法分配内存，返回 <TT>ENOMEM</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>995-1000</B>对每个槽位，检查它是否&#X201C;有效&#X201D;。若是，将槽位计数初始化为 0；否则置为 <TT>SWAP_MAP_BAD</TT>，使其不会被使用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1001</B>退出 switch 语句</DD></DL><PRE CLASS="verbatim">1003       case 2:
+1006         if (swap_header-&gt;info.version != 1) {
+1007           printk(KERN_WARNING
+1008            "Unable to handle swap header version %d\n",
+1009            swap_header-&gt;info.version);
+1010           error = -EINVAL;
+1011           goto bad_swap;
+1012         }
+1013 
+1014         p-&gt;lowest_bit  = 1;
+1015         maxpages = SWP_OFFSET(SWP_ENTRY(0,~0UL)) - 1;
+1016         if (maxpages &gt; swap_header-&gt;info.last_page)
+1017           maxpages = swap_header-&gt;info.last_page;
+1018         p-&gt;highest_bit = maxpages - 1;
+1019 
+1020         error = -EINVAL;
+1021         if (swap_header-&gt;info.nr_badpages &gt; MAX_SWAP_BADPAGES)
+1022           goto bad_swap;
+1023         
+1025         if (!(p-&gt;swap_map = vmalloc(maxpages * sizeof(short)))) {
+1026           error = -ENOMEM;
+1027           goto bad_swap;
+1028         }
+1029 
+1030         error = 0;
+1031         memset(p-&gt;swap_map, 0, maxpages * sizeof(short));
+1032         for (i=0; i&lt;swap_header-&gt;info.nr_badpages; i++) {
+1033           int page = swap_header-&gt;info.badpages[i];
+1034           if (page &lt;= 0 || 
+             page &gt;= swap_header-&gt;info.last_page)
+1035             error = -EINVAL;
+1036           else
+1037             p-&gt;swap_map[page] = SWAP_MAP_BAD;
+1038         }
+1039         nr_good_pages = swap_header-&gt;info.last_page -
+1040             swap_header-&gt;info.nr_badpages -
+1041             1 /* header page */;
+1042         if (error) 
+1043           goto bad_swap;
+1044       }
+</PRE><P>当文件格式为第 2 版时，读入头信息</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1006-1012</B>务必确认我们能处理这种交换文件格式，否则返回 <TT>-EINVAL</TT>。请记住此版本下 <TT>swap_header</TT> 结构在磁盘上有良好对齐</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1014</B>将 <TT>lowest_bit</TT> 初始化为已知最低可用槽位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1015-1017</B><TT>maxpages</TT> 先初始化为 <TT>swap_map</TT> 的最大可能尺寸，再设为磁盘信息所指明的尺寸。这样可以避免 <TT>swap_map</TT> 数组被意外越界访问</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1018</B>初始化 <TT>highest_bit</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1020-1022</B>确保坏页数量不超过 <TT>MAX_SWAP_BADPAGES</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1025-1028</B>用 <TT>vmalloc()</TT> 为 <TT>swap_map</TT> 分配内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1031</B>将整个 <TT>swap_map</TT> 初始化为 0，表示所有槽位都可用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1032-1038</B>根据从磁盘读入的信息，把每个不可用的槽位设为 <TT>SWAP_MAP_BAD</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1039-1041</B>统计可用有效页数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1042-1043</B>如有错误则返回</DD></DL><PRE CLASS="verbatim">1045       
+1046       if (swapfilesize &amp;&amp; maxpages &gt; swapfilesize) {
+1047         printk(KERN_WARNING
+1048          "Swap area shorter than signature indicates\n");
+1049         error = -EINVAL;
+1050         goto bad_swap;
+1051       }
+1052       if (!nr_good_pages) {
+1053         printk(KERN_WARNING "Empty swap-file\n");
+1054         error = -EINVAL;
+1055         goto bad_swap;
+1056       }
+1057       p-&gt;swap_map[0] = SWAP_MAP_BAD;
+1058       swap_list_lock();
+1059       swap_device_lock(p);
+1060       p-&gt;max = maxpages;
+1061       p-&gt;flags = SWP_WRITEOK;
+1062       p-&gt;pages = nr_good_pages;
+1063       nr_swap_pages += nr_good_pages;
+1064       total_swap_pages += nr_good_pages;
+1065       printk(KERN_INFO "Adding Swap: 
+                             %dk swap-space (priority %d)\n",
+1066        nr_good_pages&lt;&lt;(PAGE_SHIFT-10), p-&gt;prio);
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1046-1051</B>确认从磁盘读入的信息与交换区的实际尺寸相符。若不符，打印警告并返回错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1052-1056</B>如果没有可用的有效页，返回错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1057</B>确保映射中包含交换头信息的第一页不被使用，否则该区首次使用时头信息会被覆盖</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1058-1059</B>锁定交换列表与交换设备</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1060-1062</B>填充 <TT>swap_info_struct</TT> 中剩余字段</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1063-1064</B>更新可用交换页数 (<TT>nr_swap_pages</TT>) 和总交换页数 (<TT>total_swap_pages</TT>) 这两项全局统计</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1065-1066</B>打印关于本次交换激活的提示信息</DD></DL><PRE CLASS="verbatim">1068       /* insert swap space into swap_list: */
+1069       prev = -1;
+1070       for (i = swap_list.head; i &gt;= 0; i = swap_info[i].next) {
+1071         if (p-&gt;prio &gt;= swap_info[i].prio) {
+1072           break;
+1073         }
+1074         prev = i;
+1075       }
+1076       p-&gt;next = i;
+1077       if (prev &lt; 0) {
+1078         swap_list.head = swap_list.next = p - swap_info;
+1079       } else {
+1080         swap_info[prev].next = p - swap_info;
+1081       }
+1082       swap_device_unlock(p);
+1083       swap_list_unlock();
+1084       error = 0;
+1085       goto out;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1070-1080</B>按优先级把新交换区插入交换列表中合适的位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1082</B>解锁交换设备</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1083</B>解锁交换列表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1084-1085</B>返回成功</DD></DL><PRE CLASS="verbatim">1086 bad_swap:
+1087       if (bdev)
+1088         blkdev_put(bdev, BDEV_SWAP);
+1089 bad_swap_2:
+1090       swap_list_lock();
+1091       swap_map = p-&gt;swap_map;
+1092       nd.mnt = p-&gt;swap_vfsmnt;
+1093       nd.dentry = p-&gt;swap_file;
+1094       p-&gt;swap_device = 0;
+1095       p-&gt;swap_file = NULL;
+1096       p-&gt;swap_vfsmnt = NULL;
+1097       p-&gt;swap_map = NULL;
+1098       p-&gt;flags = 0;
+1099       if (!(swap_flags &amp; SWAP_FLAG_PREFER))
+1100         ++least_priority;
+1101       swap_list_unlock();
+1102       if (swap_map)
+1103         vfree(swap_map);
+1104       path_release(&amp;nd);
+1105 out:
+1106       if (swap_header)
+1107         free_page((long) swap_header);
+1108       unlock_kernel();
+1109       return error;
+1110 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1087-1088</B>释放对块设备的引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1090-1104</B>这是错误路径：需要解锁交换列表，将 <TT>swap_info</TT> 中的槽位重置为未使用，并在已分配的情况下释放 <TT>swap_map</TT> 的内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1104</B>释放对特殊文件的引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1106-1107</B>释放装有交换头信息的页，因为不再需要</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1108</B>释放大内核锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1109</B>返回错误或成功值</DD></DL><H3 CLASS="subsection"><A NAME="htoc488">K.4.2</A>　函数：swap_setup</H3><P> <EM>来源： mm/swap.c</EM> <A NAME="func: swap_setup"></A> <A NAME="@codeindex357"></A></P><P>该函数在 <TT>kswapd</TT> 初始化时被调用，用于设置 <TT>page_cluster</TT> 的大小。该变量决定换入数据时从文件和后备存储预读多少页。</P><PRE CLASS="verbatim">100 void __init swap_setup(void)
+101 {
+102     unsigned long megs = num_physpages &gt;&gt; (20 - PAGE_SHIFT);
+103 
+104     /* Use a smaller cluster for small-memory machines */
+105     if (megs &lt; 16)
+106         page_cluster = 2;
+107     else
+108         page_cluster = 3;
+109     /*
+110      * Right now other parts of the system means that we
+111      * _really_ don't want to cluster much more
+112      */
+113 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>102</B>计算系统内存大小（以 MB 为单位）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>105</B>在低内存系统上将 <TT>page_cluster</TT><A NAME="@codeindex358"></A> 设为 2，表示预读时最多从磁盘读入 4 页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>108</B>否则预读 8 页</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc142"></A><A NAME="htoc489">K.5</A>　停用交换区</H2><H3 CLASS="subsection"><A NAME="htoc490">K.5.1</A>　函数：sys_swapoff</H3><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: sys_swapoff"></A> <A NAME="@codeindex359"></A></P><P>该函数主要负责更新 <TT>swap_info_struct</TT> 与交换列表。把该区所有页换入的主要任务由 <TT>try_to_unuse()</TT> 负责。该函数的任务大致是：</P><UL CLASS="itemize"><LI CLASS="li-itemize">Call <TT>user_path_walk()</TT> to acquire the information about the
+special file to be deactivated and then take the BKL</LI><LI CLASS="li-itemize">Remove the <TT>swap_info_struct</TT> from the swap list and update
+the global statistics on the number of swap pages available
+(<TT>nr_swap_pages</TT>) and the total number of swap entries
+(<TT>total_swap_pages</TT>. Once this is acquired, the BKL can be
+released again</LI><LI CLASS="li-itemize">Call <TT>try_to_unuse()</TT> which will page in all pages from the swap
+area to be deactivated.</LI><LI CLASS="li-itemize">If there was not enough available memory to page in all the entries, the
+swap area is reinserted back into the running system as it cannot be
+simply dropped. If it succeeded, the <TT>swap_info_struct</TT>
+is placed into an uninitialised state and the <TT>swap_map</TT>
+memory freed with <TT>vfree()</TT></LI></UL><PRE CLASS="verbatim">720 asmlinkage long sys_swapoff(const char * specialfile)
+721 {
+722     struct swap_info_struct * p = NULL;
+723     unsigned short *swap_map;
+724     struct nameidata nd;
+725     int i, type, prev;
+726     int err;
+727     
+728     if (!capable(CAP_SYS_ADMIN))
+729         return -EPERM;
+730 
+731     err = user_path_walk(specialfile, &amp;nd);
+732     if (err)
+733         goto out;
+734 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>728-729</B>只有超级用户或具备 <TT>CAP_SYS_ADMIN</TT> 能力的进程可以停用一个交换区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>731-732</B>用 <TT>user_path_walk()</TT> 获取表示该交换区的特殊文件的信息。出错则跳到 <TT>out</TT></DD></DL><PRE CLASS="verbatim">735     lock_kernel();
+736     prev = -1;
+737     swap_list_lock();
+738     for (type = swap_list.head; type &gt;= 0; 
+         type = swap_info[type].next) {
+739         p = swap_info + type;
+740         if ((p-&gt;flags &amp; SWP_WRITEOK) == SWP_WRITEOK) {
+741             if (p-&gt;swap_file == nd.dentry)
+742               break;
+743         }
+744         prev = type;
+745     }
+746     err = -EINVAL;
+747     if (type &lt; 0) {
+748         swap_list_unlock();
+749         goto out_dput;
+750     }
+751 
+752     if (prev &lt; 0) {
+753         swap_list.head = p-&gt;next;
+754     } else {
+755         swap_info[prev].next = p-&gt;next;
+756     }
+757     if (type == swap_list.next) {
+758         /* just pick something that's safe... */
+759         swap_list.next = swap_list.head;
+760     }
+761     nr_swap_pages -= p-&gt;pages;
+762     total_swap_pages -= p-&gt;pages;
+763     p-&gt;flags = SWP_USED;
+</PRE><P>获取 BKL，找到要停用的区对应的 <TT>swap_info_struct</TT>，并将其从交换列表中移除</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>735</B>获取 BKL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>737</B>锁定交换列表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>738-745</B>遍历交换列表，找到所请求区对应的 <TT>swap_info_struct</TT>。使用 <TT>dentry</TT> 来识别</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>747-750</B>如果未找到该结构，返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>752-760</B>从交换列表中移除，注意它不能是表头</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>761</B>更新空闲交换槽位总数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>762</B>更新已存在交换槽位总数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>763</B>标记该区为活动但不可写</DD></DL><PRE CLASS="verbatim">764     swap_list_unlock();
+765     unlock_kernel();
+766     err = try_to_unuse(type);
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>764</B>解锁交换列表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>765</B>释放 BKL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>766</B>把该交换区的所有页换入内存</DD></DL><PRE CLASS="verbatim">767     lock_kernel();
+768     if (err) {
+769         /* re-insert swap space back into swap_list */
+770         swap_list_lock();
+771         for (prev = -1, i = swap_list.head; 
+                 i &gt;= 0; 
+                 prev = i, i = swap_info[i].next)
+772             if (p-&gt;prio &gt;= swap_info[i].prio)
+773                 break;
+774         p-&gt;next = i;
+775         if (prev &lt; 0)
+776             swap_list.head = swap_list.next = p - swap_info;
+777         else
+778             swap_info[prev].next = p - swap_info;
+779         nr_swap_pages += p-&gt;pages;
+780         total_swap_pages += p-&gt;pages;
+781         p-&gt;flags = SWP_WRITEOK;
+782         swap_list_unlock();
+783         goto out_dput;
+784     }
+</PRE><P>获取 BKL。如果未能成功换入所有页，则将该区重新插回交换列表</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>767</B>获取 BKL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>770</B>锁定交换列表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>771-778</B>将该区重新插回交换列表。插入位置由交换区优先级决定</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>779-780</B>更新全局统计</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>781</B>标记该区可再次安全写入</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>782-783</B>解锁交换列表并返回</DD></DL><PRE CLASS="verbatim">785     if (p-&gt;swap_device)
+786         blkdev_put(p-&gt;swap_file-&gt;d_inode-&gt;i_bdev, BDEV_SWAP);
+787     path_release(&amp;nd);
+788 
+789     swap_list_lock();
+790     swap_device_lock(p);
+791     nd.mnt = p-&gt;swap_vfsmnt;
+792     nd.dentry = p-&gt;swap_file;
+793     p-&gt;swap_vfsmnt = NULL;
+794     p-&gt;swap_file = NULL;
+795     p-&gt;swap_device = 0;
+796     p-&gt;max = 0;
+797     swap_map = p-&gt;swap_map;
+798     p-&gt;swap_map = NULL;
+799     p-&gt;flags = 0;
+800     swap_device_unlock(p);
+801     swap_list_unlock();
+802     vfree(swap_map);
+803     err = 0;
+804 
+805 out_dput:
+806     unlock_kernel();
+807     path_release(&amp;nd);
+808 out:
+809     return err;
+810 }
+</PRE><P>否则该交换区已成功停用，关闭块设备并将 <TT>swap_info_struct</TT> 标记为空闲</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>785-786</B>关闭块设备</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>787</B>释放路径信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>789-790</B>获取交换列表与交换设备锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>791-799</B>将 <TT>swap_info_struct</TT> 中的字段重置为默认值</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>800-801</B>释放交换列表和交换设备</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>801</B>释放 <TT>swap_map</TT> 占用的内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>806</B>释放 BKL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>807</B>如果是经错误路径到达此处，释放路径信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>809</B>返回成功或失败</DD></DL><H3 CLASS="subsection"><A NAME="htoc491">K.5.2</A>　函数：try_to_unuse</H3><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: try_to_unuse"></A> <A NAME="@codeindex360"></A></P><P>该函数在源码中带有大量注释，但其中部分内容是猜测或略有不准。这里为简洁省去了那些注释。</P><PRE CLASS="verbatim">513 static int try_to_unuse(unsigned int type)
+514 {
+515     struct swap_info_struct * si = &amp;swap_info[type];
+516     struct mm_struct *start_mm;
+517     unsigned short *swap_map;
+518     unsigned short swcount;
+519     struct page *page;
+520     swp_entry_t entry;
+521     int i = 0;
+522     int retval = 0;
+523     int reset_overflow = 0;
+525 
+540     start_mm = &amp;init_mm;
+541     atomic_inc(&amp;init_mm.mm_users);
+542 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>540-541</B>用于换入页的起始 <TT>mm_struct</TT> 是 <TT>init_mm</TT>。即使该结构不会消失，仍然递增其计数，以避免在函数其余部分写特殊情况判断</DD></DL><PRE CLASS="verbatim">556     while ((i = find_next_to_unuse(si, i))) {
+557         /* 
+558          * Get a page for the entry, using the existing swap
+559          * cache page if there is one.  Otherwise, get a clean
+560          * page and read the swap into it. 
+561          */
+562         swap_map = &amp;si-&gt;swap_map[i];
+563         entry = SWP_ENTRY(type, i);
+564         page = read_swap_cache_async(entry);
+565         if (!page) {
+572             if (!*swap_map)
+573                 continue;
+574             retval = -ENOMEM;
+575             break;
+576         }
+577 
+578         /*
+579          * Don't hold on to start_mm if it looks like exiting.
+580          */
+581         if (atomic_read(&amp;start_mm-&gt;mm_users) == 1) {
+582             mmput(start_mm);
+583             start_mm = &amp;init_mm;
+584             atomic_inc(&amp;init_mm.mm_users);
+585         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>556</B>这是该函数主循环的开始。从 <TT>swap_map</TT> 开头出发，用 <TT>find_next_to_unuse()</TT> 搜索下一个要释放的项，直到所有交换映射项都被换入</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>562-564</B>取得 <TT>swp_entry_t</TT> 并调用 <TT>read_swap_cache_async()</TT>（见 K.3.1.1 节<A HREF="#func: read_swap_cache_async"></A>）在交换缓存中查找页，或分配一页用于从磁盘读入</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>565-576</B>如果获取页失败，说明槽位已被其他进程或线程独立释放（进程可能正在别处退出），或我们已耗尽内存。如属独立释放，则继续下一项映射；否则返回 <TT>-ENOMEM</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>581</B>检查该 mm 是否正在退出。如果是，递减其计数并回到 <TT>init_mm</TT></DD></DL><PRE CLASS="verbatim">587         /*
+588          * Wait for and lock page.  When do_swap_page races with
+589          * try_to_unuse, do_swap_page can handle the fault much
+590          * faster than try_to_unuse can locate the entry.  This
+591          * apparently redundant "wait_on_page" lets try_to_unuse
+592          * defer to do_swap_page in such a case - in some tests,
+593          * do_swap_page and try_to_unuse repeatedly compete.
+594          */
+595         wait_on_page(page);
+596         lock_page(page);
+597 
+598         /*
+599          * Remove all references to entry, without blocking.
+600          * Whenever we reach init_mm, there's no address space
+601          * to search, but use it as a reminder to search shmem.
+602          */
+603         shmem = 0;
+604         swcount = *swap_map;
+605         if (swcount &gt; 1) {
+606             flush_page_to_ram(page);
+607             if (start_mm == &amp;init_mm)
+608                 shmem = shmem_unuse(entry, page);
+609             else
+610                 unuse_process(start_mm, entry, page);
+611         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>595</B>等待页 IO 完成。返回时即可确定页在内存中的内容与磁盘一致</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>596</B>锁定页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>604</B>取得交换映射的引用计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>605</B>如果计数为正，则……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>606</B>由于该页即将插入进程页表，必须将其从 D-Cache 中刷出，否则进程可能&#X201C;看不到&#X201D;内核对该页所做的修改</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>607-608</B>如果使用的是 <TT>init_mm</TT>，调用 <TT>shmem_unuse()</TT>（见 <A HREF="../original_html/understand029.html#func: shmem_unuse">L.6.2 节</A>）将页从任何正在使用的共享内存区域中释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>610</B>否则更新当前 mm 中引用该页的 PTE</DD></DL><PRE CLASS="verbatim">612         if (*swap_map &gt; 1) {
+613             int set_start_mm = (*swap_map &gt;= swcount);
+614             struct list_head *p = &amp;start_mm-&gt;mmlist;
+615             struct mm_struct *new_start_mm = start_mm;
+616             struct mm_struct *mm;
+617 
+618             spin_lock(&amp;mmlist_lock);
+619             while (*swap_map &gt; 1 &amp;&amp;
+620                 (p = p-&gt;next) != &amp;start_mm-&gt;mmlist) {
+621                 mm = list_entry(p, struct mm_struct,
+                            mmlist);
+622                 swcount = *swap_map;
+623                 if (mm == &amp;init_mm) {
+624                     set_start_mm = 1;
+625                     spin_unlock(&amp;mmlist_lock);
+626                     shmem = shmem_unuse(entry, page);
+627                     spin_lock(&amp;mmlist_lock);
+628                 } else
+629                     unuse_process(mm, entry, page);
+630                 if (set_start_mm &amp;&amp; *swap_map &lt; swcount) {
+631                     new_start_mm = mm;
+632                     set_start_mm = 0;
+633                 }
+634             }
+635             atomic_inc(&amp;new_start_mm-&gt;mm_users);
+636             spin_unlock(&amp;mmlist_lock);
+637             mmput(start_mm);
+638             start_mm = new_start_mm;
+639         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>612-637</B>如果项仍然存在，则开始遍历所有 <TT>mm_structs</TT>，查找对该页的引用并更新相应 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>618</B>锁定 mm 列表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>619-632</B>持续搜索直到遍历完所有 <TT>mm_struct</TT>。不要把整个列表遍历多于一次</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>621</B>取出该列表项对应的 <TT>mm_struct</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>623-627</B>如果该 mm 是 <TT>init_mm</TT>，则调用 <TT>shmem_unuse()</TT>（见 <A HREF="../original_html/understand029.html#func: shmem_unuse">L.6.2 节</A>），因为这表示该页来自虚拟文件系统。否则调用 <TT>unuse_process()</TT>（见 K.5.3 节<A HREF="#func: unuse_process"></A>）遍历当前进程的页表搜索该交换项。若找到，将释放该项并把页重新挂回 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>630-633</B>记录是否需要从 <TT>init_mm</TT> 重新开始搜索 <TT>mm_struct</TT></DD></DL><PRE CLASS="verbatim">654         if (*swap_map == SWAP_MAP_MAX) {
+655             swap_list_lock();
+656             swap_device_lock(si);
+657             nr_swap_pages++;
+658             *swap_map = 1;
+659             swap_device_unlock(si);
+660             swap_list_unlock();
+661             reset_overflow = 1;
+662         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>654</B>如果交换映射项被永久映射，我们只能寄希望于所有进程的 PTE 都已更新为指向该页，实际上交换映射项已经空闲。事实上几乎不会出现槽位被永久保留的情况</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>645-661</B>锁定列表和交换设备，将交换映射项设为 1，再解锁，并记录发生了一次溢出重置</DD></DL><PRE CLASS="verbatim">683         if ((*swap_map &gt; 1) &amp;&amp; PageDirty(page) &amp;&amp;
+                PageSwapCache(page)) {
+684             rw_swap_page(WRITE, page);
+685             lock_page(page);
+686         }
+687         if (PageSwapCache(page)) {
+688             if (shmem)
+689                 swap_duplicate(entry);
+690             else
+691                 delete_from_swap_cache(page);
+692         }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>683-686</B>万一仍有对页的引用，将页写回磁盘，这样即使另一个进程真的还引用着它，它也能正确地从磁盘把页拷回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>687-689</B>如果页在交换缓存中且属于共享内存文件系统，用 <TT>swap_duplicate()</TT> 取得一个新引用，以便稍后用 <TT>shmem_unuse()</TT> 再次尝试移除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>691</B>否则对普通页，直接从交换缓存中删除</DD></DL><PRE CLASS="verbatim">699         SetPageDirty(page);
+700         UnlockPage(page);
+701         page_cache_release(page);
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>699</B>将页标记为脏，使换出代码保留它；若需要再次移除，能正确地写到新的交换区</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>700</B>解锁页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>701</B>释放我们对它在页缓存中的引用</DD></DL><PRE CLASS="verbatim">708         if (current-&gt;need_resched)
+714             schedule();
+715     }
+716 
+717     mmput(start_mm);
+718     if (reset_overflow) {
+714         printk(KERN_WARNING "swapoff: cleared swap entry
+                     overflow\n");
+715         swap_overflow = 0;
+716     }
+717     return retval;
+718 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>708-709</B>必要时调用 <TT>schedule()</TT>，避免停用交换区独占整个 CPU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>717</B>释放我们对 mm 的引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>718-721</B>如果有永久映射的页必须被移除，打印警告，以便万一稍后真的出错时能有线索</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>717</B>返回成功或失败</DD></DL><H3 CLASS="subsection"><A NAME="htoc492">K.5.3</A>　函数：unuse_process</H3><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: unuse_process"></A> <A NAME="@codeindex361"></A></P><P>该函数开始遍历页表，目的是把所请求的 <TT>page</TT> 和 <TT>entry</TT> 从 <TT>mm</TT> 管理的进程页表中移除。仅在停用交换区时才需要这样做，因此虽然代价高昂，但是非常少见的操作。这一组函数应当可以一眼认出是标准的页表遍历。</P><PRE CLASS="verbatim">454 static void unuse_process(struct mm_struct * mm,
+455                         swp_entry_t entry, struct page* page)
+456 {
+457     struct vm_area_struct* vma;
+458 
+459     /*
+460      * Go through process' page directory.
+461      */
+462     spin_lock(&amp;mm-&gt;page_table_lock);
+463     for (vma = mm-&gt;mmap; vma; vma = vma-&gt;vm_next) {
+464         pgd_t * pgd = pgd_offset(mm, vma-&gt;vm_start);
+465         unuse_vma(vma, pgd, entry, page);
+466     }
+467     spin_unlock(&amp;mm-&gt;page_table_lock);
+468     return;
+469 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>462</B>锁定进程页表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>463</B>遍历该 <TT>mm</TT> 管理的每一个 VMA。请记住一个页帧可能被映射到多个位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>462</B>取得管理该 VMA 起始位置的 PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>465</B>调用 <TT>unuse_vma()</TT>（见 K.5.4 节<A HREF="#func: unuse_vma"></A>）在该 VMA 中搜索 <TT>page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>467-468</B>整个 <TT>mm</TT> 已搜索完，解锁进程页表并返回</DD></DL><H3 CLASS="subsection"><A NAME="htoc493">K.5.4</A>　函数：unuse_vma</H3><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: unuse_vma"></A> <A NAME="@codeindex362"></A></P><P>该函数在所请求的 VMA 中搜索映射给定 <TT>page</TT> 并使用给定交换 <TT>entry</TT> 的页表项。它对该 VMA 映射的每个 PGD 调用 <TT>unuse_pgd()</TT>。</P><PRE CLASS="verbatim">440 static void unuse_vma(struct vm_area_struct * vma, pgd_t *pgdir,
+441                         swp_entry_t entry, struct page* page)
+442 {
+443     unsigned long start = vma-&gt;vm_start, end = vma-&gt;vm_end;
+444 
+445     if (start &gt;= end)
+446         BUG();
+447     do {
+448         unuse_pgd(vma, pgdir, start, end - start, entry, page);
+449         start = (start + PGDIR_SIZE) &amp; PGDIR_MASK;
+450         pgdir++;
+451     } while (start &amp;&amp; (start &lt; end));
+452 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>443</B>取得该 VMA 的 <TT>start</TT> 与 <TT>end</TT> 虚拟地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>445-446</B>检查 <TT>start</TT> 不在 <TT>end</TT> 之后。要出现这种情况，内核必然有严重错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>447-451</B>以 <TT>PGDIR_SIZE</TT> 为步长遍历整个 VMA，直到达到 VMA 末尾。这相当于走过映射该 VMA 的每一个 PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>448</B>调用 <TT>unuse_pgd()</TT>（见 K.5.5 节<A HREF="#func: unuse_pgd"></A>）遍历该 PGD 以取消映射 <TT>page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>449</B>将虚拟地址 <TT>start</TT> 推进到下一个 PGD 的起始</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>450</B>把 <TT>pgdir</TT> 移到 VMA 中的下一个 PGD</DD></DL><H3 CLASS="subsection"><A NAME="htoc494">K.5.5</A>　函数：unuse_pgd</H3><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: unuse_pgd"></A> <A NAME="@codeindex363"></A></P><P>该函数在所请求的 PGD 中搜索映射给定 <TT>page</TT> 并使用给定交换 <TT>entry</TT> 的页表项。它对该 PGD 映射的每个 PMD 调用 <TT>unuse_pmd()</TT>。</P><PRE CLASS="verbatim">409 static inline void unuse_pgd(struct vm_area_struct * vma, pgd_t *dir,
+410         unsigned long address, unsigned long size,
+411         swp_entry_t entry, struct page* page)
+412 {
+413     pmd_t * pmd;
+414     unsigned long offset, end;
+415 
+416     if (pgd_none(*dir))
+417         return;
+418     if (pgd_bad(*dir)) {
+419         pgd_ERROR(*dir);
+420         pgd_clear(dir);
+421         return;
+422     }
+423     pmd = pmd_offset(dir, address);
+424     offset = address &amp; PGDIR_MASK;
+425     address &amp;= ~PGDIR_MASK;
+426     end = address + size;
+427     if (end &gt; PGDIR_SIZE)
+428         end = PGDIR_SIZE;
+429     if (address &gt;= end)
+430         BUG();
+431     do {
+432         unuse_pmd(vma, pmd, address, end - address, offset, entry,
+433                   page);
+434         address = (address + PMD_SIZE) &amp; PMD_MASK;
+435         pmd++;
+436     } while (address &amp;&amp; (address &lt; end));
+437 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>416-417</B>如果这里没有 PGD，返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>418-422</B>如果 PGD 损坏，设置相应错误，清除 PGD 并返回。极少架构会出现这种情况</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>423</B>取得该 PGD 中第一个 PMD 的地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>424</B>计算 <TT>offset</TT> 为 <TT>address</TT> 在该 PGD 内的偏移。要记住，该函数第一次调用时可能正在搜索一个不完整的 PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>425</B>将 <TT>address</TT> 对齐到 PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>426</B>计算搜索的结束地址 <TT>end</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>427-428</B>如果 <TT>end</TT> 越过了该 PGD，就把 <TT>end</TT> 设为该 PGD 末尾</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>429-430</B>如果起始地址在结束地址之后，说明发生了非常严重的错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>431-436</B>以 <TT>PMD_SIZE</TT> 为步长遍历 PGD，对该 PGD 中的每个 PMD 调用 <TT>unuse_pmd()</TT>（见 K.5.6 节<A HREF="#func: unuse_pmd"></A>）</DD></DL><H3 CLASS="subsection"><A NAME="htoc495">K.5.6</A>　函数：unuse_pmd</H3><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: unuse_pmd"></A> <A NAME="@codeindex364"></A></P><P>该函数在所请求的 PMD 中搜索映射给定 <TT>page</TT> 并使用给定交换 <TT>entry</TT> 的页表项。它对该 PMD 映射的每个 PTE 调用 <TT>unuse_pte()</TT>。</P><PRE CLASS="verbatim">381 static inline void unuse_pmd(struct vm_area_struct * vma, pmd_t *dir,
+382      unsigned long address, unsigned long size, unsigned long offset,
+383      swp_entry_t entry, struct page* page)
+384 {
+385     pte_t * pte;
+386     unsigned long end;
+387 
+388     if (pmd_none(*dir))
+389         return;
+390     if (pmd_bad(*dir)) {
+391         pmd_ERROR(*dir);
+392         pmd_clear(dir);
+393         return;
+394     }
+395     pte = pte_offset(dir, address);
+396     offset += address &amp; PMD_MASK;
+397     address &amp;= ~PMD_MASK;
+398     end = address + size;
+399     if (end &gt; PMD_SIZE)
+400         end = PMD_SIZE;
+401     do {
+402         unuse_pte(vma, offset+address-vma-&gt;vm_start, pte, entry, page);
+403         address += PAGE_SIZE;
+404         pte++;
+405     } while (address &amp;&amp; (address &lt; end));
+406 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>388-389</B>如果不存在 PMD，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>390-394</B>如果 PMD 损坏，设置相应错误并清除 PMD。极少架构会出现这种情况</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>395</B>计算该 <TT>address</TT> 的起始 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>396</B>将 <TT>offset</TT> 设为在 PMD 中的起始偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>397</B>将 <TT>address</TT> 对齐到 PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>398-400</B>计算 <TT>end</TT> 地址。如果它越过该 PMD 末尾，就把它设为该 PMD 末尾</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>401-405</B>以 <TT>PAGE_SIZE</TT> 为步长遍历该 PMD，对每个 PTE 调用 <TT>unuse_pte()</TT>（见 K.5.7 节<A HREF="#func: unuse_pte"></A>）</DD></DL><H3 CLASS="subsection"><A NAME="htoc496">K.5.7</A>　函数：unuse_pte</H3><P> <EM>来源： mm/swapfile.c</EM> <A NAME="func: unuse_pte"></A> <A NAME="@codeindex365"></A></P><P>该函数检查 <TT>dir</TT> 处的 PTE 是否匹配我们正在搜索的 <TT>entry</TT>。若匹配，则释放该交换项，并对待映射的 PTE 所代表的页取一个引用。</P><PRE CLASS="verbatim">365 static inline void unuse_pte(struct vm_area_struct * vma, 
+            unsigned long address,
+366         pte_t *dir, swp_entry_t entry, struct page* page)
+367 {
+368     pte_t pte = *dir;
+369 
+370     if (likely(pte_to_swp_entry(pte).val != entry.val))
+371         return;
+372     if (unlikely(pte_none(pte) || pte_present(pte)))
+373         return;
+374     get_page(page);
+375     set_pte(dir, pte_mkold(mk_pte(page, vma-&gt;vm_page_prot)));
+376     swap_free(entry);
+377     ++vma-&gt;vm_mm-&gt;rss;
+378 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>370-371</B>如果 <TT>entry</TT> 与 PTE 不匹配，返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>372-373</B>如果没有 PTE 或它已存在（意味着该 <TT>entry</TT> 不可能被映射在这里），则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>374</B>否则找到了要找的项，由于新 PTE 即将映射该页，先取一个对它的引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>375</B>更新 PTE 以映射 <TT>page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>376</B>释放该交换项</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>377</B>递增该进程的 RSS 计数</DD></DL><P>	</P><HR>
+[ <A HREF="understand027_zh.html">&laquo; 上一章</A> ]
+[ <A HREF="index.html">&uarr; 上级</A> ]
+[ <A HREF="../original_html/understand029.html">下一章 &raquo;</A> ]
+</BODY>
+</HTML>
