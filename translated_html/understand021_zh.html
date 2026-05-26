@@ -1442,16 +1442,13 @@ IO 映射区域（因此没有物理内存支撑）请求了 <TT>struct pages</T
  74     return error;
  75 }
 </PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>65</B>若源 PTE 不存在，则直接返回 0，表示复制成功</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>66</B>获取该 PTE，并将其从旧位置移除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>67-71</B>若 <TT>dst</TT> 不存在，则说明
-<TT>alloc_one_pte()</TT> 调用失败，复制操作失败，必须中止</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>72</B>将 PTE 移到新位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>74</B>若发生错误，则返回错误</DD></DL><H3 CLASS="subsection"><A NAME="htoc172">D.2.5</A>  Deleting a memory region</H3><H4 CLASS="subsubsection"><A NAME="htoc173">D.2.5.1</A>  Function: do_munmap</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: do_munmap"></A> <A NAME="@codeindex86"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand007.html#fig: do_munmap">4.11</A>. This
-function is responsible for unmapping a region. If necessary, the unmapping
-can span multiple VMAs and it can partially unmap one if necessary. Hence the
-full unmapping operation is divided into two major operations. This function
-is responsible for finding what VMAs are affected and <TT>unmap_fixup()</TT>
-is responsible for fixing up the remaining VMAs.</P><P>This function is divided up in a number of small sections will be dealt with
-in turn. The are broadly speaking;</P><UL CLASS="itemize"><LI CLASS="li-itemize">Function preamble and find the VMA to start working from</LI><LI CLASS="li-itemize">Take all VMAs affected by the unmapping out of the mm and place them on
-a linked list headed by the variable <TT>free</TT></LI><LI CLASS="li-itemize">Cycle through the list headed by <TT>free</TT>, unmap all the pages in
-the region to be unmapped and call <TT>unmap_fixup()</TT> to fix up the
-mappings</LI><LI CLASS="li-itemize">Validate the mm and free memory associated with the unmapping</LI></UL><PRE CLASS="verbatim">924 int do_munmap(struct mm_struct *mm, unsigned long addr, 
+<TT>alloc_one_pte()</TT> 调用失败，复制操作失败，必须中止</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>72</B>将 PTE 移到新位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>74</B>若发生错误，则返回错误</DD></DL><H3 CLASS="subsection"><A NAME="htoc172">D.2.5</A>　删除一个内存区域</H3><H4 CLASS="subsubsection"><A NAME="htoc173">D.2.5.1</A>　函数：<TT>do_munmap</TT></H4><P> <EM>源码位置：mm/mmap.c</EM> <A NAME="func: do_munmap"></A> <A NAME="@codeindex86"></A></P><P>该函数的调用图如图 <A HREF="understand007_zh.html#fig: do_munmap">4.11</A> 所示。
+该函数负责取消映射一个区域。如有必要，取消映射操作可以跨越多个 VMA，
+也可以在必要时仅部分取消映射其中之一。因此，
+完整的取消映射操作被划分为两个主要操作。本函数负责找出哪些 VMA 受到影响，
+而 <TT>unmap_fixup()</TT> 负责修复剩余的 VMA。</P><P>本函数被划分为若干小节，将依次说明。大致分为：</P><UL CLASS="itemize"><LI CLASS="li-itemize">函数前置部分，并找到开始处理的 VMA</LI><LI CLASS="li-itemize">将本次取消映射涉及的所有 VMA 从 mm 中取出，
+放入由变量 <TT>free</TT> 引导的链表</LI><LI CLASS="li-itemize">遍历以 <TT>free</TT> 为表头的链表，
+取消映射被请求区域内的所有页面，并调用 <TT>unmap_fixup()</TT> 修复映射</LI><LI CLASS="li-itemize">校验 mm 并释放与本次取消映射相关的内存</LI></UL><PRE CLASS="verbatim">924 int do_munmap(struct mm_struct *mm, unsigned long addr, 
                   size_t len)
 925 {
 926     struct vm_area_struct *mpnt, *prev, **npp, *free, *extra;
@@ -1478,20 +1475,19 @@ mappings</LI><LI CLASS="li-itemize">Validate the mm and free memory associated w
 956     extra = kmem_cache_alloc(vm_area_cachep, SLAB_KERNEL);
 957     if (!extra)
 958         return -ENOMEM;
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>924</B>The parameters are as follows;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>924</B>各参数如下：
 <DL CLASS="description"><DT CLASS="dt-description">
-</DT><DD CLASS="dd-description"><B>mm</B>The mm for the processes performing the unmap operation
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>addr</B>The starting address of the region to unmap
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>len</B>The length of the region
-</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>928-929</B>Ensure the address is page aligned and that the area to be
-unmapped is not in the kernel virtual address space</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>931-932</B>Make sure the region size to unmap is page aligned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>939</B>Find the VMA that contains the starting address and the preceding
-VMA so it can be easily unlinked later</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>940-941</B>If no <TT>mpnt</TT> was returned, it means the address must
-be past the last used VMA so the address space is unused, just return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>944-945</B>If the returned VMA starts past the region we are trying to
-unmap, then the region in unused, just return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>948-950</B>The first part of the check sees if the VMA is just been
-partially unmapped, if it is, another VMA will be created later to deal with a
-region being broken into so to the <TT>map_count</TT> has to be checked to
-make sure it is not too large</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>956-958</B>In case a new mapping is required, it is allocated now as later
-it will be much more difficult to back out in event of an error</DD></DL><PRE CLASS="verbatim">960     npp = (prev ? &amp;prev-&gt;vm_next : &amp;mm-&gt;mmap);
+</DT><DD CLASS="dd-description"><B>mm</B>执行取消映射操作的进程对应的 mm
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>addr</B>要取消映射区域的起始地址
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>len</B>区域的长度
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>928-929</B>确保地址按页对齐，
+且要取消映射的区域不在内核虚拟地址空间中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>931-932</B>确保要取消映射的区域大小按页对齐</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>939</B>找到包含起始地址的 VMA 以及它前面的 VMA，
+以便后面能方便地取消链接</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>940-941</B>若未返回 <TT>mpnt</TT>，
+说明该地址必定在最后一个已使用 VMA 之后，因此该地址空间未被使用，直接返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>944-945</B>若返回的 VMA 起始位置在我们要取消映射的区域之后，
+则该区域未被使用，直接返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>948-950</B>检查的第一部分判断该 VMA 是否仅被部分取消映射，
+若是，稍后将创建另一个 VMA 来处理被分割的区域，
+因此必须检查 <TT>map_count</TT>，确保其不会过大</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>956-958</B>如果需要新的映射，现在就先分配，
+因为后面在出错时回退会困难得多</DD></DL><PRE CLASS="verbatim">960     npp = (prev ? &amp;prev-&gt;vm_next : &amp;mm-&gt;mmap);
 961     free = NULL;
 962     spin_lock(&amp;mm-&gt;page_table_lock);
 963     for ( ; mpnt &amp;&amp; mpnt-&gt;vm_start &lt; addr+len; mpnt = *npp) {
@@ -1502,16 +1498,12 @@ it will be much more difficult to back out in event of an error</DD></DL><PRE CL
 968     }
 969     mm-&gt;mmap_cache = NULL;  /* Kill the cache. */
 970     spin_unlock(&amp;mm-&gt;page_table_lock);
-</PRE><P>This section takes all the VMAs affected by the unmapping and places them
-on a separate linked list headed by a variable called <TT>free</TT>. This
-makes the fixup of the regions much easier.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>960</B><TT>npp</TT> becomes the next VMA in the list during the for
-loop following below. To initialise it, it is either the current VMA (mpnt)
-or else it becomes the first VMA in the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>961</B><TT>free</TT> is the head of a linked list of VMAs that are
-affected by the unmapping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>962</B>Lock the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>963</B>Cycle through the list until the start of the current VMA is past
-the end of the region to be unmapped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>964</B><TT>npp</TT> becomes the next VMA in the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>965-966</B>Remove the current VMA from the linear linked list within the
-mm and place it on a linked list headed by free. The current mpnt becomes
-the head of the free linked list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>967</B>Delete <TT>mpnt</TT> from the red-black tree</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>969</B>Remove the cached result in case the last looked up result is
-one of the regions to be unmapped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>970</B>Free the mm</DD></DL><PRE CLASS="verbatim">971 
+</PRE><P>本段代码将本次取消映射影响到的所有 VMA 取出，
+放到由变量 <TT>free</TT> 引导的一个单独链表上。
+这样便于后续修复这些区域。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>960</B>在下面的 for 循环中，<TT>npp</TT> 会成为链表中下一个 VMA。
+作为初始化，它要么是当前 VMA（mpnt），要么成为链表中的第一个 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>961</B><TT>free</TT> 是受本次取消映射影响的 VMA 链表的表头</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>962</B>锁定该 mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>963</B>遍历链表，
+直到当前 VMA 的起始位置超过要取消映射区域的结束位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>964</B><TT>npp</TT> 变为链表中下一个 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>965-966</B>将当前 VMA 从 mm 内的线性链表中移除，
+放到以 free 为表头的链表上。当前的 mpnt 成为 free 链表的表头</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>967</B>从红黑树中删除 <TT>mpnt</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>969</B>清除缓存结果，以防上次查找命中的恰好是要被取消映射的区域之一</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>970</B>释放 mm 锁</DD></DL><PRE CLASS="verbatim">971 
 972     /* Ok - we have the memory areas we should free on the 
 973      * 'free' list, so release them, and unmap the page range..
 974      * If the one of the segments is only being partially unmapped,
@@ -1547,17 +1539,16 @@ one of the regions to be unmapped</DD><DT CLASS="dt-description"></DT><DD CLASS=
 1003        if (file)
 1004           atomic_inc(&amp;file-&gt;f_dentry-&gt;d_inode-&gt;i_writecount);
 1005     }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>978</B>Keep stepping through the list until no VMAs are left</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>982</B>Move free to the next element in the list leaving mpnt as the head
-about to be removed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>984</B><TT>st</TT> is the start of the region to be unmapped. If
-the addr is before the start of the VMA, the starting point is
-<TT>mpnt</TT>&#X2192;<TT>vm_start</TT>, otherwise it is the supplied address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>985-986</B>Calculate the end of the region to map in a similar fashion</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>987</B>Calculate the size of the region to be unmapped in this pass</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>989-993</B>If the <TT>VM_DENYWRITE</TT> flag is specified,
-a hole will be created by this unmapping and a file is mapped then the
-<TT>i_writecount</TT> is decremented. When this field is negative, it counts
-how many users there is protecting this file from being opened for writing</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>994</B>Remove the file mapping. If the file is still partially mapped, it
-will be acquired again during <TT>unmap_fixup()</TT>(See Section <A HREF="#func: unmap_fixup">D.2.5.2</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>995</B>Reduce the map count</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>997</B>Remove all pages within this region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1002</B>Call <TT>unmap_fixup()</TT>(See Section <A HREF="#func: unmap_fixup">D.2.5.2</A>) to fix up
-the regions after this one is deleted</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1003-1004</B>Increment the writecount to the file as the region has been
-unmapped. If it was just partially unmapped, this call will simply balance out
-the decrement at line 987</DD></DL><PRE CLASS="verbatim">1006     validate_mm(mm);
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>978</B>持续遍历链表，直到没有 VMA 剩下为止</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>982</B>将 free 移到链表的下一个元素，
+让 mpnt 成为即将被移除的表头</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>984</B><TT>st</TT> 是本次要取消映射区域的起始位置。
+若 addr 在 VMA 起始位置之前，
+起点取 <TT>mpnt</TT>&#X2192;<TT>vm_start</TT>，否则就是传入的地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>985-986</B>以类似方式计算要映射区域的结束位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>987</B>计算本次要取消映射区域的大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>989-993</B>若设置了 <TT>VM_DENYWRITE</TT> 标志，
+本次取消映射会形成一个空洞，且映射的是一个文件，
+则将 <TT>i_writecount</TT> 减 1。该字段为负时，
+表示有多少用户在阻止该文件被以写方式打开</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>994</B>移除文件映射。若该文件仍被部分映射，
+会在 <TT>unmap_fixup()</TT>（参见 <A HREF="#func: unmap_fixup">D.2.5.2</A> 节）中再次获取</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>995</B>减少映射计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>997</B>移除该区域内的所有页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1002</B>调用 <TT>unmap_fixup()</TT>（参见 <A HREF="#func: unmap_fixup">D.2.5.2</A> 节）
+在本区域删除后修复其它区域</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1003-1004</B>由于该区域已被取消映射，递增文件的 writecount。
+若只是部分取消映射，本次调用恰好抵消第 987 行处的递减</DD></DL><PRE CLASS="verbatim">1006     validate_mm(mm);
 1007 
 1008     /* Release the extra vma struct if it wasn't used */
 1009     if (extra)
@@ -1567,14 +1558,14 @@ the decrement at line 987</DD></DL><PRE CLASS="verbatim">1006     validate_mm(mm
 1013 
 1014     return 0;
 1015 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1006</B><TT>validate_mm()</TT> is a debugging function. If enabled,
-it will ensure the VMA tree for this mm is still valid</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1009-1010</B>If extra VMA was not required, delete it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1012</B>Free all the page tables that were used for the unmapped region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1014</B>Return success</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc174">D.2.5.2</A>  Function: unmap_fixup</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: unmap_fixup"></A> <A NAME="@codeindex87"></A></P><P>This function fixes up the regions after a block has been unmapped. It is
-passed a list of VMAs that are affected by the unmapping, the region and length
-to be unmapped and a spare VMA that may be required to fix up the region if a
-whole is created. There is four principle cases it handles; The unmapping of a
-region, partial unmapping from the start to somewhere in the middle, partial
-unmapping from somewhere in the middle to the end and the creation of a hole in
-the middle of the region. Each case will be taken in turn.</P><PRE CLASS="verbatim">787 static struct vm_area_struct * unmap_fixup(struct mm_struct *mm, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1006</B><TT>validate_mm()</TT> 是一个调试函数。若启用，
+它会确保该 mm 的 VMA 树仍然有效</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1009-1010</B>若不需要额外的 VMA，则删除它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1012</B>释放为该被取消映射区域使用过的所有页表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1014</B>返回成功</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc174">D.2.5.2</A>　函数：<TT>unmap_fixup</TT></H4><P> <EM>源码位置：mm/mmap.c</EM> <A NAME="func: unmap_fixup"></A> <A NAME="@codeindex87"></A></P><P>本函数在一段内存被取消映射后修复相关区域。
+它接收一个受取消映射影响的 VMA 链表、
+要取消映射的区域及其长度，以及一个备用 VMA，
+若过程中会创建空洞，可能会用到该 VMA。该函数处理四种主要情形：
+取消映射整个区域、从起始到中间某处的部分取消映射、
+从中间某处到末尾的部分取消映射，
+以及在区域中间形成一个空洞。下面依次说明每种情形。</P><PRE CLASS="verbatim">787 static struct vm_area_struct * unmap_fixup(struct mm_struct *mm, 
 788     struct vm_area_struct *area, unsigned long addr, size_t len, 
 789     struct vm_area_struct *extra)
 790 {
@@ -1585,14 +1576,14 @@ the middle of the region. Each case will be taken in turn.</P><PRE CLASS="verbat
 795     if (area-&gt;vm_flags &amp; VM_LOCKED)
 796         area-&gt;vm_mm-&gt;locked_vm -= len &gt;&gt; PAGE_SHIFT;
 797 
-</PRE><P>Function preamble.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>787</B>The parameters to the function are;
+</PRE><P>函数前置部分。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>787</B>该函数的参数为：
 <DL CLASS="description"><DT CLASS="dt-description">
-</DT><DD CLASS="dd-description"><B>mm</B> is the mm the unmapped region belongs to
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>area</B> is the head of the linked list of VMAs affected by the unmapping
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>addr</B> is the starting address of the unmapping
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>len</B> is the length of the region to be unmapped
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>extra</B> is a spare VMA passed in for when a hole in the middle is created
-</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>792</B>Calculate the end address of the region being unmapped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>794</B>Reduce the count of the number of pages used by the process</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>795-796</B>If the pages were locked in memory, reduce the locked page count</DD></DL><PRE CLASS="verbatim">798     /* Unmapping the whole area. */
+</DT><DD CLASS="dd-description"><B>mm</B> 被取消映射区域所属的 mm
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>area</B> 受本次取消映射影响的 VMA 链表的表头
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>addr</B> 取消映射的起始地址
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>len</B> 要取消映射区域的长度
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>extra</B> 备用 VMA，用于中间形成空洞的情形
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>792</B>计算被取消映射区域的结束地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>794</B>减少进程已使用页面的计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>795-796</B>若页面被锁定在内存中，则减少锁定页面计数</DD></DL><PRE CLASS="verbatim">798     /* Unmapping the whole area. */
 799     if (addr == area-&gt;vm_start &amp;&amp; end == area-&gt;vm_end) {
 800         if (area-&gt;vm_ops &amp;&amp; area-&gt;vm_ops-&gt;close)
 801             area-&gt;vm_ops-&gt;close(area);
@@ -1601,11 +1592,11 @@ the middle of the region. Each case will be taken in turn.</P><PRE CLASS="verbat
 804         kmem_cache_free(vm_area_cachep, area);
 805         return extra;
 806     }
-</PRE><P>The first, and easiest, case is where the full region is being unmapped</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>799</B>The full region is unmapped if the addr is the start of the VMA and
-the end is the end of the VMA. This is interesting because if the unmapping is
-spanning regions, it is possible the end is <EM>beyond</EM> the end of the VMA
-but the full of this VMA is still being unmapped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>800-801</B>If a close operation is supplied by the VMA, call it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>802-803</B>If a file or device is mapped, call <TT>fput()</TT> which
-decrements the usage count and releases it if the count falls to 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>804</B>Free the memory for the VMA back to the slab allocator</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>805</B>Return the extra VMA as it was unused</DD></DL><PRE CLASS="verbatim">809     if (end == area-&gt;vm_end) {
+</PRE><P>第一种也是最简单的情形：整个区域都被取消映射</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>799</B>当 addr 是 VMA 的起始位置，且 end 是 VMA 的结束位置时，
+说明整个区域都被取消映射。这一点很有意思，因为如果取消映射跨越多个区域，
+end 可能在该 VMA 的结束位置<EM>之后</EM>，
+但本 VMA 整体仍然在被取消映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>800-801</B>若该 VMA 提供了 close 操作，则调用它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>802-803</B>若映射了文件或设备，则调用 <TT>fput()</TT>，
+它会递减使用计数，若计数降到 0 则释放该对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>804</B>将该 VMA 的内存释放回 slab 分配器</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>805</B>由于备用 VMA 未被使用，将其返回</DD></DL><PRE CLASS="verbatim">809     if (end == area-&gt;vm_end) {
 810         /*
 811          * here area isn't visible to the semaphore-less readers
 812          * so we don't need to update it under the spinlock.
@@ -1614,20 +1605,17 @@ decrements the usage count and releases it if the count falls to 0</DD><DT CLASS
 815         lock_vma_mappings(area);
 816         spin_lock(&amp;mm-&gt;page_table_lock);
 817     }
-</PRE><P>Handle the case where the middle of the region to the end is been unmapped</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>814</B>Truncate the VMA back to <TT>addr</TT>. At this point, the pages for
-the region have already freed and the page table entries will be freed later so
-no further work is required</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>815</B>If a file/device is being mapped, the lock protecting shared access
-to it is taken in the function <TT>lock_vm_mappings()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>816</B>Lock the mm. Later in the function, the remaining VMA will be
-reinserted into the mm</DD></DL><PRE CLASS="verbatim">817           else if (addr == area-&gt;vm_start) {
+</PRE><P>处理从区域中间到末尾被取消映射的情形</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>814</B>把 VMA 截断到 <TT>addr</TT>。此时，
+该区域内的页面已经被释放，
+页表项稍后也会被释放，因此无需更多处理</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>815</B>若映射了文件/设备，
+则在 <TT>lock_vm_mappings()</TT> 函数中获取保护共享访问的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>816</B>锁定 mm。函数后续会将剩余 VMA 重新插入 mm</DD></DL><PRE CLASS="verbatim">817           else if (addr == area-&gt;vm_start) {
 818         area-&gt;vm_pgoff += (end - area-&gt;vm_start) &gt;&gt; PAGE_SHIFT;
 819         /* same locking considerations of the above case */
 820         area-&gt;vm_start = end;
 821         lock_vma_mappings(area);
 822         spin_lock(&amp;mm-&gt;page_table_lock);
 823     } else {
-</PRE><P>Handle the case where the VMA is been unmapped from the start to some part in
-the middle</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>818</B>Increase the offset within the file/device mapped by the number of
-pages this unmapping represents</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>820</B>Move the start of the VMA to the end of the region being unmapped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>821-822</B>Lock the file/device and mm as above</DD></DL><PRE CLASS="verbatim">823     } else {
+</PRE><P>处理 VMA 从起始位置到中间某处被取消映射的情形</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>818</B>将所映射文件/设备内的偏移按本次取消映射的页数增加</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>820</B>将 VMA 的起始位置移到被取消映射区域的结束位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>821-822</B>如上对文件/设备和 mm 上锁</DD></DL><PRE CLASS="verbatim">823     } else {
 825         /* Add end mapping -- leave beginning for below */
 826         mpnt = extra;
 827         extra = NULL;
@@ -1656,18 +1644,16 @@ pages this unmapping represents</DD><DT CLASS="dt-description"></DT><DD CLASS="d
 849         spin_lock(&amp;mm-&gt;page_table_lock);
 850         __insert_vm_struct(mm, mpnt);
 851     }
-</PRE><P>Handle the case where a hole is being created by a partial unmapping. In this
-case, the extra VMA is required to create a new mapping from the end of the
-unmapped region to the end of the old VMA</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>826-827</B>Take the extra VMA and make VMA NULL so that the calling
-function will know it is in use and cannot be freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>828-838</B>Copy in all the VMA information</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>839</B>If a file/device is mapped, get a reference to it with
-<TT>get_file()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>841-842</B>If an open function is provided, call it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>843</B>Truncate the VMA so that it ends at the start of the region to be
-unmapped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>848-849</B>Lock the files and mm as with the two previous cases</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>850</B>Insert the extra VMA into the mm</DD></DL><PRE CLASS="verbatim">852 
+</PRE><P>处理部分取消映射导致中间出现空洞的情形。此时，
+需要用备用 VMA 来创建一个从被取消映射区域末尾到旧 VMA 末尾的新映射</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>826-827</B>取走备用 VMA，并将 extra 置为 NULL，
+让调用函数知道它已被使用，不能再释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>828-838</B>复制全部 VMA 信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>839</B>若映射了文件/设备，
+用 <TT>get_file()</TT> 获取一个引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>841-842</B>若提供了 open 函数，则调用之</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>843</B>截断 VMA，使其在要取消映射区域的起始位置结束</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>848-849</B>与前两种情形一样，对文件和 mm 上锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>850</B>将备用 VMA 插入 mm</DD></DL><PRE CLASS="verbatim">852 
 853     __insert_vm_struct(mm, area);
 854     spin_unlock(&amp;mm-&gt;page_table_lock);
 855     unlock_vma_mappings(area);
 856     return extra;
 857 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>853</B>Reinsert the VMA into the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>854</B>Unlock the page tables</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>855</B>Unlock the spinlock to the shared mapping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>856</B>Return the extra VMA if it was not used and NULL if it was</DD></DL><H3 CLASS="subsection"><A NAME="htoc175">D.2.6</A>  Deleting all memory regions</H3><H4 CLASS="subsubsection"><A NAME="htoc176">D.2.6.1</A>  Function: exit_mmap</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: exit_mmap"></A> <A NAME="@codeindex88"></A></P><P>This function simply steps through all VMAs associated with the supplied mm and
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>853</B>将该 VMA 重新插入 mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>854</B>解锁页表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>855</B>解锁共享映射的自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>856</B>若未使用备用 VMA，则返回该 VMA；否则返回 NULL</DD></DL><H3 CLASS="subsection"><A NAME="htoc175">D.2.6</A>  Deleting all memory regions</H3><H4 CLASS="subsubsection"><A NAME="htoc176">D.2.6.1</A>  Function: exit_mmap</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: exit_mmap"></A> <A NAME="@codeindex88"></A></P><P>This function simply steps through all VMAs associated with the supplied mm and
 unmaps them.</P><PRE CLASS="verbatim">1127 void exit_mmap(struct mm_struct * mm)
 1128 {
 1129     struct vm_area_struct * mpnt;
