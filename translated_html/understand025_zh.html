@@ -1011,7 +1011,93 @@
 </DD></DL><P>
 	</P><H2 CLASS="section"><A NAME="toc122"></A><A NAME="htoc355">H.5</A>　Per-CPU 对象缓存</H2><P>
 <A NAME="c_sec: Per-CPU Object Cache"></A></P><P>Per-CPU 对象缓存的结构以及如何在其中添加或移除对象，在 <A HREF="understand011_zh.html#Sec: Describing the Per-CPU Object Cache">8.5.1 节</A> 和 <A HREF="understand011_zh.html#Sec: Adding/Removing Objects from the Per-CPU Cache">8.5.2 节</A> 中详细介绍。</P><H3 CLASS="subsection"><A NAME="htoc356">H.5.1</A>　启用 Per-CPU 缓存</H3><H4 CLASS="subsubsection"><A NAME="htoc357">H.5.1.1</A>函数：enable_all_cpucaches</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: enable_all_cpucaches"></A> <A NAME="@codeindex256"></A></P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
-<DIV CLASS="center"><IMG SRC="figures/understand-html081.png"></DIV>
+<DIV CLASS="center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 420" role="img"
+     aria-labelledby="fig081-title fig081-desc"
+     style="max-width:100%;height:auto;font-family:Consolas,monospace;">
+  <title id="fig081-title">图 H.1：调用图：enable_all_cpucaches()</title>
+  <desc id="fig081-desc">enable_all_cpucaches() 调用 down()、enable_cpucache() 和 up()；enable_cpucache() 调用 kmem_tune_cpucache() 和 printk()；kmem_tune_cpucache() 调用 kmalloc()、smp_call_function_all_cpus()、free_block() 和 kfree()；smp_call_function_all_cpus() 调用 do_ccupdate_local()。</desc>
+  <defs>
+    <marker id="arr-fig081" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#666"/>
+    </marker>
+    <style>
+      .nd-top081 { fill:#e8eef9; stroke:#1a3a6b; stroke-width:1.8; }
+      .nd081     { fill:#ffffff; stroke:#1a3a6b; stroke-width:1.3; }
+      .edge081   { fill:none; stroke:#666; stroke-width:1.2; }
+      .earr081   { fill:none; stroke:#666; stroke-width:1.2; marker-end:url(#arr-fig081); }
+      .lbl081    { fill:#1a3a6b; text-anchor:middle; dominant-baseline:central; }
+    </style>
+  </defs>
+
+  <!-- Row 0: enable_all_cpucaches() -->
+  <rect class="nd-top081" x="260" y="14" width="240" height="32" rx="5"/>
+  <text class="lbl081" style="font-size:13px;font-weight:600;" x="380" y="30">enable_all_cpucaches()</text>
+
+  <!-- trunk from row 0 down to branch 1 -->
+  <line class="edge081" x1="380" y1="46" x2="380" y2="88"/>
+  <!-- horizontal branch 1 spanning down(), enable_cpucache(), up() -->
+  <line class="edge081" x1="90"  y1="88" x2="670" y2="88"/>
+  <!-- arrows down to row 1 -->
+  <line class="earr081" x1="90"  y1="88" x2="90"  y2="102"/>
+  <line class="earr081" x1="380" y1="88" x2="380" y2="102"/>
+  <line class="earr081" x1="670" y1="88" x2="670" y2="102"/>
+
+  <!-- Row 1: down(), enable_cpucache(), up() -->
+  <rect class="nd081" x="50"  y="102" width="80"  height="32" rx="4"/>
+  <text class="lbl081" style="font-size:12px;" x="90"  y="118">down()</text>
+
+  <rect class="nd081" x="285" y="102" width="190" height="32" rx="4"/>
+  <text class="lbl081" style="font-size:12px;" x="380" y="118">enable_cpucache()</text>
+
+  <rect class="nd081" x="635" y="102" width="70"  height="32" rx="4"/>
+  <text class="lbl081" style="font-size:12px;" x="670" y="118">up()</text>
+
+  <!-- trunk from enable_cpucache down to branch 2 -->
+  <line class="edge081" x1="380" y1="134" x2="380" y2="174"/>
+  <!-- horizontal branch 2 spanning kmem_tune_cpucache(), printk() -->
+  <line class="edge081" x1="280" y1="174" x2="560" y2="174"/>
+  <!-- arrows down to row 2 -->
+  <line class="earr081" x1="280" y1="174" x2="280" y2="190"/>
+  <line class="earr081" x1="560" y1="174" x2="560" y2="190"/>
+
+  <!-- Row 2: kmem_tune_cpucache(), printk() -->
+  <rect class="nd081" x="175" y="190" width="210" height="32" rx="4"/>
+  <text class="lbl081" style="font-size:12px;" x="280" y="206">kmem_tune_cpucache()</text>
+
+  <rect class="nd081" x="510" y="190" width="100" height="32" rx="4"/>
+  <text class="lbl081" style="font-size:12px;" x="560" y="206">printk()</text>
+
+  <!-- trunk from kmem_tune_cpucache down to branch 3 -->
+  <line class="edge081" x1="280" y1="222" x2="280" y2="262"/>
+  <!-- horizontal branch 3 spanning row 3 children -->
+  <line class="edge081" x1="100" y1="262" x2="640" y2="262"/>
+  <!-- arrows down to row 3 -->
+  <line class="earr081" x1="100" y1="262" x2="100" y2="278"/>
+  <line class="earr081" x1="300" y1="262" x2="300" y2="278"/>
+  <line class="earr081" x1="510" y1="262" x2="510" y2="278"/>
+  <line class="earr081" x1="640" y1="262" x2="640" y2="278"/>
+
+  <!-- Row 3: kmalloc(), smp_call_function_all_cpus(), free_block(), kfree() -->
+  <rect class="nd081" x="50"  y="278" width="100" height="32" rx="4"/>
+  <text class="lbl081" style="font-size:12px;" x="100" y="294">kmalloc()</text>
+
+  <rect class="nd081" x="185" y="278" width="230" height="32" rx="4"/>
+  <text class="lbl081" style="font-size:11px;" x="300" y="294">smp_call_function_all_cpus()</text>
+
+  <rect class="nd081" x="450" y="278" width="120" height="32" rx="4"/>
+  <text class="lbl081" style="font-size:12px;" x="510" y="294">free_block()</text>
+
+  <rect class="nd081" x="595" y="278" width="90"  height="32" rx="4"/>
+  <text class="lbl081" style="font-size:12px;" x="640" y="294">kfree()</text>
+
+  <!-- arrow from smp_call_function_all_cpus down to do_ccupdate_local() -->
+  <line class="earr081" x1="300" y1="310" x2="300" y2="366"/>
+
+  <!-- Row 4: do_ccupdate_local() -->
+  <rect class="nd081" x="195" y="366" width="210" height="32" rx="4"/>
+  <text class="lbl081" style="font-size:12px;" x="300" y="382">do_ccupdate_local()</text>
+</svg></DIV>
 <DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>图 H.1：调用图：<TT>enable_all_cpucaches()</TT></TD></TR>
 </TABLE></DIV>
 <A NAME="fig: enable_all_cpucaches"></A>
