@@ -317,7 +317,64 @@
   <p>整个 zone 也可以只用一个等待队列，但这意味着只要 zone 中任一页解锁，所有在该 zone 中等待的进程都会被唤醒，造成严重的<em>惊群（thundering herd）</em>问题。因此 <tt>zone_t-&gt;wait_table</tt> 存放的是一张等待队列哈希表。哈希冲突时可能仍会无谓地唤醒进程，但冲突预计不会频繁出现。</p>
 
   <div class="figure">
-    <img src="../original_html/figures/understand-html004.png" alt="图 2.4">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 580 300" width="580" role="img" aria-labelledby="fig004-title fig004-desc" font-family="sans-serif" font-size="12">
+      <title id="fig004-title">图 2.4：在锁住的页上等待</title>
+      <desc id="fig004-desc">展示 zone_t 中的等待队列哈希表（wait_table）。一个锁住的页面通过哈希算法映射到某一等待队列，多个进程（进程 A、进程 B）在该队列中休眠等待页面解锁。</desc>
+      <defs>
+        <marker id="arr004" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+        </marker>
+      </defs>
+
+      <!-- zone_t box -->
+      <rect x="15" y="20" width="175" height="180" rx="4" fill="#f8f9fa" stroke="#444" stroke-width="1.5"/>
+      <text x="103" y="40" text-anchor="middle" font-weight="bold" font-size="13">zone_t</text>
+
+      <!-- wait_table label inside zone -->
+      <text x="103" y="62" text-anchor="middle" font-size="11" fill="#333">wait_table（哈希表）</text>
+
+      <!-- Wait queue slots in wait_table -->
+      <rect x="35" y="70" width="135" height="24" rx="2" fill="#e8f4fd" stroke="#1f4e8a"/>
+      <text x="103" y="86" text-anchor="middle" font-size="10">等待队列 [0]</text>
+      <rect x="35" y="97" width="135" height="24" rx="2" fill="#cfe2ff" stroke="#1f4e8a" stroke-width="1.5"/>
+      <text x="103" y="113" text-anchor="middle" font-size="10" font-weight="bold">等待队列 [i]  ←</text>
+      <rect x="35" y="124" width="135" height="24" rx="2" fill="#e8f4fd" stroke="#1f4e8a"/>
+      <text x="103" y="140" text-anchor="middle" font-size="10">等待队列 [i+1]</text>
+      <text x="103" y="165" text-anchor="middle" font-size="14" fill="#888">⋮</text>
+      <rect x="35" y="172" width="135" height="24" rx="2" fill="#e8f4fd" stroke="#1f4e8a"/>
+      <text x="103" y="188" text-anchor="middle" font-size="10">等待队列 [n-1]</text>
+
+      <!-- Arrow from wait queue [i] to sleeping processes -->
+      <line x1="170" y1="109" x2="230" y2="109" stroke="#444" stroke-width="1.2" marker-end="url(#arr004)"/>
+
+      <!-- Sleeping process A -->
+      <rect x="230" y="90" width="100" height="30" rx="3" fill="#fff3cd" stroke="#856404" stroke-width="1.2"/>
+      <text x="280" y="109" text-anchor="middle">进程 A（等待）</text>
+
+      <!-- Arrow from A to B -->
+      <line x1="330" y1="105" x2="370" y2="105" stroke="#444" stroke-width="1" marker-end="url(#arr004)"/>
+
+      <!-- Sleeping process B -->
+      <rect x="370" y="90" width="100" height="30" rx="3" fill="#fff3cd" stroke="#856404" stroke-width="1.2"/>
+      <text x="420" y="109" text-anchor="middle">进程 B（等待）</text>
+
+      <!-- Locked page -->
+      <rect x="250" y="175" width="110" height="36" rx="3" fill="#f8d7da" stroke="#842029" stroke-width="1.5"/>
+      <text x="305" y="191" text-anchor="middle" font-size="11">struct page</text>
+      <text x="305" y="205" text-anchor="middle" font-size="10" fill="#842029">🔒 PG_locked</text>
+
+      <!-- Hash arrow from locked page to wait queue [i] -->
+      <path d="M305,175 Q305,145 220,130 Q195,124 170,114" stroke="#842029" stroke-width="1.2" fill="none" stroke-dasharray="5,3" marker-end="url(#arr004)"/>
+      <text x="245" y="148" font-size="10" fill="#842029">page_waitqueue()</text>
+      <text x="245" y="160" font-size="10" fill="#842029">（乘法哈希）</text>
+
+      <!-- wait_on_page / UnlockPage annotations -->
+      <text x="280" y="240" text-anchor="middle" font-size="10" fill="#444">wait_on_page() → 加入等待队列</text>
+      <text x="280" y="255" text-anchor="middle" font-size="10" fill="#444">UnlockPage() → 唤醒队列中所有进程</text>
+
+      <!-- Title -->
+      <text x="290" y="282" text-anchor="middle" font-size="13" font-weight="bold">在锁住的页上等待</text>
+    </svg>
     <div class="caption">图 2.4：在锁住的页上等待</div>
   </div>
 
