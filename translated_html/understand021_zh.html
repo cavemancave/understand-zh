@@ -2887,16 +2887,7 @@ Linux 故意不分配第 0 页，以捕获这种常见的编程错误</DD><DT CL
 1004 }
 </PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>997-1000</B>这是一次错误的 COW 打破，只会在内核存在 bug 时发生。
 打印一条提示信息并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1001-1003</B>页面分配失败，因此释放对旧页面的引用并返回 -1</DD></DL><P>
-	</P><H2 CLASS="section"><A NAME="toc107"></A><A NAME="htoc220">D.6</A>  Page-Related Disk IO</H2><H3 CLASS="subsection"><A NAME="htoc221">D.6.1</A>  Generic File Reading</H3><P>This is more the domain of the IO manager than the VM but because it performs
-the operations via the page cache, we will cover it briefly. The operation of
-<TT>generic_file_write()</TT> is essentially the same although it is not
-covered by this book. However, if you understand how the read takes place,
-the write function will pose no problem to you.</P><H4 CLASS="subsubsection"><A NAME="htoc222">D.6.1.1</A>  Function: generic_file_read</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: generic_file_read"></A> <A NAME="@codeindex123"></A></P><P>This is the generic file read function used by any filesystem that
-reads pages through the page cache. For normal IO, it is responsible
-for building a <TT>read_descriptor_t</TT> for use with
-<TT>do_generic_file_read()</TT> and <TT>file_read_actor()</TT>. For
-direct IO, this function is basically a wrapper around
-<TT>generic_file_direct_IO()</TT>.</P><PRE CLASS="verbatim">1695 ssize_t generic_file_read(struct file * filp, 
+	</P><H2 CLASS="section"><A NAME="toc107"></A><A NAME="htoc220">D.6</A>  与页面相关的磁盘 IO</H2><H3 CLASS="subsection"><A NAME="htoc221">D.6.1</A>  通用文件读取</H3><P>这部分更多属于 IO 管理器的范畴而非 VM，但由于它通过页面缓存来执行这些操作，因此我们也简要介绍一下。<TT>generic_file_write()</TT> 的操作基本上是相同的，尽管本书并不涵盖它。不过，如果你理解了读取是如何进行的，那么写入函数对你而言也不会有问题。</P><H4 CLASS="subsubsection"><A NAME="htoc222">D.6.1.1</A>  函数：generic_file_read</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: generic_file_read"></A> <A NAME="@codeindex123"></A></P><P>这是任何通过页面缓存读取页面的文件系统所使用的通用文件读取函数。对于普通 IO，它负责构建一个 <TT>read_descriptor_t</TT> 供 <TT>do_generic_file_read()</TT> 和 <TT>file_read_actor()</TT> 使用。对于直接 IO，该函数基本上只是对 <TT>generic_file_direct_IO()</TT> 的一个简单封装。</P><PRE CLASS="verbatim">1695 ssize_t generic_file_read(struct file * filp, 
                                char * buf, size_t count, 
                                loff_t *ppos)
 1696 {
@@ -2929,10 +2920,7 @@ direct IO, this function is basically a wrapper around
 1722     }
 1723  out:
 1724     return retval;
-</PRE><P>This block is concern with normal file IO.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1702-1703</B>If this is direct IO, jump to the <TT>o_direct</TT> label</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1706</B>If the access permissions to write to a userspace page are ok, then
-proceed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1709</B>If <TT>count</TT> is 0, there is no IO to perform</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1712-1715</B>Populate a <TT>read_descriptor_t</TT> structure which will
-be used by <TT>file_read_actor()</TT>(See Section <A HREF="understand029.html#func: file_read_actor">L.3.2.3</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1716</B>Perform the file read</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1718</B>Extract the number of bytes written from the read descriptor
-struct</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1282-1683</B>If an error occured, extract what the error was</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1724</B>Return either the number of bytes read or the error that occured</DD></DL><PRE CLASS="verbatim">1725 
+</PRE><P>这一段处理的是普通的文件 IO。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1702-1703</B>如果是直接 IO，则跳转到 <TT>o_direct</TT> 标签</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1706</B>如果用户空间页面的写权限检查通过，则继续</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1709</B>如果 <TT>count</TT> 为 0，则没有 IO 要执行</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1712-1715</B>填充一个 <TT>read_descriptor_t</TT> 结构体，它将被 <TT>file_read_actor()</TT>（见 <A HREF="understand029.html#func: file_read_actor">L.3.2.3</A> 节）使用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1716</B>执行文件读取</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1718</B>从 read descriptor 结构体中提取写入的字节数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1282-1683</B>如果出错，提取出错的具体信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1724</B>返回读取的字节数或者发生的错误</DD></DL><PRE CLASS="verbatim">1725 
 1726  o_direct:
 1727     {
 1728         loff_t pos = *ppos, size;
@@ -2956,15 +2944,7 @@ struct</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1282-16
 1744         goto out;
 1745     }
 1746 }
-</PRE><P>This block is concerned with direct IO. It is largely responsible for
-extracting the parameters required for <TT>generic_file_direct_IO()</TT>.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1729</B>Get the <TT>address_space</TT> used by this <TT>struct
-file</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1733-1734</B>If no IO has been requested, jump to <TT>out</TT> to avoid
-updating the inodes access time</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1737</B>Get the size of the file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1299-1700</B>If the current position is before the end of the file,
-the read is safe so call <TT>generic_file_direct_IO()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1740-1741</B>If the read was successful, update the current position in the
-file for the reader</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1743</B>Update the access time</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1744</B>Goto out which just returns <TT>retval</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc223">D.6.1.2</A>  Function: do_generic_file_read</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: do_generic_file_read"></A> <A NAME="@codeindex124"></A></P><P>This is the core part of the generic file read operation. It is responsible for
-allocating a page if it doesn't already exist in the page cache. If it does, it
-must make sure the page is up-to-date and finally, it is responsible for making
-sure that the appropriate readahead window is set.</P><PRE CLASS="verbatim">1349 void do_generic_file_read(struct file * filp, 
+</PRE><P>这一段处理直接 IO，主要负责提取调用 <TT>generic_file_direct_IO()</TT> 所需的参数。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1729</B>获取这个 <TT>struct file</TT> 所使用的 <TT>address_space</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1733-1734</B>如果没有请求 IO，则跳转到 <TT>out</TT>，避免更新 inode 的访问时间</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1737</B>获取文件大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1299-1700</B>如果当前位置位于文件末尾之前，则读取是安全的，调用 <TT>generic_file_direct_IO()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1740-1741</B>如果读取成功，更新读取者在文件中的当前位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1743</B>更新访问时间</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1744</B>跳到 out，仅返回 <TT>retval</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc223">D.6.1.2</A>  函数：do_generic_file_read</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: do_generic_file_read"></A> <A NAME="@codeindex124"></A></P><P>这是通用文件读取操作的核心部分。它负责在页面尚未存在于页面缓存中时分配页面；如果页面已存在，它必须确保页面是最新的（up-to-date）；最后，它还负责确保设置合适的预读窗口。</P><PRE CLASS="verbatim">1349 void do_generic_file_read(struct file * filp, 
                                loff_t *ppos, 
                                read_descriptor_t * desc, 
                                read_actor_t actor)
@@ -2982,9 +2962,7 @@ sure that the appropriate readahead window is set.</P><PRE CLASS="verbatim">1349
 1360     index = *ppos &gt;&gt; PAGE_CACHE_SHIFT;
 1361     offset = *ppos &amp; ~PAGE_CACHE_MASK;
 1362 
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1357</B>Get the maximum readahead window size for this block device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1360</B>Calculate the page index which holds the current file position
-pointer</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1361</B>Calculate the offset within the page that holds the current file
-position pointer</DD></DL><PRE CLASS="verbatim">1363 /*
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1357</B>获取该块设备的最大预读窗口大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1360</B>计算保存当前文件位置指针的页面索引</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1361</B>计算当前文件位置指针在页面内的偏移</DD></DL><PRE CLASS="verbatim">1363 /*
 1364  * If the current position is outside the previous read-ahead
 1365  * window, we reset the current read-ahead context and set read
 1366  * ahead max to zero (will be set to just needed value later),
@@ -3024,12 +3002,7 @@ position pointer</DD></DL><PRE CLASS="verbatim">1363 /*
 1398         if (filp-&gt;f_ramax &gt; max_readahead)
 1399             filp-&gt;f_ramax = max_readahead;
 1400     }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1370-1378</B>As the comment suggests, the readahead
-window gets reset if the current file position is outside the
-current readahead window. It gets reset to 0 here and adjusted by
-<TT>generic_file_readahead()</TT>(See Section <A HREF="#func: generic_file_readahead">D.6.1.3</A>)
-as necessary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1386-1400</B>As the comment states, the readahead window
-gets adjusted slightly if we are in the second-half of the current page</DD></DL><PRE CLASS="verbatim">1402     for (;;) {
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1370-1378</B>正如注释所指出的，如果当前文件位置超出当前预读窗口，则重置预读窗口。这里先把它重置为 0，必要时由 <TT>generic_file_readahead()</TT>（见 <A HREF="#func: generic_file_readahead">D.6.1.3</A> 节）进行调整</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1386-1400</B>正如注释所述，如果我们位于当前页面的后半部分，则会稍微调整预读窗口</DD></DL><PRE CLASS="verbatim">1402     for (;;) {
 1403         struct page *page, **hash;
 1404         unsigned long end_index, nr, ret;
 1405 
@@ -3055,24 +3028,14 @@ gets adjusted slightly if we are in the second-half of the current page</DD></DL
 1425         page = __find_page_nolock(mapping, index, *hash);
 1426         if (!page)
 1427             goto no_cached_page;
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1402</B>This loop goes through each of the pages necessary to satisfy the
-read request</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1406</B>Calculate where the end of the file is in pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1408-1409</B>If the current index is beyond the end, then break out as we
-are trying to read beyond the end of the file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1410-1417</B>Calculate <TT>nr</TT> to be the number of bytes remaining to
-be read in the current page. The block takes into account that this might be
-the last page used by the file and where the current file position is within
-the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1422-1425</B>Search for the page in the page cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1426-1427</B>If the page is not in the page cache, goto
-<TT>no_cached_page</TT> where it will be allocated</DD></DL><PRE CLASS="verbatim">1428 found_page:
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1402</B>该循环遍历满足读取请求所需的每个页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1406</B>以页为单位计算文件的末尾位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1408-1409</B>如果当前索引已经超过末尾，则跳出循环，因为我们试图读取超过文件末尾的内容</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1410-1417</B>将 <TT>nr</TT> 计算为当前页面中剩余待读取的字节数。这段代码考虑了当前页面可能是文件使用的最后一页，以及当前文件位置在页面中的位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1422-1425</B>在页面缓存中搜索该页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1426-1427</B>如果页面不在页面缓存中，则跳转到 <TT>no_cached_page</TT>，在那里会分配该页面</DD></DL><PRE CLASS="verbatim">1428 found_page:
 1429         page_cache_get(page);
 1430         spin_unlock(&amp;pagecache_lock);
 1431 
 1432         if (!Page_Uptodate(page))
 1433             goto page_not_up_to_date;
 1434         generic_file_readahead(reada_ok, filp, inode, page);
-</PRE><P>In this block, the page was found in the page cache.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1429</B>Take a reference to the page in the page cache so it does not get
-freed prematurly</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1432-1433</B>If the page is not up-to-date, goto
-<TT>page_not_up_to_date</TT> to update the page with information on the
-disk</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1434</B>Perform file readahead with
-<TT>generic_file_readahead()</TT>(See Section <A HREF="#func: generic_file_readahead">D.6.1.3</A>)</DD></DL><PRE CLASS="verbatim">1435 page_ok:
+</PRE><P>在这一段中，页面已在页面缓存中找到。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1429</B>对页面缓存中的页面增加引用计数，以防止它被过早释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1432-1433</B>如果页面不是最新的，跳转到 <TT>page_not_up_to_date</TT>，使用磁盘上的数据更新该页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1434</B>使用 <TT>generic_file_readahead()</TT>（见 <A HREF="#func: generic_file_readahead">D.6.1.3</A> 节）执行文件预读</DD></DL><PRE CLASS="verbatim">1435 page_ok:
 1436         /* If users can be writing to this page using arbitrary
 1437          * virtual addresses, take care about potential aliasing
 1438          * before reading the page on the kernel side.
@@ -3106,15 +3069,7 @@ disk</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1434</B>P
 1466         if (ret == nr &amp;&amp; desc-&gt;count)
 1467             continue;
 1468         break;
-</PRE><P>In this block, the page is present in the page cache and ready to be read by
-the file read actor function.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1440-1441</B>As other users could be writing this page, call
-<TT>flush_dcache_page()</TT> to make sure the changes are visible</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1447-1448</B>As the page has just been accessed, call
-<TT>mark_page_accessed()</TT> (See Section <A HREF="understand027.html#func: mark_page_accessed">J.2.3.1</A>) to move
-it to the <TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1460</B>Call the actor function. In this case, the actor function is
-<TT>file_read_actor()</TT> (See Section <A HREF="understand029.html#func: file_read_actor">L.3.2.3</A>) which is responsible
-for copying the bytes from the page to userspace</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1461</B>Update the current offset within the file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1462</B>Move to the next page if necessary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1463</B>Update the offset within the page we are currently reading.
-Remember that we could have just crossed into the next page in the file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1465</B>Release our reference to this page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1466-1468</B>If there is still data to be read, loop again to read the next
-page. Otherwise break as the read operation is complete</DD></DL><PRE CLASS="verbatim">1470 /*
+</PRE><P>在这一段中，页面已存在于页面缓存中，并且可以被文件读取 actor 函数读取了。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1440-1441</B>由于其他用户可能正在写入该页面，调用 <TT>flush_dcache_page()</TT> 以确保改动可见</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1447-1448</B>由于该页面刚被访问，调用 <TT>mark_page_accessed()</TT>（见 <A HREF="understand027.html#func: mark_page_accessed">J.2.3.1</A> 节）将其移到 <TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1460</B>调用 actor 函数。在本例中，actor 函数是 <TT>file_read_actor()</TT>（见 <A HREF="understand029.html#func: file_read_actor">L.3.2.3</A> 节），它负责将字节从页面复制到用户空间</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1461</B>更新文件中的当前偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1462</B>如有必要，移到下一页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1463</B>更新当前正在读取的页面内的偏移。记住我们可能刚刚跨入文件中的下一页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1465</B>释放对该页面的引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1466-1468</B>如果还有数据要读取，则继续循环以读取下一页。否则跳出循环，因为读取操作已完成</DD></DL><PRE CLASS="verbatim">1470 /*
 1471  * Ok, the page was not immediately readable, so let's try to read 
       * ahead while we're at it..
 1472  */
@@ -3139,17 +3094,7 @@ page. Otherwise break as the read operation is complete</DD></DL><PRE CLASS="ver
 1491             UnlockPage(page);
 1492             goto page_ok;
 1493         }
-</PRE><P>In this block, the page being read was not up-to-date with information on the
-disk. <TT>generic_file_readahead()</TT> is called to update the current page
-and readahead as IO is required anyway.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1474</B>Call <TT>generic_file_readahead()</TT>(See Section <A HREF="#func: generic_file_readahead">D.6.1.3</A>) 
-to sync the current page and readahead if necessary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1476-1477</B>If the page is now up-to-date, goto <TT>page_ok</TT> to
-start copying the bytes to userspace</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1480</B>Otherwise something happened with readahead so lock the page for
-exclusive access</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1483-1487</B>If the page was somehow removed from the page cache while
-spinlocks were not held, then release the reference to the page and start all
-over again. The second time around, the page will get allocated and inserted
-into the page cache all over again</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1490-1493</B>If someone updated the page while we did not have a lock on
-the page then unlock it again and goto <TT>page_ok</TT> to copy the bytes
-to userspace</DD></DL><PRE CLASS="verbatim">1495 readpage:
+</PRE><P>在这一段中，被读取的页面与磁盘上的信息不同步（not up-to-date）。调用 <TT>generic_file_readahead()</TT> 来更新当前页面并进行预读，因为无论如何都要进行 IO。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1474</B>调用 <TT>generic_file_readahead()</TT>（见 <A HREF="#func: generic_file_readahead">D.6.1.3</A> 节）在必要时同步当前页面并进行预读</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1476-1477</B>如果页面现在已是最新的，跳转到 <TT>page_ok</TT> 开始将字节复制到用户空间</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1480</B>否则预读过程中发生了某些情况，因此对页面加锁以进行独占访问</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1483-1487</B>如果在我们未持有自旋锁期间该页面以某种方式从页面缓存中被移除了，则释放对该页面的引用并重新开始。第二次时，页面将再次被分配并插入到页面缓存中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1490-1493</B>如果在我们对页面加锁之前别人已经更新了该页面，则再次解锁并跳转到 <TT>page_ok</TT> 以将字节复制到用户空间</DD></DL><PRE CLASS="verbatim">1495 readpage:
 1496         /* ... and start the actual read. The read will 
               * unlock the page. */
 1497         error = mapping-&gt;a_ops-&gt;readpage(filp, page);
@@ -3171,18 +3116,7 @@ to userspace</DD></DL><PRE CLASS="verbatim">1495 readpage:
 1512         desc-&gt;error = error;
 1513         page_cache_release(page);
 1514         break;
-</PRE><P>At this block, readahead failed to we synchronously read the page with the
-<TT>address_space</TT> supplied <TT>readpage()</TT> function.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1497</B>Call the <TT>address_space</TT> filesystem-specific
-<TT>readpage()</TT><A NAME="@codeindex125"></A> function. In many cases this will ultimatly
-call the function <TT>block_read_full_page()</TT><A NAME="@codeindex126"></A> declared in
-<TT>fs/buffer.c()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1499-1501</B>If no error occurred and the page is now up-to-date, goto
-<TT>page_ok</TT> to begin copying the bytes to userspace</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1504</B>Otherwise, schedule some readahead to occur as we are forced to
-wait on IO anyway</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1505-1507</B>Wait for IO on the requested page to complete. If it finished
-successfully, then goto <TT>page_ok</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1508</B>Otherwise an error occured so set <TT>-EIO</TT> to be returned
-to userspace</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1512-1514</B>An IO error occured so record it and release the reference to
-the current page. This error will be picked up from the
-<TT>read_descriptor_t</TT> struct by <TT>generic_file_read()</TT>
-(See Section <A HREF="#func: generic_file_read">D.6.1.1</A>)</DD></DL><PRE CLASS="verbatim">1516 no_cached_page:
+</PRE><P>在这一段中，预读失败，因此我们使用 <TT>address_space</TT> 提供的 <TT>readpage()</TT> 函数同步地读取该页面。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1497</B>调用 <TT>address_space</TT> 中文件系统特定的 <TT>readpage()</TT><A NAME="@codeindex125"></A> 函数。在很多情况下，这最终会调用声明于 <TT>fs/buffer.c()</TT> 中的函数 <TT>block_read_full_page()</TT><A NAME="@codeindex126"></A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1499-1501</B>如果没有发生错误且页面现在已是最新的，则跳转到 <TT>page_ok</TT> 开始将字节复制到用户空间</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1504</B>否则，由于无论如何都要等待 IO，因此安排一些预读</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1505-1507</B>等待对请求页面的 IO 完成。如果成功完成，则跳转到 <TT>page_ok</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1508</B>否则发生了错误，因此将 <TT>-EIO</TT> 设置为返回给用户空间的错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1512-1514</B>发生了 IO 错误，因此记录该错误并释放对当前页面的引用。<TT>generic_file_read()</TT>（见 <A HREF="#func: generic_file_read">D.6.1.1</A> 节）将从 <TT>read_descriptor_t</TT> 结构体中获取这个错误</DD></DL><PRE CLASS="verbatim">1516 no_cached_page:
 1517         /*
 1518          * Ok, it wasn't cached, so we need to create a new
 1519          * page..
@@ -3218,26 +3152,14 @@ the current page. This error will be picked up from the
 1549 
 1550         goto readpage;
 1551     }
-</PRE><P>In this block, the page does not exist in the page cache so allocate one and
-add it.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1523-1539</B>If a cache page has not already been allocated then allocate
-one and make sure that someone else did not insert one into the page cache
-while we were sleeping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1524</B>Release <TT>pagecache_lock</TT> as <TT>page_cache_alloc()</TT>
-may sleep</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1525-1529</B>Allocate a page and set <TT>-ENOMEM</TT> to be returned if
-the allocation failed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1535-1536</B>Acquire <TT>pagecache_lock</TT> again and search the page
-cache to make sure another process has not inserted it while the lock was
-dropped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1537</B>If another process added a suitable page to the cache already, jump
-to <TT>found_page</TT> as the one we just allocated is no longer necessary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1544-1545</B>Otherwise, add the page we just allocated to the page cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1547</B>Add the page to the LRU lists</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1548</B>Set <TT>cached_page</TT> to NULL as it is now in use</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1550</B>Goto <TT>readpage</TT> to schedule the page to be read from disk</DD></DL><PRE CLASS="verbatim">1552 
+</PRE><P>在这一段中，页面不存在于页面缓存中，因此分配一个并添加它。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1523-1539</B>如果尚未分配缓存页面，则分配一个，并确保在我们睡眠期间没有其他人将一个页面插入到页面缓存中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1524</B>释放 <TT>pagecache_lock</TT>，因为 <TT>page_cache_alloc()</TT> 可能会睡眠</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1525-1529</B>分配一个页面，如果分配失败则设置返回 <TT>-ENOMEM</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1535-1536</B>再次获取 <TT>pagecache_lock</TT>，并搜索页面缓存以确保在锁被释放期间没有其他进程插入了该页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1537</B>如果另一个进程已经向缓存中添加了一个合适的页面，则跳转到 <TT>found_page</TT>，因为我们刚分配的页面已经不再需要</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1544-1545</B>否则，将我们刚分配的页面加入到页面缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1547</B>将该页面加入到 LRU 链表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1548</B>将 <TT>cached_page</TT> 设为 NULL，因为它现在正在使用中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1550</B>跳转到 <TT>readpage</TT> 以安排从磁盘读取该页面</DD></DL><PRE CLASS="verbatim">1552 
 1553     *ppos = ((loff_t) index &lt;&lt; PAGE_CACHE_SHIFT) + offset;
 1554     filp-&gt;f_reada = 1;
 1555     if (cached_page)
 1556         page_cache_release(cached_page);
 1557     UPDATE_ATIME(inode);
 1558 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1553</B>Update our position within the file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1555-1556</B>If a page was allocated for addition to the page cache and
-then found to be unneeded, release it here</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1557</B>Update the access time to the file</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc224">D.6.1.3</A>  Function: generic_file_readahead</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: generic_file_readahead"></A> <A NAME="@codeindex127"></A></P><P>This function performs generic file read-ahead. Readahead is one of the few
-areas that is very heavily commented upon in the code. It is highly recommended
-that you read the comments in <TT>mm/filemap.c</TT> marked with &#X201C;Read-ahead
-context&#X201D;.</P><PRE CLASS="verbatim">1222 static void generic_file_readahead(int reada_ok,
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1553</B>更新我们在文件中的位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1555-1556</B>如果分配了一个页面准备加入页面缓存但后来发现并不需要，则在这里释放它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1557</B>更新文件的访问时间</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc224">D.6.1.3</A>  函数：generic_file_readahead</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: generic_file_readahead"></A> <A NAME="@codeindex127"></A></P><P>该函数执行通用文件预读。预读是代码中注释最丰富的几个区域之一。强烈推荐你阅读 <TT>mm/filemap.c</TT> 中标有&ldquo;Read-ahead context&rdquo;的注释。</P><PRE CLASS="verbatim">1222 static void generic_file_readahead(int reada_ok,
 1223     struct file * filp, struct inode * inode,
 1224     struct page * page)
 1225 {
@@ -3251,8 +3173,7 @@ context&#X201D;.</P><PRE CLASS="verbatim">1222 static void generic_file_readahea
 1233 
 1234     raend = filp-&gt;f_raend;
 1235     max_ahead = 0;
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1227</B>Get the index to start from based on the supplied <TT>page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1230</B>Get the maximum sized readahead for this block device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1232</B>Get the index, in pages, of the end of the file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1234</B>Get the end of the readahead window from the <TT>struct
-file</TT></DD></DL><PRE CLASS="verbatim">1236 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1227</B>根据提供的 <TT>page</TT> 获取开始的索引</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1230</B>获取该块设备的最大预读大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1232</B>以页为单位获取文件末尾的索引</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1234</B>从 <TT>struct file</TT> 中获取预读窗口的末尾</DD></DL><PRE CLASS="verbatim">1236 
 1237 /*
 1238  * The current page is locked.
 1239  * If the current position is inside the previous read IO request, 
@@ -3276,18 +3197,7 @@ file</TT></DD></DL><PRE CLASS="verbatim">1236
 1255             }
 1256         }
 1257     }
-</PRE><P>This block has encountered a page that is locked so it must decide whether to
-temporarily disable readahead.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1245</B>If the current page is locked for IO, then check if the current
-page is within the last readahead window. If it is, there is no point trying
-to readahead again. If it is not, or readahead has not been performed
-previously, update the readahead context</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1246</B>The first check is if readahead has been performed previously. The
-second is to see if the current locked page is after where the the previous
-readahead finished. The third check is if the current locked page is within
-the current readahead window</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1247</B>Update the end of the readahead window</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1248-1249</B>If the end of the readahead window is not after the end of the
-file, set <TT>max_ahead</TT> to be the maximum amount of readahead that
-should be used with this <TT>struct
-file</TT>(<TT>filp</TT>&#X2192;<TT>f_ramax</TT>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1250-1255</B>Set readahead to only occur with the current page, effectively
-disabling readahead</DD></DL><PRE CLASS="verbatim">1258 /*
+</PRE><P>这一段处理了遇到锁定页面的情形，必须决定是否临时禁用预读。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1245</B>如果当前页面因 IO 被锁定，则检查当前页面是否在上次的预读窗口内。如果是，则没必要再次尝试预读。如果不是，或者之前未执行过预读，则更新预读上下文</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1246</B>第一项检查是之前是否执行过预读。第二项是看当前锁定的页面是否在上次预读结束之后。第三项检查是当前锁定的页面是否在当前预读窗口内</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1247</B>更新预读窗口的末尾</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1248-1249</B>如果预读窗口的末尾未超过文件末尾，将 <TT>max_ahead</TT> 设为该 <TT>struct file</TT>（<TT>filp</TT>&#X2192;<TT>f_ramax</TT>）应使用的最大预读量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1250-1255</B>设置只对当前页面进行预读，实际上是禁用了预读</DD></DL><PRE CLASS="verbatim">1258 /*
 1259  * The current page is not locked.
 1260  * If we were reading ahead and,
 1261  * if the current max read ahead size is not zero and,
@@ -3315,10 +3225,7 @@ disabling readahead</DD></DL><PRE CLASS="verbatim">1258 /*
 1281             reada_ok      = 2;
 1282         }
 1283     }
-</PRE><P>This is one of the rare cases where the in-code commentary makes the code as
-clear as it possibly could be. Basically, it is saying that if the current page
-is not locked for IO, then extend the readahead window slight and remember that
-readahead is currently going well.</P><PRE CLASS="verbatim">1284 /*
+</PRE><P>这是少数几种情况之一，其代码内注释已经将代码本身解释得再清楚不过了。基本上它的意思是：如果当前页面没有被 IO 锁定，那么就略微扩展预读窗口，并记录当前预读进展良好。</P><PRE CLASS="verbatim">1284 /*
 1285  * Try to read ahead pages.
 1286  * We hope that ll_rw_blk() plug/unplug, coalescence, requests
 1287  * sort and the scheduler, will work enough for us to avoid too 
@@ -3332,9 +3239,7 @@ readahead is currently going well.</P><PRE CLASS="verbatim">1284 /*
 1294         if (page_cache_read(filp, raend + ahead) &lt; 0)
 1295             break;
 1296     }
-</PRE><P>This block performs the actual readahead by calling
-<TT>page_cache_read()</TT> for each of the pages in the readahead window.
-Note here how <TT>ahead</TT> is incremented for each page that is readahead.</P><PRE CLASS="verbatim">1297 /*
+</PRE><P>这一段通过为预读窗口中的每个页面调用 <TT>page_cache_read()</TT> 来执行实际的预读。注意这里 <TT>ahead</TT> 是如何对每个被预读的页面进行递增的。</P><PRE CLASS="verbatim">1297 /*
 1298  * If we tried to read ahead some pages,
 1299  * If we tried to read ahead asynchronously,
 1300  *   Try to force unplug of the device in order to start an
@@ -3362,15 +3267,7 @@ Note here how <TT>ahead</TT> is incremented for each page that is readahead.</P>
 1322 
 1323     return;
 1324 }
-</PRE><P>If readahead was successful, then update the readahead fields in the
-<TT>struct file</TT> to mark the progress. This is basically growing the
-readahead context but can be reset by <TT>do_generic_file_readahead()</TT>
-if it is found that the readahead is ineffective.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1309</B>Update the <TT>f_ralen</TT> with the number of pages that were
-readahead in this pass</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1310</B>Update the size of the readahead window</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1311</B>Mark the end of hte readahead</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1313</B>Double the current maximum-sized readahead</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1315-1316</B>Do not let the maximum sized readahead get larger than the
-maximum readahead defined for this block device</DD></DL><H3 CLASS="subsection"><A NAME="htoc225">D.6.2</A>  Generic File <TT>mmap()</TT></H3><H4 CLASS="subsubsection"><A NAME="htoc226">D.6.2.1</A>  Function: generic_file_mmap</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: generic_file_mmap"></A> <A NAME="@codeindex128"></A></P><P>This is the generic <TT>mmap()</TT> function used by many <TT>struct
-file</TT>s as their <TT>struct file_operations</TT>. It is mainly responsible
-for ensuring the appropriate <TT>address_space</TT> functions exist
-and setting what VMA operations to use.</P><PRE CLASS="verbatim">2249 int generic_file_mmap(struct file * file, 
+</PRE><P>如果预读成功，则更新 <TT>struct file</TT> 中的预读字段以标记进度。这实质上是在扩大预读上下文，但如果 <TT>do_generic_file_readahead()</TT> 发现预读效果不佳，则可重置该上下文。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1309</B>用本次预读的页面数更新 <TT>f_ralen</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1310</B>更新预读窗口的大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1311</B>标记预读的末尾</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1313</B>将当前最大预读大小翻倍</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1315-1316</B>不要让最大预读大小超过该块设备定义的最大预读</DD></DL><H3 CLASS="subsection"><A NAME="htoc225">D.6.2</A>  通用文件 <TT>mmap()</TT></H3><H4 CLASS="subsubsection"><A NAME="htoc226">D.6.2.1</A>  函数：generic_file_mmap</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: generic_file_mmap"></A> <A NAME="@codeindex128"></A></P><P>这是许多 <TT>struct file</TT> 在其 <TT>struct file_operations</TT> 中使用的通用 <TT>mmap()</TT> 函数。它主要负责确保合适的 <TT>address_space</TT> 函数存在，并设置要使用的 VMA 操作。</P><PRE CLASS="verbatim">2249 int generic_file_mmap(struct file * file, 
                            struct vm_area_struct * vma)
 2250 {
 2251     struct address_space *mapping = 
@@ -3388,21 +3285,7 @@ and setting what VMA operations to use.</P><PRE CLASS="verbatim">2249 int generi
 2261     vma-&gt;vm_ops = &amp;generic_file_vm_ops;
 2262     return 0;
 2263 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2251</B>Get the <TT>address_space</TT> that is managing the file being
-mapped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2252</B>Get the <TT>struct inode</TT> for this
-<TT>address_space</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2254-2257</B>If the VMA is to be shared and writable, make sure an
-<TT>a_ops</TT>&#X2192;<TT>writepage()</TT> function exists. Return
-<TT>-EINVAL</TT> if it does not</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2258-2259</B>Make sure a <TT>a_ops</TT>&#X2192;<TT>readpage()</TT> function
-exists</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2260</B>Update the access time for the inode</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2261</B>Use <TT>generic_file_vm_ops</TT><A NAME="@codeindex129"></A> for the file operations.
-The generic VM operations structure, defined in <TT>mm/filemap.c</TT>, only
-supplies <TT>filemap_nopage()</TT> (See Section <A HREF="#func: filemap_nopage">D.6.4.1</A>) as it's
-<TT>nopage()</TT> function. No other callback is defined</DD></DL><H3 CLASS="subsection"><A NAME="htoc227">D.6.3</A>  Generic File Truncation</H3><P>This section covers the path where a file is being truncated. The actual
-system call <TT>truncate()</TT><A NAME="@codeindex130"></A> is implemented by <TT>sys_truncate()</TT>
-in <TT>fs/open.c</TT>. By the time the top-level function in the VM is
-called (<TT>vmtruncate()</TT>), the dentry information for the file has been
-updated and the inode's semaphore has been acquired.</P><H4 CLASS="subsubsection"><A NAME="htoc228">D.6.3.1</A>  Function: vmtruncate</H4><P> <EM>Source: mm/memory.c</EM> <A NAME="func: vmtruncate"></A> <A NAME="@codeindex131"></A></P><P>This is the top-level VM function responsible for truncating a file. When it
-completes, all page table entries mapping pages that have been truncated have
-been unmapped and reclaimed if possible.</P><PRE CLASS="verbatim">1042 int vmtruncate(struct inode * inode, loff_t offset)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2251</B>获取管理被映射文件的 <TT>address_space</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2252</B>获取该 <TT>address_space</TT> 的 <TT>struct inode</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2254-2257</B>如果 VMA 是共享且可写的，则确保 <TT>a_ops</TT>&#X2192;<TT>writepage()</TT> 函数存在。如果不存在，则返回 <TT>-EINVAL</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2258-2259</B>确保 <TT>a_ops</TT>&#X2192;<TT>readpage()</TT> 函数存在</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2260</B>更新该 inode 的访问时间</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2261</B>使用 <TT>generic_file_vm_ops</TT><A NAME="@codeindex129"></A> 作为文件操作。定义在 <TT>mm/filemap.c</TT> 中的通用 VM 操作结构体只提供了 <TT>filemap_nopage()</TT>（见 <A HREF="#func: filemap_nopage">D.6.4.1</A> 节）作为它的 <TT>nopage()</TT> 函数。未定义其他回调</DD></DL><H3 CLASS="subsection"><A NAME="htoc227">D.6.3</A>  通用文件截断</H3><P>本节介绍文件被截断时的代码路径。系统调用 <TT>truncate()</TT><A NAME="@codeindex130"></A> 本身由 <TT>fs/open.c</TT> 中的 <TT>sys_truncate()</TT> 实现。当 VM 中的顶层函数（<TT>vmtruncate()</TT>）被调用时，文件的 dentry 信息已经更新，并且 inode 的信号量也已经被获取。</P><H4 CLASS="subsubsection"><A NAME="htoc228">D.6.3.1</A>  函数：vmtruncate</H4><P> <EM>来源：mm/memory.c</EM> <A NAME="func: vmtruncate"></A> <A NAME="@codeindex131"></A></P><P>这是 VM 中负责截断文件的顶层函数。它完成时，所有映射到被截断页面的页表项都已被解除映射，并在可能时被回收。</P><PRE CLASS="verbatim">1042 int vmtruncate(struct inode * inode, loff_t offset)
 1043 {
 1044     unsigned long pgoff;
 1045     struct address_space *mapping = inode-&gt;i_mapping;
@@ -3446,30 +3329,7 @@ been unmapped and reclaimed if possible.</P><PRE CLASS="verbatim">1042 int vmtru
 1083 out:
 1084     return -EFBIG;
 1085 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1042</B>The parameters passed are the <TT>inode</TT> being truncated
-and the new <TT>offset</TT> marking the new end of the file. The old length
-of the file is stored in <TT>inode</TT>&#X2192;<TT>i_size</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1045</B>Get the <TT>address_space</TT> responsible for the inode</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1048-1049</B>If the new file size is larger than the old size, then goto
-<TT>do_expand</TT> where the ulimits for the process will be checked before
-the file is grown</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1050</B>Here, the file is being shrunk so update
-<TT>inode</TT>&#X2192;<TT>i_size</TT> to match</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1051</B>Lock the spinlock protecting the two lists of VMAs using this
-inode</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1052-1053</B>If no VMAs are mapping the inode, goto
-<TT>out_unlock</TT> where the pages used by the file will be reclaimed
-by <TT>truncate_inode_pages()</TT> (See Section <A HREF="#func: truncate_inode_pages">D.6.3.6</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1055</B>Calculate <TT>pgoff</TT> as the offset within the file in pages
-where the truncation will begin</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1056-1057</B>Truncate pages from all private mappings with
-<TT>vmtruncate_list()</TT> (See Section <A HREF="#func: vmtruncate_list">D.6.3.2</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1058-1059</B>Truncate pages from all shared mappings</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1062</B>Unlock the spinlock protecting the VMA lists</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1063</B>Call <TT>truncate_inode_pages()</TT> (See Section <A HREF="#func: truncate_inode_pages">D.6.3.6</A>) 
-to reclaim the pages if they exist in the page cache for the file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1064</B>Goto <TT>out_truncate</TT> to call the filesystem specific
-<TT>truncate()</TT> function so the blocks used on disk will be freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1066-1071</B>If the file is being expanded, make sure that the process
-limits for maximum file size are not being exceeded and the hosting filesystem
-is able to support the new filesize</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1072</B>If the limits are fine, then update the inodes size and fall
-through to call the filesystem-specific truncate function which will fill
-the expanded filesize with zeros</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1075-1079</B>If the filesystem provides a <TT>truncate()</TT> function,
-then lock the kernel, call it and unlock the kernel again. Filesystems do not
-acquire the proper locks to prevent races between file truncation and file
-expansion due to writing or faulting so the big kernel lock is needed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1080</B>Return success</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1082-1084</B>If the file size would grow to being too big, send
-the <TT>SIGXFSZ</TT> signal to the calling process and return
-<TT>-EFBIG</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc229">D.6.3.2</A>  Function: vmtruncate_list</H4><P> <EM>Source: mm/memory.c</EM> <A NAME="func: vmtruncate_list"></A> <A NAME="@codeindex132"></A></P><P>This function cycles through all VMAs in an <TT>address_space</TT>s list
-and calls <TT>zap_page_range()</TT> for the range of addresses which map a
-file that is being truncated.</P><PRE CLASS="verbatim">1006 static void vmtruncate_list(struct vm_area_struct *mpnt, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1042</B>所传参数为被截断的 <TT>inode</TT> 和标记文件新末尾的新 <TT>offset</TT>。文件的旧长度保存在 <TT>inode</TT>&#X2192;<TT>i_size</TT> 中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1045</B>获取负责该 inode 的 <TT>address_space</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1048-1049</B>如果新文件大小大于旧大小，则跳转到 <TT>do_expand</TT>，在那里会在扩大文件之前检查进程的 ulimit</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1050</B>这里是在缩小文件，所以更新 <TT>inode</TT>&#X2192;<TT>i_size</TT> 与之匹配</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1051</B>锁定保护使用该 inode 的两个 VMA 链表的自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1052-1053</B>如果没有 VMA 映射该 inode，则跳转到 <TT>out_unlock</TT>，那里会通过 <TT>truncate_inode_pages()</TT>（见 <A HREF="#func: truncate_inode_pages">D.6.3.6</A> 节）回收该文件使用的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1055</B>将 <TT>pgoff</TT> 计算为以页为单位的截断起始偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1056-1057</B>通过 <TT>vmtruncate_list()</TT>（见 <A HREF="#func: vmtruncate_list">D.6.3.2</A> 节）截断所有私有映射中的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1058-1059</B>截断所有共享映射中的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1062</B>解锁保护 VMA 链表的自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1063</B>调用 <TT>truncate_inode_pages()</TT>（见 <A HREF="#func: truncate_inode_pages">D.6.3.6</A> 节）回收存在于该文件页面缓存中的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1064</B>跳转到 <TT>out_truncate</TT>，以调用文件系统特定的 <TT>truncate()</TT> 函数，从而释放磁盘上使用的块</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1066-1071</B>如果是扩大文件，确保未超出进程对最大文件大小的限制，并且所在文件系统能够支持新的文件大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1072</B>如果限制检查通过，则更新 inode 的大小，并继续向下调用文件系统特定的 truncate 函数，它会将扩展出的文件部分填充为零</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1075-1079</B>如果文件系统提供了 <TT>truncate()</TT> 函数，则锁定内核，调用该函数，然后再次解锁。文件系统并不获取合适的锁来防止因写入或缺页引发的文件扩展与文件截断之间的竞争，因此需要使用大内核锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1080</B>返回成功</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1082-1084</B>如果文件大小将增长得过大，则向调用进程发送 <TT>SIGXFSZ</TT> 信号并返回 <TT>-EFBIG</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc229">D.6.3.2</A>  函数：vmtruncate_list</H4><P> <EM>来源：mm/memory.c</EM> <A NAME="func: vmtruncate_list"></A> <A NAME="@codeindex132"></A></P><P>该函数遍历某个 <TT>address_space</TT> 链表中的所有 VMA，对那些映射了正被截断的文件的地址范围调用 <TT>zap_page_range()</TT>。</P><PRE CLASS="verbatim">1006 static void vmtruncate_list(struct vm_area_struct *mpnt, 
                                  unsigned long pgoff)
 1007 {
 1008     do {
@@ -3497,13 +3357,7 @@ file that is being truncated.</P><PRE CLASS="verbatim">1006 static void vmtrunca
 1030         zap_page_range(mm, start, len);
 1031     } while ((mpnt = mpnt-&gt;vm_next_share) != NULL);
 1032 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1008-1031</B>Loop through all VMAs in the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1009</B>Get the <TT>mm_struct</TT> that hosts this VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1010-1012</B>Calculate the start, end and length of the VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1016-1019</B>If the whole VMA is being truncated, call the function
-<TT>zap_page_range()</TT> (See Section <A HREF="#func: zap_page_range">D.6.3.3</A>) with the start
-and length of the full VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1022</B>Calculate the length of the VMA in pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1023-1025</B>Check if the VMA maps any of the region being truncated. If
-the VMA in unaffected, continue to the next VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1028-1029</B>Else the VMA is being partially truncated so calculate where
-the start and length of the region to truncate is in pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1030</B>Call <TT>zap_page_range()</TT> (See Section <A HREF="#func: zap_page_range">D.6.3.3</A>)
-to unmap the affected region</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc230">D.6.3.3</A>  Function: zap_page_range</H4><P> <EM>Source: mm/memory.c</EM> <A NAME="func: zap_page_range"></A> <A NAME="@codeindex133"></A></P><P>This function is the top-level pagetable-walk function which unmaps userpages
-in the specified range from a <TT>mm_struct</TT>.</P><PRE CLASS="verbatim">360 void zap_page_range(struct mm_struct *mm, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1008-1031</B>遍历链表中的所有 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1009</B>获取宿主该 VMA 的 <TT>mm_struct</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1010-1012</B>计算该 VMA 的起始、结束和长度</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1016-1019</B>如果整个 VMA 都要被截断，使用整个 VMA 的起始地址和长度调用 <TT>zap_page_range()</TT>（见 <A HREF="#func: zap_page_range">D.6.3.3</A> 节）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1022</B>以页为单位计算 VMA 的长度</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1023-1025</B>检查 VMA 是否映射了被截断区域的任何部分。如果该 VMA 不受影响，则继续下一个 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1028-1029</B>否则该 VMA 被部分截断，因此以页为单位计算待截断区域的起始位置和长度</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1030</B>调用 <TT>zap_page_range()</TT>（见 <A HREF="#func: zap_page_range">D.6.3.3</A> 节）解除受影响区域的映射</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc230">D.6.3.3</A>  函数：zap_page_range</H4><P> <EM>来源：mm/memory.c</EM> <A NAME="func: zap_page_range"></A> <A NAME="@codeindex133"></A></P><P>该函数是顶层的页表遍历函数，用于解除一个 <TT>mm_struct</TT> 中指定范围内用户页面的映射。</P><PRE CLASS="verbatim">360 void zap_page_range(struct mm_struct *mm, 
                         unsigned long address, unsigned long size)
 361 {
 362     mmu_gather_t *tlb;
@@ -3545,19 +3399,7 @@ in the specified range from a <TT>mm_struct</TT>.</P><PRE CLASS="verbatim">360 v
 398         mm-&gt;rss = 0;
 399     spin_unlock(&amp;mm-&gt;page_table_lock);
 400 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>364</B>Calculate the <TT>start</TT> and <TT>end</TT> address for zapping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>367</B>Calculate the PGD (<TT>dir</TT>) that contains the starting
-<TT>address</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>376-377</B>Make sure the start address is not after the end address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>378</B>Acquire the spinlock protecting the page tables. This is a very
-long-held lock and would normally be considered a bad idea but the comment
-above the block explains why it is ok in this case</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>379</B>Flush the CPU cache for this range</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>380</B><TT>tlb_gather_mmu()</TT><A NAME="@codeindex134"></A> records the MM that is being altered. 
-Later, <TT>tlb_remove_page()</TT><A NAME="@codeindex135"></A> will be called to unmap the PTE which
-stores the PTEs in a <TT>struct free_pte_ctx</TT> until the zapping is
-finished. This is to avoid having to constantly flush the TLB as PTEs are freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>382-386</B>For each PMD affected by the zapping, call
-<TT>zap_pmd_range()</TT> until the end address has been reached. Note that
-<TT>tlb</TT> is passed as well for <TT>tlb_remove_page()</TT> to use later</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>389</B><TT>tlb_finish_mmu()</TT><A NAME="@codeindex136"></A> frees all the PTEs that were
-unmapped by <TT>tlb_remove_page()</TT> and then flushes the TLBs. Doing
-the flushing this way avoids a storm of TLB flushing that would be otherwise
-required for each PTE unmapped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>395-398</B>Update RSS count</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>399</B>Release the pagetable lock</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc231">D.6.3.4</A>  Function: zap_pmd_range</H4><P> <EM>Source: mm/memory.c</EM> <A NAME="func: zap_pmd_range"></A> <A NAME="@codeindex137"></A></P><P>This function is unremarkable. It steps through the PMDs that are affected by
-the requested range and calls <TT>zap_pte_range()</TT> for each one.</P><PRE CLASS="verbatim">331 static inline int zap_pmd_range(mmu_gather_t *tlb, pgd_t * dir, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>364</B>计算用于回收的 <TT>start</TT> 和 <TT>end</TT> 地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>367</B>计算包含起始 <TT>address</TT> 的 PGD（<TT>dir</TT>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>376-377</B>确保起始地址不在结束地址之后</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>378</B>获取保护页表的自旋锁。这是一个持有时间非常长的锁，通常被视为糟糕的做法，但上面那段注释解释了为何在此情况下没问题</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>379</B>刷新此范围的 CPU 缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>380</B><TT>tlb_gather_mmu()</TT><A NAME="@codeindex134"></A> 记录正在改动的 MM。之后会调用 <TT>tlb_remove_page()</TT><A NAME="@codeindex135"></A> 来解除 PTE 的映射，它会将 PTE 暂存到一个 <TT>struct free_pte_ctx</TT> 中，直到回收完成。这样做是为了避免每次释放 PTE 时都要不断刷新 TLB</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>382-386</B>对每个受影响的 PMD 调用 <TT>zap_pmd_range()</TT>，直到到达结束地址。注意这里也传入了 <TT>tlb</TT>，以便后续 <TT>tlb_remove_page()</TT> 使用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>389</B><TT>tlb_finish_mmu()</TT><A NAME="@codeindex136"></A> 释放所有被 <TT>tlb_remove_page()</TT> 解除映射的 PTE，然后刷新 TLB。这样做避免了每解除一个 PTE 就刷新一次 TLB 所带来的风暴</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>395-398</B>更新 RSS 计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>399</B>释放页表锁</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc231">D.6.3.4</A>  函数：zap_pmd_range</H4><P> <EM>来源：mm/memory.c</EM> <A NAME="func: zap_pmd_range"></A> <A NAME="@codeindex137"></A></P><P>该函数没有什么特别之处。它遍历受请求范围影响的 PMD，并为每一个调用 <TT>zap_pte_range()</TT>。</P><PRE CLASS="verbatim">331 static inline int zap_pmd_range(mmu_gather_t *tlb, pgd_t * dir, 
                                     unsigned long address, 
         unsigned long size)
 332 {
@@ -3584,10 +3426,7 @@ the requested range and calls <TT>zap_pte_range()</TT> for each one.</P><PRE CLA
 353     } while (address &lt; end);
 354     return freed;
 355 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>337-338</B>If no PGD exists, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>339-343</B>If the PGD is bad, flag the error and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>344</B>Get the starting <TT>pmd</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>345-347</B>Calculate the <TT>end</TT> address of the zapping. If it is
-beyond the end of this PGD, then set <TT>end</TT> to the end of the PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>349-353</B>Step through all PMDs in this PGD. For each PMD, call
-<TT>zap_pte_range()</TT> (See Section <A HREF="#func: zap_pte_range">D.6.3.5</A>) to unmap the PTEs</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>354</B>Return how many pages were freed</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc232">D.6.3.5</A>  Function: zap_pte_range</H4><P> <EM>Source: mm/memory.c</EM> <A NAME="func: zap_pte_range"></A> <A NAME="@codeindex138"></A></P><P>This function calls <TT>tlb_remove_page()</TT><A NAME="@codeindex139"></A> for each PTE in the
-requested <TT>pmd</TT> within the requested address range.</P><PRE CLASS="verbatim">294 static inline int zap_pte_range(mmu_gather_t *tlb, pmd_t * pmd, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>337-338</B>如果 PGD 不存在，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>339-343</B>如果 PGD 是坏的，标记错误并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>344</B>获取起始 <TT>pmd</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>345-347</B>计算回收的 <TT>end</TT> 地址。如果它超出该 PGD 的末尾，则将 <TT>end</TT> 设为该 PGD 的末尾</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>349-353</B>遍历该 PGD 中的所有 PMD。对每个 PMD 调用 <TT>zap_pte_range()</TT>（见 <A HREF="#func: zap_pte_range">D.6.3.5</A> 节）解除 PTE 的映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>354</B>返回释放的页面数</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc232">D.6.3.5</A>  函数：zap_pte_range</H4><P> <EM>来源：mm/memory.c</EM> <A NAME="func: zap_pte_range"></A> <A NAME="@codeindex138"></A></P><P>该函数对请求的 <TT>pmd</TT> 中、指定地址范围内的每个 PTE 调用 <TT>tlb_remove_page()</TT><A NAME="@codeindex139"></A>。</P><PRE CLASS="verbatim">294 static inline int zap_pte_range(mmu_gather_t *tlb, pmd_t * pmd, 
                                     unsigned long address, 
         unsigned long size)
 295 {
@@ -3625,15 +3464,7 @@ requested <TT>pmd</TT> within the requested address range.</P><PRE CLASS="verbat
 327 
 328     return freed;
 329 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>300-301</B>If the PMD does not exist, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>302-306</B>If the PMD is bad, flag the error and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>307</B>Get the starting PTE offset</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>308</B>Align hte offset to a PMD boundary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>309</B>If the size of the region to unmap is past the PMD boundary, fix the
-size so that only this PMD will be affected</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>311</B>Align <TT>size</TT> to a page boundary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>312-326</B>Step through all PTEs in the region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>314-315</B>If no PTE exists, continue to the next one</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>316-322</B>If the PTE is present, then call <TT>tlb_remove_page()</TT> to
-unmap the page. If the page is reclaimable, increment the <TT>freed</TT>
-count</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>322-325</B>If the PTE is in use but the page is paged out
-or in the swap cache, then free the swap slot and page page with
-<TT>free_swap_and_cache()</TT> (See Section <A HREF="understand028.html#func: free_swap_and_cache">K.3.2.3</A>). It is
-possible that a page is reclaimed if it was in the swap cache that is
-unaccounted for here but it is not of paramount importance</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>328</B>Return the number of pages that were freed</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc233">D.6.3.6</A>  Function: truncate_inode_pages</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: truncate_inode_pages"></A> <A NAME="@codeindex140"></A></P><P>This is the top-level function responsible for truncating all pages from the
-page cache that occur after <TT>lstart</TT> in a <TT>mapping</TT>.</P><PRE CLASS="verbatim">327 void truncate_inode_pages(struct address_space * mapping, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>300-301</B>如果 PMD 不存在，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>302-306</B>如果 PMD 是坏的，标记错误并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>307</B>获取起始 PTE 偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>308</B>将偏移对齐到 PMD 边界</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>309</B>如果要解除映射的区域大小越过 PMD 边界，则修正大小，使其只影响当前的 PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>311</B>将 <TT>size</TT> 对齐到页边界</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>312-326</B>遍历该区域中的所有 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>314-315</B>如果 PTE 不存在，则继续下一个</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>316-322</B>如果 PTE 是存在的（present），则调用 <TT>tlb_remove_page()</TT> 解除页面映射。如果该页面可回收，则递增 <TT>freed</TT> 计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>322-325</B>如果 PTE 在使用中但页面已被换出或在 swap 缓存中，则使用 <TT>free_swap_and_cache()</TT>（见 <A HREF="understand028.html#func: free_swap_and_cache">K.3.2.3</A> 节）释放 swap 槽和页面。这里有可能未对 swap 缓存中被回收的页面进行计数，但这并不重要</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>328</B>返回释放的页面数</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc233">D.6.3.6</A>  函数：truncate_inode_pages</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: truncate_inode_pages"></A> <A NAME="@codeindex140"></A></P><P>这是顶层函数，负责从页面缓存中截断某个 <TT>mapping</TT> 内位于 <TT>lstart</TT> 之后的所有页面。</P><PRE CLASS="verbatim">327 void truncate_inode_pages(struct address_space * mapping, 
                               loff_t lstart) 
 328 {
 329     unsigned long start = (lstart + PAGE_CACHE_SIZE - 1) &gt;&gt; 
@@ -3653,14 +3484,7 @@ page cache that occur after <TT>lstart</TT> in a <TT>mapping</TT>.</P><PRE CLASS
 339     /* Traversed all three lists without dropping the lock */
 340     spin_unlock(&amp;pagecache_lock);
 341 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>329</B>Calculate where to <TT>start</TT> the truncation as an index
-in pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>330</B>Calculate <TT>partial</TT> as an offset within the last page if it
-is being partially truncated</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>333</B>Lock the page cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>334</B>This will loop until none of the calls to
-<TT>truncate_list_pages()</TT> return that a page was found that should have
-been reclaimed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>335</B>Use <TT>truncate_list_pages()</TT> (See Section <A HREF="#func: truncate_list_pages">D.6.3.7</A>) 
-to truncate all pages in the <TT>clean_pages</TT> list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>336</B>Similarly, truncate pages in the <TT>dirty_pages</TT> list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>337</B>Similarly, truncate pages in the <TT>locked_pages</TT> list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>340</B>Unlock the page cache</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc234">D.6.3.7</A>  Function: truncate_list_pages</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: truncate_list_pages"></A> <A NAME="@codeindex141"></A></P><P>This function searches the requested list (<TT>head</TT>) which is part of
-an <TT>address_space</TT>. If pages are found after <TT>start</TT>, they
-will be truncated.</P><PRE CLASS="verbatim">259 static int truncate_list_pages(struct list_head *head, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>329</B>以页面索引的形式计算开始截断的位置 <TT>start</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>330</B>如果最后一个页面被部分截断，则将 <TT>partial</TT> 计算为该页面内的偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>333</B>锁定页面缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>334</B>循环直到对 <TT>truncate_list_pages()</TT> 的调用都不再返回有应被回收的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>335</B>使用 <TT>truncate_list_pages()</TT>（见 <A HREF="#func: truncate_list_pages">D.6.3.7</A> 节）截断 <TT>clean_pages</TT> 链表中的所有页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>336</B>类似地，截断 <TT>dirty_pages</TT> 链表中的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>337</B>类似地，截断 <TT>locked_pages</TT> 链表中的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>340</B>解锁页面缓存</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc234">D.6.3.7</A>  函数：truncate_list_pages</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: truncate_list_pages"></A> <A NAME="@codeindex141"></A></P><P>该函数搜索请求的链表（<TT>head</TT>），它是某个 <TT>address_space</TT> 的一部分。如果在 <TT>start</TT> 之后找到了页面，则截断它们。</P><PRE CLASS="verbatim">259 static int truncate_list_pages(struct list_head *head, 
                                    unsigned long start, 
                                    unsigned *partial)
 260 {
@@ -3720,25 +3544,7 @@ will be truncated.</P><PRE CLASS="verbatim">259 static int truncate_list_pages(s
 313     }
 314     return unlocked;
 315 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>266-267</B>Record the start of the list and loop until the full list has
-been scanned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>270-271</B>Get the page for this entry and what <TT>offset</TT> within
-the file it represents</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>274</B>If the current page is after <TT>start</TT> or is a page that is
-to be partially truncated, then truncate this page, else move to the next one</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>277-278</B>Take a reference to the page and try to lock it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>280</B>Remove the page from the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>281-283</B>If we locked the page, add it back to the list where it will be
-skipped over on the next iteration of the loop</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>284-286</B>Else add it back where it will be found again immediately.
-Later in the function, <TT>wait_on_page()</TT> is called until the page is
-unlocked</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>288</B>Release the pagecache lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>299</B>Set locked to 1 to indicate a page was found that had to be
-truncated. This will force <TT>truncate_inode_pages()</TT> to call this
-function again to make sure there are no pages left behind. This looks
-like an oversight and was intended to have the functions recalled only if
-a <EM>locked</EM> page was found but the way it is implemented means that it
-will called whether the page was locked or not</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>291-299</B>If we locked the page, then truncate it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>292-294</B>If the page is to be partially truncated, call
-<TT>truncate_partial_page()</TT> (See Section <A HREF="#func: truncate_partial_page">D.6.3.10</A>) with
-the offset within the page where the truncation beings (<TT>partial</TT>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>296</B>Else call <TT>truncate_complete_page()</TT> (See Section <A HREF="#func: truncate_complete_page">D.6.3.8</A>) 
-to truncate the whole page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>298</B>Unlock the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>300</B>If the page locking failed, call <TT>wait_on_page()</TT> to wait
-until the page can be locked</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>302</B>Release the reference to the page. If there are no more mappings
-for the page, it will be reclaimed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>304-307</B>Check if the process should call <TT>schedule()</TT> before
-continuing. This is to prevent a truncating process from hogging the CPU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>309</B>Reacquire the spinlock and restart the scanning for pages to
-reclaim</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>312</B>The current page should not be reclaimed so move to the next page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>314</B>Return 1 if a page was found in the list that had to be truncated</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc235">D.6.3.8</A>  Function: truncate_complete_page</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: truncate_complete_page"></A> <A NAME="@codeindex142"></A></P><PRE CLASS="verbatim">239 static void truncate_complete_page(struct page *page)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>266-267</B>记录链表的开始处，循环直到整个链表被扫描完</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>270-271</B>获取此条目对应的页面以及它所代表的文件内 <TT>offset</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>274</B>如果当前页面在 <TT>start</TT> 之后，或它是一个要被部分截断的页面，则截断该页面，否则移到下一个</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>277-278</B>获取该页面的引用并尝试对其加锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>280</B>将该页面从链表中移除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>281-283</B>如果我们成功对该页面加了锁，则将它重新加入链表，循环的下一次迭代会跳过它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>284-286</B>否则将它放回原处，使其立即又被找到。函数稍后会调用 <TT>wait_on_page()</TT> 等待该页面解锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>288</B>释放 pagecache 锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>299</B>将 locked 设为 1，表示发现了一个需要被截断的页面。这会迫使 <TT>truncate_inode_pages()</TT> 再次调用本函数，以确保没有遗漏页面。看起来这是一处疏忽，本意应该是只在发现 <EM>locked</EM> 页面时才重新调用这些函数，但目前的实现方式意味着无论页面是否被加锁都会调用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>291-299</B>如果我们成功加锁了该页面，则截断它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>292-294</B>如果是部分截断该页面，则调用 <TT>truncate_partial_page()</TT>（见 <A HREF="#func: truncate_partial_page">D.6.3.10</A> 节），并传入截断开始处在页面内的偏移（<TT>partial</TT>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>296</B>否则调用 <TT>truncate_complete_page()</TT>（见 <A HREF="#func: truncate_complete_page">D.6.3.8</A> 节）截断整个页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>298</B>解锁该页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>300</B>如果页面加锁失败，则调用 <TT>wait_on_page()</TT> 等待直到该页面可以被加锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>302</B>释放对该页面的引用。如果不再有映射指向该页面，它将被回收</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>304-307</B>检查在继续之前进程是否应该调用 <TT>schedule()</TT>。这是为了防止一个截断进程长时间占用 CPU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>309</B>重新获取自旋锁，并重新开始扫描需要回收的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>312</B>当前页面不应被回收，因此移到下一页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>314</B>如果在链表中发现了需要截断的页面，则返回 1</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc235">D.6.3.8</A>  函数：truncate_complete_page</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: truncate_complete_page"></A> <A NAME="@codeindex142"></A></P><PRE CLASS="verbatim">239 static void truncate_complete_page(struct page *page)
 240 {
 241     /* Leave it on the LRU if it gets converted into 
          * anonymous buffers */
@@ -3757,11 +3563,7 @@ reclaim</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>312</B
 254     remove_inode_page(page);
 255     page_cache_release(page);
 256 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>242</B>If the page has buffers, call <TT>do_flushpage()</TT> 
-(See Section <A HREF="#func: do_flushpage">D.6.3.9</A>) to flush all buffers associated with the page. The
-comments in the following lines describe the problem concisely</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>243</B>Delete the page from the LRU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>252-253</B>Clear the dirty and uptodate flags for the page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>254</B>Call <TT>remove_inode_page()</TT> (See Section <A HREF="understand027.html#func: remove_inode_page">J.1.2.1</A>)
-to delete the page from the page cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>255</B>Drop the reference to the page. The page will be later reclaimed
-when <TT>truncate_list_pages()</TT> drops it's own private refernece to it</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc236">D.6.3.9</A>  Function: do_flushpage</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: do_flushpage"></A> <A NAME="@codeindex143"></A></P><P>This function is responsible for flushing all buffers associated with a page.</P><PRE CLASS="verbatim">223 static int do_flushpage(struct page *page, unsigned long offset)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>242</B>如果该页面有 buffer，则调用 <TT>do_flushpage()</TT>（见 <A HREF="#func: do_flushpage">D.6.3.9</A> 节）刷新所有与该页面相关的 buffer。下面几行的注释简洁地描述了这个问题</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>243</B>将该页面从 LRU 中删除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>252-253</B>清除该页面的 dirty 和 uptodate 标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>254</B>调用 <TT>remove_inode_page()</TT>（见 <A HREF="understand027.html#func: remove_inode_page">J.1.2.1</A> 节）将该页面从页面缓存中删除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>255</B>释放对该页面的引用。该页面将在 <TT>truncate_list_pages()</TT> 释放其自身的私有引用时被回收</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc236">D.6.3.9</A>  函数：do_flushpage</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: do_flushpage"></A> <A NAME="@codeindex143"></A></P><P>该函数负责刷新与某个页面相关的所有 buffer。</P><PRE CLASS="verbatim">223 static int do_flushpage(struct page *page, unsigned long offset)
 224 {
 225     int (*flushpage) (struct page *, unsigned long);
 226     flushpage = page-&gt;mapping-&gt;a_ops-&gt;flushpage;
@@ -3769,24 +3571,14 @@ when <TT>truncate_list_pages()</TT> drops it's own private refernece to it</DD><
 228         return (*flushpage)(page, offset);
 229     return block_flushpage(page, offset);
 230 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>226-228</B>If the <TT>page</TT>&#X2192;<TT>mapping</TT> provides a
-<TT>flushpage()</TT> function, call it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>229</B>Else call <TT>block_flushpage()</TT><A NAME="@codeindex144"></A> which is the generic
-function for flushing buffers associated with a page</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc237">D.6.3.10</A>  Function: truncate_partial_page</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: truncate_partial_page"></A> <A NAME="@codeindex145"></A></P><P>This function partially truncates a page by zeroing out the higher bytes no
-longer in use and flushing any associated buffers.</P><PRE CLASS="verbatim">232 static inline void truncate_partial_page(struct page *page, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>226-228</B>如果 <TT>page</TT>&#X2192;<TT>mapping</TT> 提供了 <TT>flushpage()</TT> 函数，则调用它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>229</B>否则调用 <TT>block_flushpage()</TT><A NAME="@codeindex144"></A>，它是用于刷新与某个页面相关的 buffer 的通用函数</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc237">D.6.3.10</A>  函数：truncate_partial_page</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: truncate_partial_page"></A> <A NAME="@codeindex145"></A></P><P>该函数对一个页面进行部分截断，方法是将不再使用的高位字节清零，并刷新任何相关的 buffer。</P><PRE CLASS="verbatim">232 static inline void truncate_partial_page(struct page *page, 
                                              unsigned partial)
 233 {
 234     memclear_highpage_flush(page, partial, PAGE_CACHE_SIZE-partial);
 235     if (page-&gt;buffers)
 236         do_flushpage(page, partial);
 237 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>234</B><TT>memclear_highpage_flush()</TT><A NAME="@codeindex146"></A> fills an address range with
-zeros. In this case, it will zero from <TT>partial</TT> to the end of the
-page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>235-236</B>If the page has any associated buffers, flush any buffers
-containing data in the truncated region</DD></DL><H3 CLASS="subsection"><A NAME="htoc238">D.6.4</A>  Reading Pages for the Page Cache</H3><H4 CLASS="subsubsection"><A NAME="htoc239">D.6.4.1</A>  Function: filemap_nopage</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: filemap_nopage"></A> <A NAME="@codeindex147"></A></P><P>This is the generic <TT>nopage()</TT> function used by many VMAs. This loops
-around itself with a large number of goto's which can be difficult to trace
-but there is nothing novel here. It is principally responsible for fetching
-the faulting page from either the pgae cache or reading it from disk. If
-appropriate it will also perform file read-ahead.</P><PRE CLASS="verbatim">1994 struct page * filemap_nopage(struct vm_area_struct * area, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>234</B><TT>memclear_highpage_flush()</TT><A NAME="@codeindex146"></A> 将一个地址范围清零。在本例中，它会从 <TT>partial</TT> 起到页面末尾全部清零</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>235-236</B>如果该页面有任何相关的 buffer，则刷新被截断区域内含数据的 buffer</DD></DL><H3 CLASS="subsection"><A NAME="htoc238">D.6.4</A>  为页面缓存读取页面</H3><H4 CLASS="subsubsection"><A NAME="htoc239">D.6.4.1</A>  函数：filemap_nopage</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: filemap_nopage"></A> <A NAME="@codeindex147"></A></P><P>这是许多 VMA 所使用的通用 <TT>nopage()</TT> 函数。它在自身内部用大量 goto 进行循环，可能不太容易跟踪，但这里没有什么新东西。它主要负责从页面缓存中获取发生缺页的页面，或者从磁盘读取它。在合适的情况下还会进行文件预读。</P><PRE CLASS="verbatim">1994 struct page * filemap_nopage(struct vm_area_struct * area, 
                                   unsigned long address, 
                                   int unused)
 1995 {
@@ -3803,14 +3595,7 @@ appropriate it will also perform file read-ahead.</P><PRE CLASS="verbatim">1994 
 2004     endoff = ((area-&gt;vm_end - area-&gt;vm_start) &gt;&gt; PAGE_CACHE_SHIFT) + 
                  area-&gt;vm_pgoff;
 2005 
-</PRE><P>This block acquires the <TT>struct file</TT>, <TT>addres_space</TT>
-and <TT>inode</TT> important for this page fault. It then acquires the
-starting offset within the file needed for this fault and the offset that
-corresponds to the end of this VMA. The offset is the end of the VMA instead
-of the end of the page in case file read-ahead is performed.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1997-1999</B>Acquire the <TT>struct file</TT>,
-<TT>address_space</TT> and <TT>inode</TT> required for this fault</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2003</B>Calculate <TT>pgoff</TT> which is the offset within the file
-corresponding to the beginning of the fault</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2004</B>Calculate the offset within the file corresponding to the end of
-the VMA</DD></DL><PRE CLASS="verbatim">2006 retry_all:
+</PRE><P>这一段获取此次缺页处理所需的 <TT>struct file</TT>、<TT>address_space</TT> 和 <TT>inode</TT>。然后获取本次缺页所需的文件内起始偏移，以及对应 VMA 末尾的偏移。这里偏移用的是 VMA 的末尾而非页面的末尾，是为了应对要进行文件预读的情形。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1997-1999</B>获取本次缺页所需的 <TT>struct file</TT>、<TT>address_space</TT> 和 <TT>inode</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2003</B>计算 <TT>pgoff</TT>，它是缺页起始处对应的文件内偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2004</B>计算对应 VMA 末尾的文件内偏移</DD></DL><PRE CLASS="verbatim">2006 retry_all:
 2007     /*
 2008      * An external ptracer can access pages that normally aren't
 2009      * accessible..
@@ -3839,13 +3624,7 @@ the VMA</DD></DL><PRE CLASS="verbatim">2006 retry_all:
 2031      */
 2032     if (!Page_Uptodate(page))
 2033         goto page_not_uptodate;
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2011</B>Calculate the size of the file in pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2012</B>If the faulting <TT>pgoff</TT> is beyond the end of the file and
-this is not a tracing process, return NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2016-2017</B>If the VMA maps beyond the end of the file, then set the size
-of the file to be the end of the mapping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2022-2024</B>Search for the page in the page cache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2025-2026</B>If it does not exist, goto <TT>no_cached_page</TT> where
-<TT>page_cache_read()</TT> will be called to read the page from backing
-storage</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2032-2033</B>If the page is not up-to-date, goto
-<TT>page_not_uptodate</TT> where the page will either be declared invalid
-or else the data in the page updated</DD></DL><PRE CLASS="verbatim">2035 success:
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2011</B>以页为单位计算文件的大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2012</B>如果发生缺页的 <TT>pgoff</TT> 已超过文件末尾，且这不是一个 tracing 进程，则返回 NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2016-2017</B>如果 VMA 映射超出了文件末尾，则将文件大小设为映射的末尾</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2022-2024</B>在页面缓存中搜索该页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2025-2026</B>如果不存在，跳转到 <TT>no_cached_page</TT>，那里会调用 <TT>page_cache_read()</TT> 从后备存储读取该页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2032-2033</B>如果页面不是最新的，跳转到 <TT>page_not_uptodate</TT>，在那里该页面要么被宣告无效，要么其中的数据会被更新</DD></DL><PRE CLASS="verbatim">2035 success:
 2036     /*
 2037      * Try read-ahead for sequential areas.
 2038      */
@@ -3860,12 +3639,7 @@ or else the data in the page updated</DD></DL><PRE CLASS="verbatim">2035 success
 2047     flush_page_to_ram(page);
 2048     return page;
 2049 
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2039-2040</B>If this mapping specified the <TT>VM_SEQ_READ</TT><A NAME="@codeindex148"></A>
-hint, then the pages are the current fault will be pre-faulted with
-<TT>nopage_sequential_readahead()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2046</B>Mark the faulted-in page as accessed so it will be moved to the
-<TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2047</B>As the page is about to be installed into a process page table,
-call <TT>flush_page_to_ram()</TT> so that recent stores by the kernel to
-the page will definitly be visible to userspace</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2048</B>Return the faulted-in page</DD></DL><PRE CLASS="verbatim">2050 no_cached_page:
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2039-2040</B>如果该映射指定了 <TT>VM_SEQ_READ</TT><A NAME="@codeindex148"></A> 提示，则会用 <TT>nopage_sequential_readahead()</TT> 预先调入当前缺页之后的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2046</B>将处理完缺页的页面标记为已访问，使其被移到 <TT>active_list</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2047</B>由于该页面即将被装入进程页表，调用 <TT>flush_page_to_ram()</TT>，确保内核近期对该页面的写入对用户空间一定可见</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2048</B>返回处理完缺页的页面</DD></DL><PRE CLASS="verbatim">2050 no_cached_page:
 2051     /*
 2052      * If the requested offset is within our file, try to read
 2053      * a whole cluster of pages at once.
@@ -3894,15 +3668,7 @@ the page will definitly be visible to userspace</DD><DT CLASS="dt-description"><
 2076     if (error == -ENOMEM)
 2077         return NOPAGE_OOM;
 2078     return NULL;
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2058-2059</B>If the end of the file has not been reached and the
-random-read hint has not been specified, call
-<TT>read_cluster_nonblocking()</TT> to pre-fault in just a few pages near
-ths faulting page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2061</B>Else, the file is being accessed randomly, so just call
-<TT>page_cache_read()</TT> (See Section <A HREF="#func: page_cache_read">D.6.4.2</A>) to read in just
-the faulting page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2068-2069</B>If no error occurred, goto <TT>retry_find</TT> at line 1958
-which will check to make sure the page is in the page cache before returning</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2076-2077</B>If the error was due to being out of memory, return that so
-the fault handler can act accordingly</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2078</B>Else return NULL to indicate that a non-existant page was faulted
-resulting in a <TT>SIGBUS</TT> signal being sent to the faulting process</DD></DL><PRE CLASS="verbatim">2080 page_not_uptodate:
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2058-2059</B>如果尚未到达文件末尾且未指定 random-read 提示，则调用 <TT>read_cluster_nonblocking()</TT> 预读缺页页面附近的若干页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2061</B>否则，该文件是被随机访问的，因此只调用 <TT>page_cache_read()</TT>（见 <A HREF="#func: page_cache_read">D.6.4.2</A> 节）读取缺页的那个页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2068-2069</B>如果没有发生错误，跳转到 1958 行的 <TT>retry_find</TT>，它会在返回前确认该页面已在页面缓存中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2076-2077</B>如果错误是由于内存不足，则返回该错误，以便缺页处理程序作出相应处理</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2078</B>否则返回 NULL，表示发生了对一个不存在页面的缺页，这将导致向发生缺页的进程发送 <TT>SIGBUS</TT> 信号</DD></DL><PRE CLASS="verbatim">2080 page_not_uptodate:
 2081     lock_page(page);
 2082 
 2083     /* Did it get unhashed while we waited for it? */
@@ -3923,15 +3689,7 @@ resulting in a <TT>SIGBUS</TT> signal being sent to the faulting process</DD></D
 2098         if (Page_Uptodate(page))
 2099             goto success;
 2100     }
-</PRE><P>In this block, the page was found but it was not up-to-date so the reasons for
-the page not being up to date are checked. If it looks ok, the appropriate
-<TT>readpage()</TT> function is called to resync the page.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2081</B>Lock the page for IO</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2084-2088</B>If the page was removed from the mapping (possible because
-of a file truncation) and is now anonymous, then goto <TT>retry_all</TT>
-which will try and fault in the page again</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2090-2094</B>Check again if the <TT>Uptodate</TT> flag in case the page
-was updated just before we locked the page for IO</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2096</B>Call the <TT>address_space</TT>&#X2192;<TT>readpage()</TT> function to
-schedule the data to be read from disk</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2097</B>Wait for the IO to complete and if it is now up-to-date, goto
-<TT>success</TT> to return the page. If the <TT>readpage()</TT> function
-failed, fall through to the error recovery path</DD></DL><PRE CLASS="verbatim">2101 
+</PRE><P>在这一段中，找到了页面但它不是最新的，因此检查页面不是最新的原因。如果看起来正常，则调用合适的 <TT>readpage()</TT> 函数重新同步该页面。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2081</B>对该页面加锁以进行 IO</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2084-2088</B>如果该页面已从映射中被移除（可能由于文件被截断）并且现在是匿名的，则跳转到 <TT>retry_all</TT>，再次尝试为该页面进行缺页处理</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2090-2094</B>再次检查 <TT>Uptodate</TT> 标志，以防该页面正好在我们对其加锁前被更新</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2096</B>调用 <TT>address_space</TT>&#X2192;<TT>readpage()</TT> 函数，安排从磁盘读取数据</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2097</B>等待 IO 完成，如果该页面现在是最新的，则跳转到 <TT>success</TT> 返回该页面。如果 <TT>readpage()</TT> 函数失败，则继续向下进入错误恢复路径</DD></DL><PRE CLASS="verbatim">2101 
 2102     /*
 2103      * Umm, take care of errors if the page isn't up-to-date.
 2104      * Try to re-read it _once_. We do this synchronously,
@@ -3966,12 +3724,7 @@ failed, fall through to the error recovery path</DD></DL><PRE CLASS="verbatim">2
 2133     page_cache_release(page);
 2134     return NULL;
 2135 }
-</PRE><P>In this path, the page is not up-to-date due to some IO error. A second attempt
-is made to read the page data and if it fails, return.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2110-2127</B>This is almost identical to the previous block. The only
-difference is that <TT>ClearPageError()</TT> is called to clear the error
-caused by the previous IO</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2133</B>If it still failed, release the reference to the page because it is
-useless</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2134</B>Return NULL because the fault failed</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc240">D.6.4.2</A>  Function: page_cache_read</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: page_cache_read"></A> <A NAME="@codeindex149"></A></P><P>This function adds the page corresponding to the <TT>offset</TT> within
-the <TT>file</TT> to the page cache if it does not exist there already.</P><PRE CLASS="verbatim">702 static int page_cache_read(struct file * file, 
+</PRE><P>在这条路径上，页面由于某种 IO 错误而不是最新的。这里会再次尝试读取该页面的数据，如果还是失败则返回。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2110-2127</B>这与上一段几乎相同。唯一的区别是会调用 <TT>ClearPageError()</TT> 清除之前 IO 引起的错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2133</B>如果仍然失败，则释放对该页面的引用，因为它已无用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>2134</B>返回 NULL，因为缺页处理失败</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc240">D.6.4.2</A>  函数：page_cache_read</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: page_cache_read"></A> <A NAME="@codeindex149"></A></P><P>如果 <TT>file</TT> 内 <TT>offset</TT> 对应的页面尚未存在于页面缓存中，则该函数将其添加到页面缓存。</P><PRE CLASS="verbatim">702 static int page_cache_read(struct file * file, 
                                unsigned long offset)
 703 {
 704     struct address_space *mapping = 
@@ -4001,26 +3754,7 @@ the <TT>file</TT> to the page cache if it does not exist there already.</P><PRE 
 727     page_cache_release(page);
 728     return 0;
 729 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>704</B>Acquire the <TT>address_space</TT> mapping managing the file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>705</B>The page cache is a hash table and <TT>page_hash()</TT><A NAME="@codeindex150"></A> returns
-the first page in the bucket for this <TT>mapping</TT> and <TT>offset</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>708-709</B>Search the page cache with <TT>__find_page_nolock()</TT>
-(See Section <A HREF="understand027.html#func: __find_page_nolock">J.1.4.3</A>). This basically will traverse the list
-starting at <TT>hash</TT> to see if the requested page can be found</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>711-712</B>If the page is already in the page cache, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>714</B>Allocate a new page for insertion into the page cache.
-<TT>page_cache_alloc()</TT> will allocate a page from the buddy allocator
-using GFP mask information contained in <TT>mapping</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>718</B>Insert the page into the page cache with
-<TT>add_to_page_cache_unique()</TT> (See Section <A HREF="understand027.html#func: add_to_page_cache_unique">J.1.1.2</A>).
-This function is used because a second check needs
-to be made to make sure the page was not inserted into the page cache while
-the <TT>pagecache_lock</TT> spinlock was not acquired</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>719</B>If the allocated page was inserted into the page cache, it needs to
-be populated with data so the <TT>readpage()</TT> function for the
-<TT>mapping</TT> is called. This schedules the IO to take place and the page
-will be unlocked when the IO completes</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>720</B>The path in <TT>add_to_page_cache_unique()</TT> 
-(See Section <A HREF="understand027.html#func: add_to_page_cache_unique">J.1.1.2</A>) takes an extra
-reference to the page being added to the page cache which is dropped here. The
-page will not be freed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>727</B>If another process added the page to the page cache, it is released
-here by <TT>page_cache_release()</TT> as there will be no users of the page</DD></DL><H3 CLASS="subsection"><A NAME="htoc241">D.6.5</A>  File Readahead for <TT>nopage()</TT></H3><H4 CLASS="subsubsection"><A NAME="htoc242">D.6.5.1</A>  Function: nopage_sequential_readahead</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: nopage_sequential_readahead"></A> <A NAME="@codeindex151"></A></P><P>This function is only called by <TT>filemap_nopage()</TT> when the
-<TT>VM_SEQ_READ</TT> flag has been specified in the VMA. When half of
-the current readahead-window has been faulted in, the next readahead window
-is scheduled for IO and pages from the previous window are freed.</P><PRE CLASS="verbatim">1936 static void nopage_sequential_readahead(
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>704</B>获取管理该文件的 <TT>address_space</TT> 映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>705</B>页面缓存是一个哈希表，<TT>page_hash()</TT><A NAME="@codeindex150"></A> 返回该 <TT>mapping</TT> 和 <TT>offset</TT> 所在桶中的第一个页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>708-709</B>使用 <TT>__find_page_nolock()</TT>（见 <A HREF="understand027.html#func: __find_page_nolock">J.1.4.3</A> 节）搜索页面缓存。该函数基本上会从 <TT>hash</TT> 开始遍历链表，看看能否找到请求的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>711-712</B>如果该页面已在页面缓存中，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>714</B>分配一个新页面以插入到页面缓存中。<TT>page_cache_alloc()</TT> 会使用 <TT>mapping</TT> 中保存的 GFP mask 信息，从伙伴分配器分配一个页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>718</B>使用 <TT>add_to_page_cache_unique()</TT>（见 <A HREF="understand027.html#func: add_to_page_cache_unique">J.1.1.2</A> 节）将该页面插入到页面缓存。之所以使用这个函数，是因为需要进行第二次检查，确保在未持有 <TT>pagecache_lock</TT> 自旋锁期间该页面没有被插入到页面缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>719</B>如果分配的页面被成功插入到页面缓存，需要为其填充数据，因此调用 <TT>mapping</TT> 的 <TT>readpage()</TT> 函数。它会安排 IO，并在 IO 完成时解锁该页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>720</B><TT>add_to_page_cache_unique()</TT>（见 <A HREF="understand027.html#func: add_to_page_cache_unique">J.1.1.2</A> 节）的代码路径会对被加入页面缓存的页面增加一个额外的引用，这里释放该引用。该页面不会被释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>727</B>如果另一个进程将该页面加入到页面缓存，则在此通过 <TT>page_cache_release()</TT> 释放它，因为已经没有使用者了</DD></DL><H3 CLASS="subsection"><A NAME="htoc241">D.6.5</A>  <TT>nopage()</TT> 中的文件预读</H3><H4 CLASS="subsubsection"><A NAME="htoc242">D.6.5.1</A>  函数：nopage_sequential_readahead</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: nopage_sequential_readahead"></A> <A NAME="@codeindex151"></A></P><P>该函数仅在 VMA 中指定了 <TT>VM_SEQ_READ</TT> 标志时被 <TT>filemap_nopage()</TT> 调用。当当前预读窗口的一半已经被缺页调入时，下一个预读窗口会被安排进行 IO，并释放上一个窗口中的页面。</P><PRE CLASS="verbatim">1936 static void nopage_sequential_readahead(
          struct vm_area_struct * vma,
 1937     unsigned long pgoff, unsigned long filesize)
 1938 {
@@ -4034,11 +3768,7 @@ is scheduled for IO and pages from the previous window are freed.</P><PRE CLASS=
 1945     if (vma-&gt;vm_raend == 0)
 1946         vma-&gt;vm_raend = vma-&gt;vm_pgoff + ra_window;
 1947 
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1941</B><TT>get_max_readahead()</TT><A NAME="@codeindex152"></A> returns the maximum sized
-readahead window for the block device the specified inode resides on</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1942</B><TT>CLUSTER_PAGES</TT><A NAME="@codeindex153"></A> is the number of pages that
-are paged-in or paged-out in bulk. The macro <TT>CLUSTER_OFFSET()</TT><A NAME="@codeindex154"></A>
-will align the readahead window to a cluster boundary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1180-1181</B>If read-ahead has not occurred yet, set the end of the
-read-ahead window (<TT>vm_reend</TT><A NAME="@codeindex155"></A>)</DD></DL><PRE CLASS="verbatim">1948     /*
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1941</B><TT>get_max_readahead()</TT><A NAME="@codeindex152"></A> 返回指定 inode 所在块设备的最大预读窗口大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1942</B><TT>CLUSTER_PAGES</TT><A NAME="@codeindex153"></A> 是批量调入或调出的页面数。宏 <TT>CLUSTER_OFFSET()</TT><A NAME="@codeindex154"></A> 会将预读窗口对齐到 cluster 边界</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1180-1181</B>如果尚未进行过预读，则设置预读窗口的末尾（<TT>vm_reend</TT><A NAME="@codeindex155"></A>）</DD></DL><PRE CLASS="verbatim">1948     /*
 1949      * If we've just faulted the page half-way through our window,
 1950      * then schedule reads for the next window, and release the
 1951      * pages in the previous window.
@@ -4076,15 +3806,7 @@ read-ahead window (<TT>vm_reend</TT><A NAME="@codeindex155"></A>)</DD></DL><PRE 
 1982 
 1983     return;
 1984 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1953</B>If the fault has occurred half-way through the read-ahead window
-then schedule the next readahead window to be read in from disk and free
-the pages for the first half of the current window as they are presumably
-not required any more</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1954-1955</B>Calculate the <TT>start</TT> and <TT>end</TT> of the next
-readahead window as we are about to schedule it for IO</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1957</B>If the end of the readahead window is after the end of the VMA,
-then set <TT>end</TT> to the end of the VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1959-1960</B>If we are at the end of the mapping, just return as there is
-no more readahead to perform</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1962-1967</B>Schedule the next readahead window to be paged in by calling
-<TT>read_cluster_nonblocking()</TT>(See Section <A HREF="#func: read_cluster_nonblocking">D.6.5.2</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1968</B>Call <TT>run_task_queue()</TT><A NAME="@codeindex156"></A> to start the IO</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1972-1978</B>Recycle the pages in the previous read-ahead window with
-<TT>filemap_sync()</TT> as they are no longer required</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1980</B>Update where the end of the readahead window is</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc243">D.6.5.2</A>  Function: read_cluster_nonblocking</H4><P> <EM>Source: mm/filemap.c</EM> <A NAME="func: read_cluster_nonblocking"></A> <A NAME="@codeindex157"></A></P><PRE CLASS="verbatim">737 static int read_cluster_nonblocking(struct file * file, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1953</B>如果缺页发生在预读窗口的一半处，则安排从磁盘读入下一个预读窗口，并释放当前窗口前半部分的页面，因为推测这些页面已不再需要</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1954-1955</B>计算下一个预读窗口的 <TT>start</TT> 和 <TT>end</TT>，因为我们即将安排其 IO</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1957</B>如果预读窗口的末尾在 VMA 末尾之后，则将 <TT>end</TT> 设为 VMA 的末尾</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1959-1960</B>如果已到达映射末尾，则直接返回，因为已无更多预读可做</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1962-1967</B>调用 <TT>read_cluster_nonblocking()</TT>（见 <A HREF="#func: read_cluster_nonblocking">D.6.5.2</A> 节）安排下一个预读窗口的换入</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1968</B>调用 <TT>run_task_queue()</TT><A NAME="@codeindex156"></A> 启动 IO</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1972-1978</B>通过 <TT>filemap_sync()</TT> 回收上一个预读窗口中的页面，因为它们已不再需要</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1980</B>更新预读窗口末尾的位置</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc243">D.6.5.2</A>  函数：read_cluster_nonblocking</H4><P> <EM>来源：mm/filemap.c</EM> <A NAME="func: read_cluster_nonblocking"></A> <A NAME="@codeindex157"></A></P><PRE CLASS="verbatim">737 static int read_cluster_nonblocking(struct file * file, 
                                         unsigned long offset,
 738     unsigned long filesize)
 739 {
@@ -4100,14 +3822,7 @@ no more readahead to perform</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-d
 749 
 750     return 0;
 751 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>740</B><TT>CLUSTER_PAGES</TT><A NAME="@codeindex158"></A> will be 4 pages in low memory
-systems and 8 pages in larger ones. This means that on an x86 with ample
-memory, 32KiB will be read in one cluster</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>742</B><TT>CLUSTER_OFFSET()</TT><A NAME="@codeindex159"></A> will align the offset to a
-cluster-sized alignment</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>743-748</B>Read the full cluster into the page cache by calling
-<TT>page_cache_read()</TT> (See Section <A HREF="#func: page_cache_read">D.6.4.2</A>) for each page
-in the cluster</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>745-746</B>If an error occurs during read-ahead, return the error</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>750</B>Return success</DD></DL><H3 CLASS="subsection"><A NAME="htoc244">D.6.6</A>  Swap Related Read-Ahead</H3><H4 CLASS="subsubsection"><A NAME="htoc245">D.6.6.1</A>  Function: swapin_readahead</H4><P> <EM>Source: mm/memory.c</EM> <A NAME="func: swapin_readahead"></A> <A NAME="@codeindex160"></A></P><P>This function will fault in a number of pages after the current entry. It will
-stop with either <TT>CLUSTER_PAGES</TT> have been swapped in or an unused
-swap entry is found.</P><PRE CLASS="verbatim">1093 void swapin_readahead(swp_entry_t entry)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>740</B><TT>CLUSTER_PAGES</TT><A NAME="@codeindex158"></A> 在低内存系统中是 4 个页面，在内存较多的系统中是 8 个页面。这意味着在内存充足的 x86 上，每个 cluster 会读入 32KiB</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>742</B><TT>CLUSTER_OFFSET()</TT><A NAME="@codeindex159"></A> 将偏移对齐到 cluster 大小的边界</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>743-748</B>通过对 cluster 中的每个页面调用 <TT>page_cache_read()</TT>（见 <A HREF="#func: page_cache_read">D.6.4.2</A> 节），将整个 cluster 读入页面缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>745-746</B>如果预读期间发生错误，则返回该错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>750</B>返回成功</DD></DL><H3 CLASS="subsection"><A NAME="htoc244">D.6.6</A>  与 Swap 相关的预读</H3><H4 CLASS="subsubsection"><A NAME="htoc245">D.6.6.1</A>  函数：swapin_readahead</H4><P> <EM>来源：mm/memory.c</EM> <A NAME="func: swapin_readahead"></A> <A NAME="@codeindex160"></A></P><P>该函数将当前条目之后的若干页换入。它会在已换入 <TT>CLUSTER_PAGES</TT> 个页面或找到一个未使用的 swap 条目时停止。</P><PRE CLASS="verbatim">1093 void swapin_readahead(swp_entry_t entry)
 1094 {
 1095     int i, num;
 1096     struct page *new_page;
@@ -4127,13 +3842,7 @@ swap entry is found.</P><PRE CLASS="verbatim">1093 void swapin_readahead(swp_ent
 1109     }
 1110     return;
 1111 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1102</B><TT>valid_swaphandles()</TT><A NAME="@codeindex161"></A> is what determines how many
-pages should be swapped in. It will stop at the first empty entry or when
-<TT>CLUSTER_PAGES</TT> is reached</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1103-1109</B>Swap in the pages</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1105</B>Attempt to swap the page into the swap cache with
-<TT>read_swap_cache_async()</TT> (See Section <A HREF="understand028.html#func: read_swap_cache_async">K.3.1.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1106-1107</B>If the page could not be paged in, break and return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1108</B>Drop the reference to the page that
-<TT>read_swap_cache_async()</TT> takes</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1110</B>Return</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc246">D.6.6.2</A>  Function: valid_swaphandles</H4><P> <EM>Source: mm/swapfile.c</EM> <A NAME="func: valid_swaphandles"></A> <A NAME="@codeindex162"></A></P><P>This function determines how many pages should be readahead from swap starting
-from <TT>offset</TT>. It will readahead to the next unused swap slot but
-at most, it will return <TT>CLUSTER_PAGES</TT>.</P><PRE CLASS="verbatim">1238 int valid_swaphandles(swp_entry_t entry, unsigned long *offset)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1102</B><TT>valid_swaphandles()</TT><A NAME="@codeindex161"></A> 决定要换入多少页面。它会在遇到第一个空条目或达到 <TT>CLUSTER_PAGES</TT> 时停止</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1103-1109</B>换入这些页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1105</B>调用 <TT>read_swap_cache_async()</TT>（见 <A HREF="understand028.html#func: read_swap_cache_async">K.3.1.1</A> 节）尝试将页面换入 swap 缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1106-1107</B>如果页面无法被换入，则跳出循环并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1108</B>释放 <TT>read_swap_cache_async()</TT> 所获取的对该页面的引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1110</B>返回</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc246">D.6.6.2</A>  函数：valid_swaphandles</H4><P> <EM>来源：mm/swapfile.c</EM> <A NAME="func: valid_swaphandles"></A> <A NAME="@codeindex162"></A></P><P>该函数决定从 <TT>offset</TT> 开始应从 swap 预读多少页面。它会一直预读到下一个未使用的 swap 槽，但最多返回 <TT>CLUSTER_PAGES</TT>。</P><PRE CLASS="verbatim">1238 int valid_swaphandles(swp_entry_t entry, unsigned long *offset)
 1239 {
 1240     int ret = 0, i = 1 &lt;&lt; page_cluster;
 1241     unsigned long toff;
@@ -4162,18 +3871,11 @@ at most, it will return <TT>CLUSTER_PAGES</TT>.</P><PRE CLASS="verbatim">1238 in
 1264     swap_device_unlock(swapdev);
 1265     return ret;
 1266 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1240</B><TT>i</TT> is set to <TT>CLUSTER_PAGES</TT> which is the
-equivalent of the bitshift shown here</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1242</B>Get the <TT>swap_info_struct</TT> that contains this
-<TT>entry</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1244-1245</B>If readahead has been disabled, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1246</B>Calculate <TT>toff</TT> to be <TT>entry</TT> rounded down to
-the nearest <TT>CLUSTER_PAGES</TT>-sized boundary</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1247-1248</B>If <TT>toff</TT> is 0, move it to 1 as the first page
-contains information about the swap area</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1251</B>Lock the swap device as we are about to scan it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1252-1263</B>Loop at most <TT>i</TT>, which is initialised to
-<TT>CLUSTER_PAGES</TT>, times</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1254-1255</B>If the end of the swap area is reached, then that is as far as
-can be readahead</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1257-1258</B>If an unused entry is reached, just return as it
-is as far as we want to readahead </DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1259-1260</B>Likewise, return if a bad entry is discovered</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1261</B>Move to the next slot</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1262</B>Increment the number of pages to be readahead</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1264</B>Unlock the swap device</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1265</B>Return the number of pages which should be readahead</DD></DL><P>
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1240</B><TT>i</TT> 被设为 <TT>CLUSTER_PAGES</TT>，等价于这里所示的位移运算</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1242</B>获取包含该 <TT>entry</TT> 的 <TT>swap_info_struct</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1244-1245</B>如果预读已被禁用，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1246</B>将 <TT>toff</TT> 计算为 <TT>entry</TT> 向下对齐到最近的 <TT>CLUSTER_PAGES</TT> 边界</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1247-1248</B>如果 <TT>toff</TT> 为 0，则将其移到 1，因为第一页包含 swap 区的信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1251</B>锁定 swap 设备，因为我们即将扫描它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1252-1263</B>最多循环 <TT>i</TT>（被初始化为 <TT>CLUSTER_PAGES</TT>）次</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1254-1255</B>如果到达 swap 区末尾，则不能继续预读</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1257-1258</B>如果遇到未使用的条目，则直接返回，因为我们的预读到此为止</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1259-1260</B>同样地，如果发现坏条目，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1261</B>移到下一个槽</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1262</B>递增要预读的页面数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1264</B>解锁 swap 设备</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1265</B>返回应预读的页面数</DD></DL><P>
 	
 	</P><HR>
-[ <A HREF="understand020.html">&laquo; Previous</A> ]
-[ <A HREF="index.html">&uarr; Up</A> ]
-[ <A HREF="understand022.html">Next &raquo;</A> ]
+[ <A HREF="understand020_zh.html">&laquo; 上一章</A> ]
+[ <A HREF="index.html">&uarr; 返回目录</A> ]
+[ <A HREF="understand022_zh.html">下一章 &raquo;</A> ]
 </BODY>
 </HTML>
