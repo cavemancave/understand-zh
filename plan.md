@@ -37,11 +37,12 @@ After Phase 1 is complete, walk chapters in order. For each PNG `<img>` in each 
 - Navigation/cross-reference sweep: all translated chapters now link to `_zh.html` siblings (only legitimate placeholders remain, pointing to as-yet-untranslated appendices).
 - Root `index.html` no longer auto-redirects; `translated_html/index.html` links all completed chapters and appendices.
 
-### Status of remaining work (paused 2026-05-22)
-- **Appendix D (`understand021_zh.html`)** — PARTIAL. Skeleton committed; D.1 + D.2.1.1 translated. D.2.1.2 through D.6 remain in raw English in the target file. Sub-agent translation of this 4317-line file has FAILED SILENTLY four times (claude-sonnet-4.6 ×3 and claude-opus-4.7 ×1) with `total_turns: 0` and no commit. The reliable strategy is to translate manually in the main session, one H4 function per commit, but the per-turn cost is high. Resume after the simpler appendices are done, OR consider a script that pre-extracts prose-only segments for translation.
-- **Appendix E (`understand022.html`, 619 lines, 27 PRE)** — NOT STARTED. Sub-agent `xlate-022` was launched then stopped at user's request without producing any file. Should be tried again with a fresh session; this file is small enough that sub-agents usually complete it.
-- **Appendices F, G, H, I, J, K (`understand023.html`–`understand028.html`)** — NOT STARTED. Sizes: F=653, G=427, H=1571, I=531, J=1217, K=1443 lines.
-- **Phase 2 SVG conversion**: ALL of Phase 2 still pending — figures 056-058 in understand012_zh, retroactive PNG→SVG for understand005-009 (28 figures), and figures in understand013-020 + appendices once those are translated.
+### Status of remaining work (updated 2026-05-25)
+- **Phase 1 (chapter translation): COMPLETE.** All 28 source chapters translated.
+  - Appendix D (`understand021_zh.html`) — done H3-by-H3 (D.1, D.2.1, D.2.2, D.2.3, D.2.4, D.2.5, D.2.6, D.3, D.4, D.5, D.6) using per-section sub-agents with surgical `edit` calls. Nav/cross-ref sweep applied.
+  - Appendices E–K (`understand022`–`understand028`) — done as single-file translations.
+  - `understand029.html` is an empty source file, skipped.
+- **Phase 2 SVG conversion**: ALL of Phase 2 still pending — figures 056-058 in understand012_zh, retroactive PNG→SVG for understand005-009 (28 figures), and figures in understand013-021 + appendices E–K.
 
 ### Sub-agent silent-fail mitigation (lessons learned)
 - Sub-agents (`general-purpose`, sonnet or opus) become unable to complete work on translated files once the target is large (>~3000 lines) or when the sub-agent's `edit` budget is exhausted by many small interleaved changes.
