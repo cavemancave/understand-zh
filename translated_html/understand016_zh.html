@@ -49,7 +49,54 @@ VM 子系统中我们要讨论的最后一个部分，是&ldquo;内存耗尽&rdq
 </p>
 
 <div class="figure" id="fig-out-of-memory">
-  <img src="../original_html/figures/understand-html077.png" alt="图 13.1：调用图：out_of_memory()">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 400" width="320" role="img" aria-labelledby="fig077-title fig077-desc" font-family="sans-serif" font-size="12">
+    <title id="fig077-title">图 13.1：调用图：out_of_memory()</title>
+    <desc id="fig077-desc">out_of_memory() 经过一系列检查后调用 oom_kill()；oom_kill() 调用 select_bad_process() 来选取最差进程；select_bad_process() 调用 badness() 为每个任务评分；badness() 调用 int_sqrt() 计算 CPU 时间的整数近似平方根。</desc>
+    <defs>
+      <marker id="arr077" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+      </marker>
+    </defs>
+
+    <text x="160" y="22" text-anchor="middle" font-size="13" font-weight="bold">out_of_memory() 调用关系图</text>
+
+    <g font-family="monospace" font-size="12" text-anchor="middle">
+      <!-- level 0: out_of_memory -->
+      <rect x="70" y="40" width="180" height="32" fill="#eef5ff" stroke="#1f4e8a" stroke-width="1.5"/>
+      <text x="160" y="61">out_of_memory</text>
+
+      <!-- level 1: oom_kill -->
+      <rect x="70" y="120" width="180" height="32" fill="#eef5ff" stroke="#1f4e8a" stroke-width="1.5"/>
+      <text x="160" y="141">oom_kill</text>
+
+      <!-- level 2: select_bad_process -->
+      <rect x="55" y="200" width="210" height="32" fill="#eef" stroke="#333"/>
+      <text x="160" y="221">select_bad_process</text>
+
+      <!-- level 3: badness -->
+      <rect x="90" y="280" width="140" height="32" fill="#eef" stroke="#333"/>
+      <text x="160" y="301">badness</text>
+
+      <!-- level 4: int_sqrt -->
+      <rect x="90" y="350" width="140" height="32" fill="#f5f5f5" stroke="#666"/>
+      <text x="160" y="371">int_sqrt</text>
+    </g>
+
+    <g stroke="#333" stroke-width="1.4" fill="none" marker-end="url(#arr077)">
+      <line x1="160" y1="72"  x2="160" y2="120"/>
+      <line x1="160" y1="152" x2="160" y2="200"/>
+      <line x1="160" y1="232" x2="160" y2="280"/>
+      <line x1="160" y1="312" x2="160" y2="350"/>
+    </g>
+
+    <!-- edge labels -->
+    <g font-size="10" fill="#555" text-anchor="middle">
+      <text x="210" y="100">确认 OOM 后</text>
+      <text x="220" y="180">挑选最差进程</text>
+      <text x="215" y="260">计算 badness 分值</text>
+      <text x="215" y="335">整数近似平方根</text>
+    </g>
+  </svg>
   <div class="caption">图 13.1：调用图：<tt>out_of_memory()</tt></div>
 </div>
 
