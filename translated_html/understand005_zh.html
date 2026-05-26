@@ -33,7 +33,76 @@
   <p>需要特别注意的是，许多内核操作只能在 <tt>ZONE_NORMAL</tt> 上执行，因此它是性能最关键的区。Zone 的更多内容将在 2.2 节讨论。每个物理页帧都由一个 <tt>struct page</tt> 表示，所有 page 结构保存在一个全局数组 <tt>mem_map</tt> 中，它通常位于 <tt>ZONE_NORMAL</tt> 的起始处，或在低端内存机器上紧接在已加载的内核映像保留区之后。<tt>struct page</tt> 详见 2.4 节，全局 <tt>mem_map</tt> 数组详见 3.7 节。这些结构之间的基本关系如图 2.1 所示。</p>
 
   <div class="figure">
-    <img src="../original_html/figures/understand-html001.png" alt="图 2.1">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 320" width="600" role="img" aria-labelledby="fig001-title fig001-desc" font-family="sans-serif" font-size="13">
+      <title id="fig001-title">图 2.1：结点、Zone 与 Page 之间的关系</title>
+      <desc id="fig001-desc">层次结构图：pg_data_t（结点）包含三个 zone_t（ZONE_DMA、ZONE_NORMAL、ZONE_HIGHMEM），每个 zone 通过 zone_mem_map 指向全局 mem_map 数组中的 struct page 条目。</desc>
+      <defs>
+        <marker id="arr001" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+        </marker>
+      </defs>
+
+      <!-- Node (pg_data_t) -->
+      <rect x="175" y="10" width="250" height="40" rx="4" fill="#d4edda" stroke="#1a6630" stroke-width="1.5"/>
+      <text x="300" y="35" text-anchor="middle" font-weight="bold">pg_data_t（结点）</text>
+
+      <!-- Connector lines from node to zones -->
+      <line x1="200" y1="50" x2="80" y2="100" stroke="#555" stroke-width="1" marker-end="url(#arr001)"/>
+      <line x1="300" y1="50" x2="300" y2="100" stroke="#555" stroke-width="1" marker-end="url(#arr001)"/>
+      <line x1="400" y1="50" x2="520" y2="100" stroke="#555" stroke-width="1" marker-end="url(#arr001)"/>
+
+      <!-- Zone boxes -->
+      <rect x="20" y="100" width="120" height="40" rx="3" fill="#cfe2ff" stroke="#1f4e8a" stroke-width="1.5"/>
+      <text x="80" y="124" text-anchor="middle" font-size="12">ZONE_DMA</text>
+
+      <rect x="230" y="100" width="140" height="40" rx="3" fill="#cfe2ff" stroke="#1f4e8a" stroke-width="1.5"/>
+      <text x="300" y="124" text-anchor="middle" font-size="12">ZONE_NORMAL</text>
+
+      <rect x="450" y="100" width="130" height="40" rx="3" fill="#cfe2ff" stroke="#1f4e8a" stroke-width="1.5"/>
+      <text x="515" y="124" text-anchor="middle" font-size="12">ZONE_HIGHMEM</text>
+
+      <!-- zone_mem_map arrows to mem_map bar -->
+      <line x1="80" y1="140" x2="80" y2="200" stroke="#555" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr001)"/>
+      <text x="83" y="180" font-size="10" fill="#555">zone_mem_map</text>
+      <line x1="300" y1="140" x2="300" y2="200" stroke="#555" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr001)"/>
+      <text x="303" y="180" font-size="10" fill="#555">zone_mem_map</text>
+      <line x1="515" y1="140" x2="515" y2="200" stroke="#555" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr001)"/>
+      <text x="518" y="180" font-size="10" fill="#555">zone_mem_map</text>
+
+      <!-- mem_map array -->
+      <rect x="20" y="200" width="560" height="40" rx="3" fill="#fff3cd" stroke="#856404" stroke-width="1.5"/>
+      <text x="300" y="215" text-anchor="middle" font-size="11" fill="#555">全局 mem_map 数组</text>
+      <!-- page cells in DMA zone -->
+      <rect x="30" y="207" width="25" height="26" fill="#ffe8a1" stroke="#856404"/>
+      <text x="43" y="224" text-anchor="middle" font-size="9">页</text>
+      <rect x="55" y="207" width="25" height="26" fill="#ffe8a1" stroke="#856404"/>
+      <text x="68" y="224" text-anchor="middle" font-size="9">页</text>
+      <rect x="80" y="207" width="25" height="26" fill="#ffe8a1" stroke="#856404"/>
+      <text x="93" y="224" text-anchor="middle" font-size="9">页</text>
+      <text x="115" y="224" font-size="12" fill="#888">…</text>
+      <!-- page cells in NORMAL zone -->
+      <rect x="210" y="207" width="25" height="26" fill="#ffe8a1" stroke="#856404"/>
+      <text x="223" y="224" text-anchor="middle" font-size="9">页</text>
+      <rect x="235" y="207" width="25" height="26" fill="#ffe8a1" stroke="#856404"/>
+      <text x="248" y="224" text-anchor="middle" font-size="9">页</text>
+      <rect x="260" y="207" width="25" height="26" fill="#ffe8a1" stroke="#856404"/>
+      <text x="273" y="224" text-anchor="middle" font-size="9">页</text>
+      <text x="295" y="224" font-size="12" fill="#888">…</text>
+      <!-- page cells in HIGHMEM zone -->
+      <rect x="440" y="207" width="25" height="26" fill="#ffe8a1" stroke="#856404"/>
+      <text x="453" y="224" text-anchor="middle" font-size="9">页</text>
+      <rect x="465" y="207" width="25" height="26" fill="#ffe8a1" stroke="#856404"/>
+      <text x="478" y="224" text-anchor="middle" font-size="9">页</text>
+      <rect x="490" y="207" width="25" height="26" fill="#ffe8a1" stroke="#856404"/>
+      <text x="503" y="224" text-anchor="middle" font-size="9">页</text>
+      <text x="525" y="224" font-size="12" fill="#888">…</text>
+
+      <!-- Label at bottom -->
+      <text x="300" y="268" text-anchor="middle" font-size="12" fill="#333">每个 struct page 代表一个物理页帧</text>
+
+      <!-- Title -->
+      <text x="300" y="300" text-anchor="middle" font-size="13" font-weight="bold">结点、Zone 与 Page 之间的关系</text>
+    </svg>
     <div class="caption">图 2.1：结点、Zone 与 Page 之间的关系</div>
   </div>
 
