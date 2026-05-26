@@ -26,7 +26,84 @@
   <p>PGD 中每个有效条目指向一个包含 <tt>pmd_t</tt> 类型 PMD 条目数组的页帧；每个 PMD 条目又指向包含 <tt>pte_t</tt> 类型 PTE 的页帧；PTE 最终指向保存实际用户数据的页帧。如果页被换出到后备存储，PTE 中保存的是 swap 表项，缺页时 <tt>do_swap_page()</tt> 使用它找到保存页数据的 swap 表项。页表布局如图 3.1 所示。</p>
 
   <div class="figure">
-    <img src="../original_html/figures/understand-html006.png" alt="图 3.1">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 340" width="640" role="img" aria-labelledby="fig006-title fig006-desc" font-family="sans-serif" font-size="12">
+      <title id="fig006-title">图 3.1：页表布局</title>
+      <desc id="fig006-desc">三级页表结构示意图：线性地址分为 PGD 索引、PMD 索引、PTE 索引和页内偏移，分别用于索引 PGD、PMD 和 PTE，最终 PTE 指向物理页帧或 swap 表项。</desc>
+      <defs>
+        <marker id="arr006" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+        </marker>
+      </defs>
+
+      <!-- Title -->
+      <text x="320" y="20" text-anchor="middle" font-size="13" font-weight="bold">图 3.1：页表布局</text>
+
+      <!-- Linear address bar at top -->
+      <text x="320" y="44" text-anchor="middle" font-size="11" fill="#444">线性地址</text>
+      <!-- PGD index section -->
+      <rect x="40" y="50" width="120" height="24" fill="#cfe2ff" stroke="#1f4e8a"/>
+      <text x="100" y="66" text-anchor="middle" font-size="11">PGD 索引</text>
+      <!-- PMD index section -->
+      <rect x="160" y="50" width="120" height="24" fill="#d4edda" stroke="#155724"/>
+      <text x="220" y="66" text-anchor="middle" font-size="11">PMD 索引</text>
+      <!-- PTE index section -->
+      <rect x="280" y="50" width="120" height="24" fill="#fff3cd" stroke="#856404"/>
+      <text x="340" y="66" text-anchor="middle" font-size="11">PTE 索引</text>
+      <!-- Offset section -->
+      <rect x="400" y="50" width="200" height="24" fill="#f4f4f4" stroke="#888"/>
+      <text x="500" y="66" text-anchor="middle" font-size="11">页内偏移</text>
+
+      <!-- PGD column -->
+      <text x="100" y="115" text-anchor="middle" font-weight="bold">PGD</text>
+      <rect x="60" y="120" width="80" height="20" fill="#f4f4f4" stroke="#888"/>
+      <rect x="60" y="140" width="80" height="20" fill="#cfe2ff" stroke="#1f4e8a" stroke-width="1.5"/>
+      <rect x="60" y="160" width="80" height="20" fill="#f4f4f4" stroke="#888"/>
+      <rect x="60" y="180" width="80" height="20" fill="#f4f4f4" stroke="#888"/>
+      <!-- mm_struct→pgd label -->
+      <text x="10" y="150" text-anchor="start" font-size="10" fill="#444">mm_struct</text>
+      <text x="10" y="162" text-anchor="start" font-size="10" fill="#444">→pgd</text>
+      <line x1="57" y1="150" x2="40" y2="155" stroke="#888" stroke-dasharray="3,2"/>
+
+      <!-- PMD column -->
+      <text x="280" y="115" text-anchor="middle" font-weight="bold">PMD</text>
+      <rect x="240" y="120" width="80" height="20" fill="#f4f4f4" stroke="#888"/>
+      <rect x="240" y="140" width="80" height="20" fill="#d4edda" stroke="#155724" stroke-width="1.5"/>
+      <rect x="240" y="160" width="80" height="20" fill="#f4f4f4" stroke="#888"/>
+      <rect x="240" y="180" width="80" height="20" fill="#f4f4f4" stroke="#888"/>
+
+      <!-- PTE column -->
+      <text x="460" y="115" text-anchor="middle" font-weight="bold">PTE</text>
+      <rect x="420" y="120" width="80" height="20" fill="#f4f4f4" stroke="#888"/>
+      <rect x="420" y="140" width="80" height="20" fill="#fff3cd" stroke="#856404" stroke-width="1.5"/>
+      <rect x="420" y="160" width="80" height="20" fill="#f4f4f4" stroke="#888"/>
+      <rect x="420" y="180" width="80" height="20" fill="#f4f4f4" stroke="#888"/>
+
+      <!-- Arrow: PGD highlighted entry → PMD -->
+      <line x1="140" y1="150" x2="240" y2="150" stroke="#1f4e8a" marker-end="url(#arr006)"/>
+
+      <!-- Arrow: PMD highlighted entry → PTE -->
+      <line x1="320" y1="150" x2="420" y2="150" stroke="#155724" marker-end="url(#arr006)"/>
+
+      <!-- Physical page frame box -->
+      <rect x="540" y="130" width="90" height="30" fill="#cfe2ff" stroke="#1f4e8a" rx="3"/>
+      <text x="585" y="149" text-anchor="middle" font-size="11">物理页帧</text>
+
+      <!-- Swap entry box -->
+      <rect x="540" y="175" width="90" height="30" fill="#f8d7da" stroke="#721c24" rx="3"/>
+      <text x="585" y="194" text-anchor="middle" font-size="11">swap 表项</text>
+
+      <!-- Arrow: PTE highlighted → physical page or swap -->
+      <line x1="500" y1="148" x2="540" y2="143" stroke="#856404" marker-end="url(#arr006)"/>
+      <line x1="500" y1="152" x2="540" y2="183" stroke="#856404" stroke-dasharray="4,2" marker-end="url(#arr006)"/>
+
+      <!-- Arrows from linear address fields down to column headers -->
+      <line x1="100" y1="74" x2="100" y2="108" stroke="#1f4e8a" stroke-dasharray="3,2" marker-end="url(#arr006)"/>
+      <line x1="220" y1="74" x2="280" y2="108" stroke="#155724" stroke-dasharray="3,2" marker-end="url(#arr006)"/>
+      <line x1="340" y1="74" x2="460" y2="108" stroke="#856404" stroke-dasharray="3,2" marker-end="url(#arr006)"/>
+
+      <!-- Labels under physical/swap -->
+      <text x="585" y="222" text-anchor="middle" font-size="10" fill="#444">（已换出时）</text>
+    </svg>
     <div class="caption">图 3.1：页表布局</div>
   </div>
 
