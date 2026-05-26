@@ -1,0 +1,1207 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"
+            "http://www.w3.org/TR/REC-html40/loose.dtd">
+<HTML>
+<HEAD>
+
+
+<META name="GENERATOR" content="hevea 1.09">
+<LINK rel="stylesheet" type="text/css" href="understand_zh.css">
+<TITLE>Slab 分配器</TITLE>
+</HEAD>
+<BODY >
+[ <A HREF="understand024_zh.html">&laquo; 上一章</A> ]
+[ <A HREF="index.html">&uarr; 上级</A> ]
+[ <A HREF="../original_html/understand026.html">下一章 &raquo;</A> ]
+<HR>
+<H1 CLASS="chapter"><A NAME="htoc308">附录 H</A>　Slab 分配器</H1><P>
+	</P><H2 CLASS="section"><A NAME="toc118"></A><A NAME="htoc309">H.1</A>　缓存操作</H2><P>
+<A NAME="c_sec: Cache Creation"></A></P><H3 CLASS="subsection"><A NAME="htoc310">H.1.1</A>　缓存创建</H3><H4 CLASS="subsubsection"><A NAME="htoc311">H.1.1.1</A>函数：kmem_cache_create</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_create"></A> <A NAME="@codeindex220"></A></P><P>该函数的调用图见 <A HREF="understand011_zh.html#fig: kmem_cache_create">图 8.3</A>。该函数负责创建一个新的缓存，由于其规模较大，下面将按代码块逐段说明，大致分为以下几个部分：</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+对错误使用情况执行基本的合法性检查
+</LI><LI CLASS="li-itemize">如果设置了 <TT>CONFIG_SLAB_DEBUG</TT>，则执行调试检查
+</LI><LI CLASS="li-itemize">从 <TT>cache_cache</TT> slab 缓存中分配一个 <TT>kmem_cache_t</TT>
+</LI><LI CLASS="li-itemize">将对象大小对齐到字大小
+</LI><LI CLASS="li-itemize">计算一个 slab 中能容纳多少对象
+</LI><LI CLASS="li-itemize">将 slab 大小对齐到硬件缓存
+</LI><LI CLASS="li-itemize">计算着色偏移
+</LI><LI CLASS="li-itemize">初始化缓存描述符中其余的字段
+</LI><LI CLASS="li-itemize">将新缓存加入到缓存链中
+</LI></UL><PRE CLASS="verbatim">621 kmem_cache_t *
+622 kmem_cache_create (const char *name, size_t size, 
+623     size_t offset, unsigned long flags, 
+        void (*ctor)(void*, kmem_cache_t *, unsigned long),
+624     void (*dtor)(void*, kmem_cache_t *, unsigned long))
+625 {
+626     const char *func_nm = KERN_ERR "kmem_create: ";
+627     size_t left_over, align, slab_size;
+628     kmem_cache_t *cachep = NULL;
+629 
+633     if ((!name) ||
+634         ((strlen(name) &gt;= CACHE_NAMELEN - 1)) ||
+635         in_interrupt() ||
+636         (size &lt; BYTES_PER_WORD) ||
+637         (size &gt; (1&lt;&lt;MAX_OBJ_ORDER)*PAGE_SIZE) ||
+638         (dtor &amp;&amp; !ctor) ||
+639         (offset &lt; 0 || offset &gt; size))
+640             BUG();
+641 
+</PRE><P>对错误使用情况执行基本的合法性检查</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>622</B>该函数的参数为
+<DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>name</B> 	缓存的可读名称
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>size</B> 	单个对象的大小
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>offset</B>	用于为缓存中的对象指定特定的对齐方式，通常保留为 0
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B>	静态缓存标志
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>ctor</B>	在 slab 创建期间为每个对象调用的构造函数
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>dtor</B>	对应的析构函数。预期析构函数会将对象保留在已初始化的状态</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>633-640</B>	这些都是严重的使用错误，会阻止缓存的创建尝试</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>634</B>如果可读名称超过了缓存名称的最大长度（<TT>CACHE_NAMELEN</TT>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>635</B>中断处理程序不能创建缓存，因为需要访问中断安全的自旋锁和信号量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>636</B>对象的大小至少要是一个字。slab 分配器不适合用于以单个字节为单位度量大小的对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>637</B>可创建的最大 slab 的大小为 2<SUP><I>MAX</I>_<I>OBJ</I>_<I>ORDER</I></SUP> 个页面，即 32 页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>638</B>如果没有构造函数，就不能使用析构函数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>639</B>偏移不能位于 slab 之前，也不能越过第一页的边界</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>640</B>调用 <TT>BUG()</TT> 退出
+</DD></DL><PRE CLASS="verbatim">642 #if DEBUG
+643     if ((flags &amp; SLAB_DEBUG_INITIAL) &amp;&amp; !ctor) {
+645         printk("%sNo con, but init state check 
+                requested - %s\n", func_nm, name);
+646         flags &amp;= ~SLAB_DEBUG_INITIAL;
+647     }
+648 
+649     if ((flags &amp; SLAB_POISON) &amp;&amp; ctor) {
+651         printk("%sPoisoning requested, but con given - %s\n",
+                                                  func_nm, name);
+652         flags &amp;= ~SLAB_POISON;
+653     }
+654 #if FORCED_DEBUG
+655     if ((size &lt; (PAGE_SIZE&gt;&gt;3)) &amp;&amp; 
+        !(flags &amp; SLAB_MUST_HWCACHE_ALIGN))
+660         flags |= SLAB_RED_ZONE;
+661     if (!ctor)
+662         flags |= SLAB_POISON;
+663 #endif
+664 #endif
+670     BUG_ON(flags &amp; ~CREATE_MASK);
+</PRE><P>如果设置了 <TT>CONFIG_SLAB_DEBUG</TT>，本代码块将执行调试检查</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>643-646</B>标志 <TT>SLAB_DEBUG_INITIAL</TT> 要求构造函数检查对象，以确保它们处于已初始化状态。因此必须存在构造函数；如果不存在，则清除该标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>649-653</B>可以用已知的模式给 slab 投毒，以确保某个对象在被分配前未被使用过，但构造函数会破坏这一模式，从而错误地报告 bug。如果存在构造函数，则在 <TT>SLAB_POISON</TT> 标志被设置时将其清除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>655-660</B>只有小对象会被加上红色边界以便调试。对大对象进行红色边界标记会造成严重的碎片化</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>661-662</B>如果没有构造函数，设置投毒位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>670</B><TT>CREATE_MASK</TT> 包含了 <TT>kmem_cache_create()</TT>（见 <A HREF="#func: kmem_cache_create">H.1.1.1 节</A>）允许传入的所有标志。这可以防止调用者在调试标志不可用时使用它们，否则会触发 <TT>BUG()</TT></DD></DL><PRE CLASS="verbatim">673     cachep = 
+           (kmem_cache_t *) kmem_cache_alloc(&amp;cache_cache,
+                         SLAB_KERNEL);
+674     if (!cachep)
+675         goto opps;
+676     memset(cachep, 0, sizeof(kmem_cache_t));
+</PRE><P>从 <TT>cache_cache</TT> slab 缓存中分配一个 <TT>kmem_cache_t</TT>。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>673</B>使用 <TT>kmem_cache_alloc()</TT>（见 <A HREF="#func: kmem_cache_alloc">H.3.2.1 节</A>）从 <TT>cache_cache</TT> 中分配一个缓存描述符对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>674-675</B>如果内存不足，跳转到 <TT>opps</TT> 处理 oom 情况</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>676</B>将对象清零，防止未初始化数据带来意外</DD></DL><PRE CLASS="verbatim">682     if (size &amp; (BYTES_PER_WORD-1)) {
+683         size += (BYTES_PER_WORD-1);
+684         size &amp;= ~(BYTES_PER_WORD-1);
+685         printk("%sForcing size word alignment 
+               - %s\n", func_nm, name);
+686     }
+687
+688 #if DEBUG
+689     if (flags &amp; SLAB_RED_ZONE) {
+694         flags &amp;= ~SLAB_HWCACHE_ALIGN;
+695         size += 2*BYTES_PER_WORD;
+696     }
+697 #endif
+698     align = BYTES_PER_WORD;
+699     if (flags &amp; SLAB_HWCACHE_ALIGN)
+700         align = L1_CACHE_BYTES;
+701
+703     if (size &gt;= (PAGE_SIZE&gt;&gt;3))
+708         flags |= CFLGS_OFF_SLAB;
+709 
+710     if (flags &amp; SLAB_HWCACHE_ALIGN) {
+714         while (size &lt; align/2)
+715             align /= 2;
+716         size = (size+align-1)&amp;(~(align-1));
+717     }
+</PRE><P>将对象大小对齐到某个字大小的边界。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>682</B>如果对象大小未对齐到字大小，则……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>683-684</B>将对象大小增加一个字的大小，然后屏蔽掉低位，这相当于将对象大小向上取整到下一个字边界</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>685</B>打印一条用于调试的提示信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>688-697</B>如果启用了调试，对齐方式需要做一些细微调整</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>694</B>如果 slab 要被加红色边界，就不必尝试将其对齐到硬件缓存了。对象的红色边界会把对象从缓存边界处偏移一个字</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>695</B>对象大小增加两个 <TT>BYTES_PER_WORD</TT>，用于在对象两端存储红色边界标记</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>698</B>将对齐初始化为字边界。如果调用者请求了 CPU 缓存对齐，则会改变</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>699-700</B>如果有要求，则将对象对齐到 L1 CPU 缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>703</B>如果对象较大，将 slab 描述符存储在 slab 外。这样可以让对象在 slab 中更紧凑地排列</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>710</B>如果请求了硬件缓存对齐，则必须调整对象大小，以使其对齐到硬件缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>714-715</B>在保持对齐的前提下，尝试将对象塞入一条缓存行。这对于具有较大 L1 缓存行的体系结构（例如 Alpha 或 Pentium 4）很重要。<TT>align</TT> 会被调整为能保证硬件缓存对齐的最小值。对于 L1 缓存行较大的机器，每条缓存行可能放入两个或更多小对象。例如 size-32 缓存中的两个对象可以放入 Pentium 4 的一条缓存行</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>716</B>将缓存大小向上取整到硬件缓存对齐</DD></DL><PRE CLASS="verbatim">724     do {
+725         unsigned int break_flag = 0;
+726 cal_wastage:
+727         kmem_cache_estimate(cachep-&gt;gfporder, 
+                    size, flags,
+728                     &amp;left_over, 
+                    &amp;cachep-&gt;num);
+729         if (break_flag)
+730             break;
+731         if (cachep-&gt;gfporder &gt;= MAX_GFP_ORDER)
+732             break;
+733         if (!cachep-&gt;num)
+734             goto next;
+735         if (flags &amp; CFLGS_OFF_SLAB &amp;&amp; 
+            cachep-&gt;num &gt; offslab_limit) {
+737             cachep-&gt;gfporder--;
+738             break_flag++;
+739             goto cal_wastage;
+740         }
+741 
+746         if (cachep-&gt;gfporder &gt;= slab_break_gfp_order)
+747             break;
+748 
+749         if ((left_over*8) &lt;= (PAGE_SIZE&lt;&lt;cachep-&gt;gfporder))
+750             break;  
+751 next:
+752         cachep-&gt;gfporder++;
+753     } while (1);
+754
+755     if (!cachep-&gt;num) {
+756         printk("kmem_cache_create: couldn't 
+                create cache %s.\n", name);
+757         kmem_cache_free(&amp;cache_cache, cachep);
+758         cachep = NULL;
+759         goto opps;
+760     }
+</PRE><P>计算一个 slab 中能容纳多少对象，并在必要时调整 slab 大小</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>727-728</B><TT>kmem_cache_estimate()</TT>（见 <A HREF="#func: kmem_cache_estimate">H.1.2.1 节</A>）按当前的 gfp 阶计算 slab 中能容纳的对象数量，以及剩余字节数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>729-730</B>如果在使用 slab 外描述符时，slab 中能容纳的对象数超过了允许的数量，则设置 <TT>break_flag</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>731-732</B>所使用的页面阶不能超过 <TT>MAX_GFP_ORDER</TT>（5）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>733-734</B>如果连一个对象都装不下，跳转到 next: 标签处增加缓存使用的 <TT>gfporder</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>735</B>如果 slab 描述符保存在 slab 外，但对象数超过了 slab 外 bufctl 所能跟踪的数量，则……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>737</B>降低所用页面的阶</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>738</B>设置 <TT>break_flag</TT> 以便循环退出</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>739</B>计算新的浪费量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>746-747</B><TT>slab_break_gfp_order</TT> 是除非 slab 中一个对象都放不下、否则不能超过的阶。此检查确保该阶不被超过</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>749-759</B>这是对内部碎片化的粗略检查。如果浪费量占缓存总大小的比例小于八分之一，则认为是可以接受的</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>752</B>如果碎片化过高，增加 gfp 阶并重新计算可存储的对象数和浪费量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>755</B>如果经过调整后对象仍然装不下，缓存就无法被创建</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>757-758</B>释放缓存描述符并将指针置为 NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>758</B>跳转到 <TT>opps</TT>，它会直接返回 NULL 指针</DD></DL><PRE CLASS="verbatim">761     slab_size = L1_CACHE_ALIGN(
+              cachep-&gt;num*sizeof(kmem_bufctl_t) + 
+              sizeof(slab_t));
+762 
+767     if (flags &amp; CFLGS_OFF_SLAB &amp;&amp; left_over &gt;= slab_size) {
+768         flags &amp;= ~CFLGS_OFF_SLAB;
+769         left_over -= slab_size;
+770     }
+</PRE><P>将 slab 大小对齐到硬件缓存</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>761</B><TT>slab_size</TT> 是 slab 描述符的总大小，<EM>而不是</EM> slab 本身的大小，包括 <TT>slab_t</TT> 结构体的大小加上 <TT>对象数 * bufctl 的大小</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>767-769</B>如果剩余空间足以容纳 slab 描述符，并且指定了将描述符放在 slab 外，则清除该标志，并更新剩余的 <TT>left_over</TT> 字节数。这会影响缓存着色，但由于使用 slab 外描述符的对象较大，这并不是问题</DD></DL><PRE CLASS="verbatim">773     offset += (align-1);
+774     offset &amp;= ~(align-1);
+775     if (!offset)
+776         offset = L1_CACHE_BYTES;
+777     cachep-&gt;colour_off = offset;
+778     cachep-&gt;colour = left_over/offset;
+</PRE><P>计算着色偏移。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>773-774</B><TT>offset</TT> 是调用者请求的页内偏移。此处确保所请求的偏移按缓存使用的正确对齐</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>775-776</B>如果偏移恰好为 0，则将其设置为按 CPU 缓存对齐</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>777</B>这是用来将对象保持在不同缓存行上的偏移。每个创建的 slab 都会被赋予不同的着色偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>778</B>这是可使用的不同偏移的数量
+</DD></DL><PRE CLASS="verbatim">781     if (!cachep-&gt;gfporder &amp;&amp; !(flags &amp; CFLGS_OFF_SLAB))
+782         flags |= CFLGS_OPTIMIZE;
+783 
+784     cachep-&gt;flags = flags;
+785     cachep-&gt;gfpflags = 0;
+786     if (flags &amp; SLAB_CACHE_DMA)
+787         cachep-&gt;gfpflags |= GFP_DMA;
+788     spin_lock_init(&amp;cachep-&gt;spinlock);
+789     cachep-&gt;objsize = size;
+790     INIT_LIST_HEAD(&amp;cachep-&gt;slabs_full);
+791     INIT_LIST_HEAD(&amp;cachep-&gt;slabs_partial);
+792     INIT_LIST_HEAD(&amp;cachep-&gt;slabs_free);
+793 
+794     if (flags &amp; CFLGS_OFF_SLAB)
+795         cachep-&gt;slabp_cache =
+               kmem_find_general_cachep(slab_size,0);
+796     cachep-&gt;ctor = ctor;
+797     cachep-&gt;dtor = dtor;
+799     strcpy(cachep-&gt;name, name);
+800 
+801 #ifdef CONFIG_SMP
+802     if (g_cpucache_up)
+803         enable_cpucache(cachep);
+804 #endif
+</PRE><P>初始化缓存描述符中其余的字段</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>781-782</B>对于 slab 仅为 1 页的缓存，设置 <TT>CFLGS_OPTIMIZE</TT> 标志。实际上没有影响，因为该标志未被使用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>784</B>设置缓存的静态标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>785</B>将 gfpflags 清零。这一操作其实是多余的，因为分配缓存描述符之后的 <TT>memset()</TT> 已经完成了这件事</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>786-787</B>如果 slab 用于 DMA，则设置 <TT>GFP_DMA</TT> 标志，使伙伴分配器使用 <TT>ZONE_DMA</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>788</B>初始化用于访问缓存的自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>789</B>填入对象大小，必要时已考虑硬件缓存对齐</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>790-792</B>初始化各 slab 链表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>794-795</B>如果描述符保存在 slab 外，则分配一个 slab 管理器并将其放入 <TT>slabp_cache</TT> 以备使用。见 <A HREF="#func: kmem_find_general_cachep">H.2.1.2 节</A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>796-797</B>设置构造函数和析构函数指针</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>799</B>填入可读名称</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>802-803</B>如果启用了 per-cpu 缓存，则为该缓存创建一组。见 <A HREF="understand011_zh.html#Sec: Per-CPU Object Cache">8.5 节</A>
+</DD></DL><PRE CLASS="verbatim">806     down(&amp;cache_chain_sem);
+807     {
+808         struct list_head *p;
+809 
+810         list_for_each(p, &amp;cache_chain) {
+811             kmem_cache_t *pc = list_entry(p, 
+                    kmem_cache_t, next);
+812 
+814             if (!strcmp(pc-&gt;name, name))
+815                 BUG();
+816         }
+817     }
+818 
+822     list_add(&amp;cachep-&gt;next, &amp;cache_chain);
+823     up(&amp;cache_chain_sem);
+824 opps:
+825     return cachep;
+826 }
+</PRE><P>将新缓存加入到缓存链中</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>806</B>获取用于同步访问缓存链的信号量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>810-816</B>检查缓存链上的每个缓存，确保没有同名的缓存。如果存在，则意味着创建了两个同类型的缓存，这是一个严重的 bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>811</B>从链表中取出缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>814-815</B>比较名称，如果匹配则调用 <TT>BUG()</TT>。值得注意的是，新缓存并未被删除，但此错误是开发期间粗心编程的结果，而非正常情形</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>822</B>将缓存链入链中。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>823</B>释放缓存链信号量。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>825</B>返回新的缓存指针
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc312">H.1.2</A>　计算 Slab 中的对象数量</H3><P>
+<A NAME="c_sec: Calculating the Number of Objects on a Slab"></A></P><H4 CLASS="subsubsection"><A NAME="htoc313">H.1.2.1</A>函数：kmem_cache_estimate</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_estimate"></A> <A NAME="@codeindex221"></A></P><P>在创建缓存时需要确定一个 slab 中能存储多少对象，以及会有多少浪费。下面这个函数计算 slab 中可存储的对象数，并考虑了 slab 和 bufctl 是否必须存放在 slab 内的情况。</P><PRE CLASS="verbatim">388 static void kmem_cache_estimate (unsigned long gfporder, 
+             size_t size,
+389          int flags, size_t *left_over, unsigned int *num)
+390 {
+391     int i;
+392     size_t wastage = PAGE_SIZE&lt;&lt;gfporder;
+393     size_t extra = 0;
+394     size_t base = 0;
+395 
+396     if (!(flags &amp; CFLGS_OFF_SLAB)) {
+397         base = sizeof(slab_t);
+398         extra = sizeof(kmem_bufctl_t);
+399     }
+400     i = 0;
+401     while (i*size + L1_CACHE_ALIGN(base+i*extra) &lt;= wastage)
+402         i++;
+403     if (i &gt; 0)
+404         i--;
+405 
+406     if (i &gt; SLAB_LIMIT)
+407         i = SLAB_LIMIT;
+408 
+409     *num = i;
+410     wastage -= i*size;
+411     wastage -= L1_CACHE_ALIGN(base+i*extra);
+412     *left_over = wastage;
+413 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>388</B>该函数的参数如下<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>gfporder</B> 为每个 slab 分配 2<SUP><I>gfporder</I></SUP> 个页面
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>size</B> 	每个对象的大小
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B>	缓存标志
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>left_over</B> slab 中剩余的字节数，返回给调用者
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>num</B>	slab 中能容纳的对象数，返回给调用者
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>392</B><TT>wastage</TT> 在函数中会逐步减少。它从最大可能的浪费量开始。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>393</B><TT>extra</TT> 是存储 <TT>kmem_bufctl_t</TT> 所需的字节数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>394</B><TT>base</TT> 是 slab 中可用内存的起始位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>396</B>如果 slab 描述符保存在 slab 内，则 base 从 <TT>slab_t</TT> 结构体之后开始，存储 bufctl 所需的字节数就是 <TT>kmem_bufctl_t</TT> 的大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>400</B><TT>i</TT> 是 slab 能容纳的对象数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>401-402</B>这段代码计算缓存能存储的对象数。<TT>i*size</TT> 是对象本身的大小。<TT>L1_CACHE_ALIGN(base+i*extra)</TT> 稍稍复杂一些：它计算存储 slab 中每个对象所需的 <TT>kmem_bufctl_t</TT> 占用的内存量。由于它位于 slab 开头，因此按 L1 缓存对齐，使 slab 中的第一个对象按硬件缓存对齐。<TT>i*extra</TT> 计算保存当前对象的 <TT>kmem_bufctl_t</TT> 所需的空间。由于 wastage 初始值为 slab 大小，这里对其用途进行了重载。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>403-404</B>由于前面的循环一直数到 slab 溢出为止，因此能存储的对象数为 <TT>i-1</TT>。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>406-407</B><TT>SLAB_LIMIT</TT> 是一个 slab 能存储的对象数的绝对上限。它被定义为 0xffffFFFE，因为这是 <TT>kmem_bufctl_t()</TT>（一个无符号整数）所能容纳的最大值</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>409</B>此时 <TT>num</TT> 即为 slab 能容纳的对象数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>410</B>从 wastage 中减去所有对象占用的空间</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>411</B>减去 <TT>kmem_bufctl_t</TT> 占用的空间</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>412</B>此时 wastage 就是 slab 中剩余的空间
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc314">H.1.3</A>　缓存收缩</H3><P>
+<A NAME="c_sec: Cache Shrinking"></A></P><P><TT>kmem_cache_shrink()</TT> 的调用图见 <A HREF="understand011_zh.html#fig: kmem_cache_shrink">图 8.5</A>。提供了两种收缩函数。<TT>kmem_cache_shrink()</TT> 从 <TT>slabs_free</TT> 中移除所有 slab，并返回因此释放的页面数。<TT>__kmem_cache_shrink()</TT> 释放 slabs_free 中所有的 slab，然后验证 slabs_partial 和 <TT>slabs_full</TT> 是否为空。这在缓存销毁期间很重要，此时关心的不是释放了多少页面，而是缓存是否为空。</P><H4 CLASS="subsubsection"><A NAME="htoc315">H.1.3.1</A>函数：kmem_cache_shrink</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_shrink"></A> <A NAME="@codeindex222"></A></P><P>该函数执行基本的调试检查，然后在释放 slab 前获取缓存描述符锁。它曾经也调用过 <TT>drain_cpu_caches()</TT> 来释放 per-cpu 缓存中的对象。这个调用被移除颇为奇怪，因为对象可能因为分配在 per-cpu 缓存中但未被使用，导致 slab 无法被释放。</P><PRE CLASS="verbatim">966 int kmem_cache_shrink(kmem_cache_t *cachep)
+967 {
+968     int ret;
+969 
+970     if (!cachep || in_interrupt() || 
+        !is_chained_kmem_cache(cachep))
+971         BUG();
+972 
+973     spin_lock_irq(&amp;cachep-&gt;spinlock);
+974     ret = __kmem_cache_shrink_locked(cachep);
+975     spin_unlock_irq(&amp;cachep-&gt;spinlock);
+976 
+977     return ret &lt;&lt; cachep-&gt;gfporder;
+978 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>966</B>参数是要收缩的缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>970</B>检查
+<UL CLASS="itemize"><LI CLASS="li-itemize">
+缓存指针不为 NULL
+</LI><LI CLASS="li-itemize">调用者不是中断
+</LI><LI CLASS="li-itemize">缓存在缓存链上且不是无效指针
+</LI></UL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>973</B>获取缓存描述符锁并禁用中断</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>974</B>收缩缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>975</B>释放缓存锁并启用中断</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>976</B>这里返回释放的页面数，但未计入因排空 CPU 而释放的对象。
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc316">H.1.3.2</A>函数：__kmem_cache_shrink</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: __kmem_cache_shrink"></A> <A NAME="@codeindex223"></A></P><P>该函数与 <TT>kmem_cache_shrink()</TT> 相同，只是它返回缓存是否为空。这在缓存销毁期间很重要，此时关心的不是释放了多少内存，而是能否安全删除缓存且不泄漏内存。</P><PRE CLASS="verbatim">945 static int __kmem_cache_shrink(kmem_cache_t *cachep)
+946 {
+947     int ret;
+948 
+949     drain_cpu_caches(cachep);
+950 
+951     spin_lock_irq(&amp;cachep-&gt;spinlock);
+952     __kmem_cache_shrink_locked(cachep);
+953     ret = !list_empty(&amp;cachep-&gt;slabs_full) ||
+954         !list_empty(&amp;cachep-&gt;slabs_partial);
+955     spin_unlock_irq(&amp;cachep-&gt;spinlock);
+956     return ret;
+957 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>949</B>从 per-CPU 对象缓存中移除所有对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>951</B>获取缓存描述符锁并禁用中断</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>952</B>释放 <TT>slabs_free</TT> 链表中的所有 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>954-954</B>检查 slabs_partial 和 <TT>slabs_full</TT> 链表是否为空</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>955</B>释放缓存描述符锁并重新启用中断</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>956</B>返回缓存的所有 slab 是否都为空
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc317">H.1.3.3</A>函数：__kmem_cache_shrink_locked</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: __kmem_cache_shrink_locked"></A> <A NAME="@codeindex224"></A></P><P>这是真正做释放 slab 这种脏活的函数。它会不断销毁 slab，直到 growing 标志被设置（表示缓存正在被使用），或 <TT>slabs_free</TT> 中没有更多的 slab 为止。</P><PRE CLASS="verbatim">917 static int __kmem_cache_shrink_locked(kmem_cache_t *cachep)
+918 {
+919     slab_t *slabp;
+920     int ret = 0;
+921 
+923     while (!cachep-&gt;growing) {
+924         struct list_head *p;
+925 
+926         p = cachep-&gt;slabs_free.prev;
+927         if (p == &amp;cachep-&gt;slabs_free)
+928             break;
+929 
+930         slabp = list_entry(cachep-&gt;slabs_free.prev, 
+                       slab_t, list);
+931 #if DEBUG
+932         if (slabp-&gt;inuse)
+933             BUG();
+934 #endif
+935         list_del(&amp;slabp-&gt;list);
+936 
+937         spin_unlock_irq(&amp;cachep-&gt;spinlock);
+938         kmem_slab_destroy(cachep, slabp);
+939         ret++;
+940         spin_lock_irq(&amp;cachep-&gt;spinlock);
+941     }
+942     return ret;
+943 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>923</B>当缓存未在增长时，释放 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>926-930</B>从 <TT>slabs_free</TT> 链表中取出最后一个 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>932-933</B>如果可以进行调试，请确认该 slab 未被使用。如果未被使用，它本来就不应该在 <TT>slabs_free</TT> 链表上</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>935</B>从链表中移除 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>937</B>重新启用中断。该函数是在中断被禁用的状态下被调用的，这里是为了尽快释放中断。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>938</B>使用 <TT>kmem_slab_destroy()</TT>（见 <A HREF="#func: kmem_slab_destroy">H.2.3.1 节</A>）删除 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>939</B>记录已释放的 slab 数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>940</B>获取缓存描述符锁并禁用中断
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc318">H.1.4</A>　缓存销毁</H3><P>
+<A NAME="sec: Cache Destroying"></A></P><P>当模块被卸载时，它负责销毁自己创建的所有缓存；因为在模块加载时已确保不会出现两个同名缓存。核心内核代码通常不销毁自己的缓存，因为这些缓存的存在贯穿整个系统的生命周期。销毁缓存的步骤如下：</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+从缓存链中删除该缓存
+</LI><LI CLASS="li-itemize">收缩缓存以删除所有 slab（见 <A HREF="understand011_zh.html#Sec: Cache Shrinking">8.1.8 节</A>）</LI><LI CLASS="li-itemize">释放所有 per CPU 缓存（<TT>kfree()</TT>）</LI><LI CLASS="li-itemize">从 <TT>cache_cache</TT> 中删除缓存描述符（见 <A HREF="understand011_zh.html#Sec: Object Freeing">8.3.3 节</A>）</LI></UL><H4 CLASS="subsubsection"><A NAME="htoc319">H.1.4.1</A>函数：kmem_cache_destroy</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_destroy"></A> <A NAME="@codeindex225"></A></P><P>该函数的调用图见 <A HREF="understand011_zh.html#fig: kmem_cache_destroy">图 8.7</A>。</P><PRE CLASS="verbatim"> 997 int kmem_cache_destroy (kmem_cache_t * cachep)
+ 998 {
+ 999     if (!cachep || in_interrupt() || cachep-&gt;growing)
+ 1000        BUG();
+ 1001 
+1002     /* Find the cache in the chain of caches. */
+1003     down(&amp;cache_chain_sem);
+1004     /* the chain is never empty, cache_cache is never destroyed */
+1005     if (clock_searchp == cachep)
+1006         clock_searchp = list_entry(cachep-&gt;next.next,
+1007                         kmem_cache_t, next);
+1008     list_del(&amp;cachep-&gt;next);
+1009     up(&amp;cache_chain_sem);
+1010 
+1011     if (__kmem_cache_shrink(cachep)) {
+1012         printk(KERN_ERR 
+                "kmem_cache_destroy: Can't free all objects %p\n",
+1013            cachep);
+1014         down(&amp;cache_chain_sem);
+1015         list_add(&amp;cachep-&gt;next,&amp;cache_chain);
+1016         up(&amp;cache_chain_sem);
+1017         return 1;
+1018     }
+1019 #ifdef CONFIG_SMP
+1020     {
+1021         int i;
+1022         for (i = 0; i &lt; NR_CPUS; i++)
+1023             kfree(cachep-&gt;cpudata[i]);
+1024     }
+1025 #endif
+1026     kmem_cache_free(&amp;cache_cache, cachep);
+1027 
+1028     return 0;
+1029 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>999-1000</B>合法性检查。确保 <TT>cachep</TT> 不为 NULL，不是中断在执行此操作，并且缓存未被标记为正在增长（即未在使用中）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1003</B>获取访问缓存链的信号量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1005-1007</B>从缓存链中取出链表项</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1008</B>从缓存链中删除该缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1009</B>释放缓存链信号量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1011</B>使用 <TT>__kmem_cache_shrink()</TT>（见 <A HREF="#func: __kmem_cache_shrink">H.1.3.2 节</A>）收缩缓存以释放所有 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1012-1017</B>如果缓存中仍有 slab，收缩函数会返回 true。这种情况下无法销毁缓存，因此将其重新加入缓存链并报告错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1022-1023</B>如果启用了 SMP，使用 <TT>kfree()</TT>（见 <A HREF="#func: kfree">H.4.3.1 节</A>）删除 per-cpu 数据结构</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1026</B>使用 <TT>kmem_cache_free()</TT>（见 <A HREF="#func: kmem_cache_free">H.3.3.1 节</A>）从 <TT>cache_cache</TT> 中删除缓存描述符</DD></DL><H3 CLASS="subsection"><A NAME="htoc320">H.1.5</A>　缓存回收</H3><P>
+<A NAME="c_sec: Cache Reaping"></A></P><H4 CLASS="subsubsection"><A NAME="htoc321">H.1.5.1</A>函数：kmem_cache_reap</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_reap"></A> <A NAME="@codeindex226"></A></P><P>该函数的调用图见 <A HREF="understand011_zh.html#fig: kmem_cache_reap">图 8.4</A>。由于函数较长，下面将拆分为三个独立部分来讲解。第一部分是简单的函数前言；第二部分是选择要回收的缓存；第三部分是释放 slab。基本任务在 <A HREF="understand011_zh.html#Sec: Cache Reaping">8.1.7 节</A> 中已有描述。</P><PRE CLASS="verbatim">
+1738 int kmem_cache_reap (int gfp_mask)
+1739 {
+1740     slab_t *slabp;
+1741     kmem_cache_t *searchp;
+1742     kmem_cache_t *best_cachep;
+1743     unsigned int best_pages;
+1744     unsigned int best_len;
+1745     unsigned int scan;
+1746     int ret = 0;
+1747 
+1748     if (gfp_mask &amp; __GFP_WAIT)
+1749         down(&amp;cache_chain_sem);
+1750     else
+1751         if (down_trylock(&amp;cache_chain_sem))
+1752             return 0;
+1753 
+1754     scan = REAP_SCANLEN;
+1755     best_len = 0;
+1756     best_pages = 0;
+1757     best_cachep = NULL;
+1758     searchp = clock_searchp;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1738</B>唯一的参数是 GFP 标志。这里只针对 <TT>__GFP_WAIT</TT> 标志做检查。由于唯一的调用者 <B>kswapd</B> 可以睡眠，这个参数实际上毫无用处</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1748-1749</B>调用者能否睡眠？如果可以，则获取信号量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1751-1752</B>否则，尝试获取信号量，若不可用则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1754</B><TT>REAP_SCANLEN</TT>（10）是要检查的缓存数量。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1758</B>将 <TT>searchp</TT> 设置为上次回收时检查的最后一个缓存</DD></DL><PRE CLASS="verbatim">1759     do {
+1760         unsigned int pages;
+1761         struct list_head* p;
+1762         unsigned int full_free;
+1763 
+1765         if (searchp-&gt;flags &amp; SLAB_NO_REAP)
+1766             goto next;
+1767         spin_lock_irq(&amp;searchp-&gt;spinlock);
+1768         if (searchp-&gt;growing)
+1769             goto next_unlock;
+1770         if (searchp-&gt;dflags &amp; DFLGS_GROWN) {
+1771             searchp-&gt;dflags &amp;= ~DFLGS_GROWN;
+1772             goto next_unlock;
+1773         }
+1774 #ifdef CONFIG_SMP
+1775         {
+1776             cpucache_t *cc = cc_data(searchp);
+1777             if (cc &amp;&amp; cc-&gt;avail) {
+1778                 __free_block(searchp, cc_entry(cc),
+                          cc-&gt;avail);
+1779                 cc-&gt;avail = 0;
+1780             }
+1781         }
+1782 #endif
+1783 
+1784         full_free = 0;
+1785         p = searchp-&gt;slabs_free.next;
+1786         while (p != &amp;searchp-&gt;slabs_free) {
+1787             slabp = list_entry(p, slab_t, list);
+1788 #if DEBUG
+1789             if (slabp-&gt;inuse)
+1790                 BUG();
+1791 #endif
+1792             full_free++;
+1793             p = p-&gt;next;
+1794         }
+1795 
+1801         pages = full_free * (1&lt;&lt;searchp-&gt;gfporder);
+1802         if (searchp-&gt;ctor)
+1803             pages = (pages*4+1)/5;
+1804         if (searchp-&gt;gfporder)
+1805             pages = (pages*4+1)/5;
+1806         if (pages &gt; best_pages) {
+1807             best_cachep = searchp;
+1808             best_len = full_free;
+1809             best_pages = pages;
+1810             if (pages &gt;= REAP_PERFECT) {
+1811                 clock_searchp =
+                      list_entry(searchp-&gt;next.next,
+1812                      kmem_cache_t,next);
+1813                 goto perfect;
+1814             }
+1815         }
+1816 next_unlock:
+1817         spin_unlock_irq(&amp;searchp-&gt;spinlock);
+1818 next:
+1819         searchp =
+               list_entry(searchp-&gt;next.next,kmem_cache_t,next);
+1820     } while (--scan &amp;&amp; searchp != clock_searchp);
+</PRE><P>本代码块检查 <TT>REAP_SCANLEN</TT> 个缓存，从中选择一个进行释放</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1767</B>获取缓存描述符的中断安全锁
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1768-1769</B>如果缓存正在增长，跳过它
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1770-1773</B>如果缓存最近增长过，跳过它并清除该标志
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1775-1781</B>将所有 per CPU 对象释放到全局池
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1786-1794</B>统计 <TT>slabs_free</TT> 链表中的 slab 数量
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1801</B>计算所有 slab 占用的页面总数
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1802-1803</B>如果对象有构造函数，将页面数减少五分之一，使其不易被选中回收
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1804-1805</B>如果 slab 由多页组成，将页面数减少五分之一。这是因为高阶页面较难获取
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1806</B>如果这是迄今为止找到的最佳回收候选，则检查它是否完美适合回收
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1807-1809</B>记录新的最大值
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1808</B>记录 <TT>best_len</TT>，便于知道空闲链表中 slab 的一半是多少
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1810</B>如果该缓存完美适合回收，则
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1811</B>更新 <TT>clock_searchp</TT>
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1812</B>跳转到 perfect，将释放一半 slab
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1816</B>当获取锁后发现缓存正在增长时会到达此标签
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1817</B>释放缓存描述符锁
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1818</B>移动到缓存链中的下一个条目
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1820</B>在尚未达到 <TT>REAP_SCANLEN</TT> 且未在整个缓存链上转完一圈之前继续扫描
+</DD></DL><PRE CLASS="verbatim">1822     clock_searchp = searchp;
+1823 
+1824     if (!best_cachep)
+1826         goto out;
+1827 
+1828     spin_lock_irq(&amp;best_cachep-&gt;spinlock);
+1829 perfect:
+1830     /* free only 50% of the free slabs */
+1831     best_len = (best_len + 1)/2;
+1832     for (scan = 0; scan &lt; best_len; scan++) {
+1833         struct list_head *p;
+1834 
+1835         if (best_cachep-&gt;growing)
+1836             break;
+1837         p = best_cachep-&gt;slabs_free.prev;
+1838         if (p == &amp;best_cachep-&gt;slabs_free)
+1839             break;
+1840         slabp = list_entry(p,slab_t,list);
+1841 #if DEBUG
+1842         if (slabp-&gt;inuse)
+1843             BUG();
+1844 #endif
+1845         list_del(&amp;slabp-&gt;list);
+1846         STATS_INC_REAPED(best_cachep);
+1847 
+1848         /* Safe to drop the lock. The slab is no longer 
+1849          * lined to the cache.
+1850          */
+1851         spin_unlock_irq(&amp;best_cachep-&gt;spinlock);
+1852         kmem_slab_destroy(best_cachep, slabp);
+1853         spin_lock_irq(&amp;best_cachep-&gt;spinlock);
+1854     }
+1855     spin_unlock_irq(&amp;best_cachep-&gt;spinlock);
+1856     ret = scan * (1 &lt;&lt; best_cachep-&gt;gfporder);
+1857 out:
+1858     up(&amp;cache_chain_sem);
+1859     return ret;
+1860 }
+</PRE><P>本代码块将从选中的缓存中释放一半的 slab</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1822</B>更新 <TT>clock_searchp</TT> 以备下次缓存回收</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1824-1826</B>如果未找到缓存，跳转到 out 释放缓存链并退出</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1828</B>获取缓存链自旋锁并禁用中断。<TT>cachep</TT> 描述符必须由中断安全锁持有，因为某些缓存可能在中断上下文中使用。slab 分配器无法区分中断安全与不安全的缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1831</B>将 <TT>best_len</TT> 调整为要释放的 slab 数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1832-1854</B>释放 <TT>best_len</TT> 个 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1835-1847</B>如果缓存正在增长，则退出</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1837</B>从链表中取出一个 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1838-1839</B>如果链表中没有剩余 slab，则退出</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1840</B>获取 slab 指针</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1842-1843</B>如果启用了调试，确保 slab 中没有活跃对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1845</B>从 <TT>slabs_free</TT> 链表中移除该 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1846</B>如果启用了统计，则更新统计信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1851</B>释放缓存描述符并启用中断</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1852</B>销毁 slab。见 <A HREF="understand011_zh.html#Sec: Slab Destroying">8.2.8 节</A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1851</B>重新获取缓存描述符自旋锁并禁用中断</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1855</B>释放缓存描述符并启用中断</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1856</B><TT>ret</TT> 是已释放的页面数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1858-1859</B>释放缓存信号量并返回已释放的页面数</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc119"></A><A NAME="htoc322">H.2</A>　Slab</H2><P>
+<A NAME="c_sec: Slabs"></A></P><H3 CLASS="subsection"><A NAME="htoc323">H.2.1</A>　存储 Slab 描述符</H3><P>
+<A NAME="c_sec: Storing the Slab Descriptor"></A></P><H4 CLASS="subsubsection"><A NAME="htoc324">H.2.1.1</A>函数：kmem_cache_slabmgmt</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_slabmgmt"></A> <A NAME="@codeindex227"></A></P><P>该函数要么分配额外空间将 slab 描述符存放在缓存外，要么在 slab 的开头保留足够的空间来存放描述符和 <TT>bufctl</TT>。</P><PRE CLASS="verbatim">1032 static inline slab_t * kmem_cache_slabmgmt (
+                 kmem_cache_t *cachep,
+1033             void *objp, 
+                 int colour_off, 
+                 int local_flags)
+1034 {
+1035     slab_t *slabp;
+1036     
+1037     if (OFF_SLAB(cachep)) {
+1039         slabp = kmem_cache_alloc(cachep-&gt;slabp_cache,
+                          local_flags);
+1040         if (!slabp)
+1041             return NULL;
+1042     } else {
+1047         slabp = objp+colour_off;
+1048         colour_off += L1_CACHE_ALIGN(cachep-&gt;num *
+1049                 sizeof(kmem_bufctl_t) + 
+                     sizeof(slab_t));
+1050     }
+1051     slabp-&gt;inuse = 0;
+1052     slabp-&gt;colouroff = colour_off;
+1053     slabp-&gt;s_mem = objp+colour_off;
+1054 
+1055     return slabp;
+1056 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1032</B> 该函数的参数为<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cachep</B> 该 slab 要分配到的缓存
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>objp</B> 函数被调用时，它指向 slab 的开头
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>colour_off</B> 该 slab 的着色偏移
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>local_flags</B> 这些是该缓存的标志
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1037-1042</B> 如果 slab 描述符保存在缓存外……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1039</B> 从 sizes 缓存中分配内存。在缓存创建期间，<TT>slabp_cache</TT> 被设置为合适的 sizes 缓存，用于此处的分配。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1040</B> 如果分配失败，返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1042-1050</B> 在 slab 开头保留空间</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1047</B> slab 的地址将是 slab 的起始位置（<TT>objp</TT>）加上着色偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1048</B> 计算 <TT>colour_off</TT> 为第一个对象将被放置的偏移。该地址按 L1 缓存对齐。<TT>cachep-&gt;num * sizeof(kmem_bufctl_t)</TT> 是存放 slab 中每个对象 bufctl 所需的空间，<TT>sizeof(slab_t)</TT> 是 slab 描述符的大小。这实际上在 slab 开头保留了相应的空间</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1051</B>该 slab 上正在使用的对象数为 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1052</B>更新 <TT>colouroff</TT> 以放置新对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1053</B>第一个对象的地址被计算为 slab 起始地址加上偏移</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc325">H.2.1.2</A>函数：kmem_find_general_cachep</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_find_general_cachep"></A> <A NAME="@codeindex228"></A></P><P>如果 slab 描述符要保存在 slab 外，则在创建缓存时调用该函数，找到合适的 sizes 缓存来使用，并将其保存在缓存描述符的 <TT>slabp_cache</TT> 字段中。</P><PRE CLASS="verbatim">1620 kmem_cache_t * kmem_find_general_cachep (size_t size, 
+                          int gfpflags)
+1621 {
+1622     cache_sizes_t *csizep = cache_sizes;
+1623 
+1628     for ( ; csizep-&gt;cs_size; csizep++) {
+1629         if (size &gt; csizep-&gt;cs_size)
+1630             continue;
+1631         break;
+1632     }
+1633     return (gfpflags &amp; GFP_DMA) ? csizep-&gt;cs_dmacachep :
+                       csizep-&gt;cs_cachep;
+1634 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1620</B> <TT>size</TT> 是 slab 描述符的大小。<TT>gfpflags</TT> 始终为 0，因为 slab 描述符不需要 DMA 内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1628-1632</B> 从最小的尺寸开始，不断增加尺寸，直到找到缓冲区足够大、可容纳 slab 描述符的缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1633</B> 根据传入的 <TT>gfpflags</TT> 返回普通或 DMA 大小的缓存。实际上只有 <TT>cs_cachep</TT> 会被返回</DD></DL><H3 CLASS="subsection"><A NAME="htoc326">H.2.2</A>　Slab 创建</H3><P>
+<A NAME="c_sec: Slab Creation"></A></P><H4 CLASS="subsubsection"><A NAME="htoc327">H.2.2.1</A>函数：kmem_cache_grow</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_grow"></A> <A NAME="@codeindex229"></A></P><P>该函数的调用图见 <A HREF="understand011_zh.html#fig: kmem_cache_grow">图 8.11</A>。该函数的基本任务包括：</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+执行基本的合法性检查以防止错误使用
+</LI><LI CLASS="li-itemize">为该 slab 中的对象计算着色偏移
+</LI><LI CLASS="li-itemize">为 slab 分配内存并获取 slab 描述符
+</LI><LI CLASS="li-itemize">将 slab 使用的页面与 slab 描述符和缓存描述符相连
+</LI><LI CLASS="li-itemize">初始化 slab 中的对象
+</LI><LI CLASS="li-itemize">将 slab 加入缓存
+</LI></UL><PRE CLASS="verbatim">1105 static int kmem_cache_grow (kmem_cache_t * cachep, int flags)
+1106 {
+1107     slab_t  *slabp;
+1108     struct page     *page;
+1109     void        *objp;
+1110     size_t       offset;
+1111     unsigned int     i, local_flags;
+1112     unsigned long    ctor_flags;
+1113     unsigned long    save_flags;
+</PRE><P>基本声明。该函数的参数为：</P><DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cachep</B> 	要为其分配新 slab 的缓存
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B>	创建 slab 时使用的标志
+</DD></DL><PRE CLASS="verbatim">1118     if (flags &amp; ~(SLAB_DMA|SLAB_LEVEL_MASK|SLAB_NO_GROW))
+1119         BUG();
+1120     if (flags &amp; SLAB_NO_GROW)
+1121         return 0;
+1122 
+1129     if (in_interrupt() &amp;&amp; 
+             (flags &amp; SLAB_LEVEL_MASK) != SLAB_ATOMIC)
+1130         BUG();
+1131 
+1132     ctor_flags = SLAB_CTOR_CONSTRUCTOR;
+1133     local_flags = (flags &amp; SLAB_LEVEL_MASK);
+1134     if (local_flags == SLAB_ATOMIC)
+1139         ctor_flags |= SLAB_CTOR_ATOMIC;
+</PRE><P>执行基本的合法性检查以防止错误使用。这些检查放在此处而非 <TT>kmem_cache_alloc()</TT>，是为了保护对速度敏感的路径。每次分配对象时检查标志没有意义。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1118-1119</B>确保分配时只使用允许的标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1120-1121</B>如果设置了此标志，则不增长缓存。实际上从未被设置过</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1129-1130</B>如果在中断上下文中调用，确保设置了 <TT>ATOMIC</TT> 标志，这样在调用 <TT>kmem_getpages()</TT>（见 <A HREF="#func: kmem_getpages">H.7.0.3 节</A>）时不会睡眠</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1132</B>该标志告诉构造函数要初始化对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1133</B>local_flags 只包含与页面分配器相关的标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1134-1139</B>如果设置了 <TT>SLAB_ATOMIC</TT> 标志，构造函数需要知道这一点，以防它想进行新的分配</DD></DL><PRE CLASS="verbatim">1142     spin_lock_irqsave(&amp;cachep-&gt;spinlock, save_flags);
+1143 
+1145     offset = cachep-&gt;colour_next;
+1146     cachep-&gt;colour_next++;
+1147     if (cachep-&gt;colour_next &gt;= cachep-&gt;colour)
+1148         cachep-&gt;colour_next = 0;
+1149     offset *= cachep-&gt;colour_off;
+1150     cachep-&gt;dflags |= DFLGS_GROWN;
+1151 
+1152     cachep-&gt;growing++;
+1153     spin_unlock_irqrestore(&amp;cachep-&gt;spinlock, save_flags);
+</PRE><P>为该 slab 中的对象计算着色偏移</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1142</B>获取访问缓存描述符的中断安全锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1145</B>获取该 slab 中对象的偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1146</B>移动到下一个着色偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1147-1148</B>如果已经达到 <TT>colour</TT>，没有更多可用偏移，将 <TT>colour_next</TT> 重置为 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1149</B><TT>colour_off</TT> 是每个偏移的大小，因此 <TT>offset * colour_off</TT> 给出对象需要偏移的字节数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1150</B>标记该缓存正在增长，使 <TT>kmem_cache_reap()</TT>（见 <A HREF="#func: kmem_cache_reap">H.1.5.1 节</A>）会忽略此缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1152</B>增加正在增长该缓存的调用者计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1153</B>释放自旋锁并重新启用中断
+</DD></DL><PRE CLASS="verbatim">1165     if (!(objp = kmem_getpages(cachep, flags)))
+1166         goto failed;
+1167 
+1169     if (!(slabp = kmem_cache_slabmgmt(cachep, 
+                           objp, offset,
+                           local_flags)))
+1160         goto opps1;
+</PRE><P>为 slab 分配内存并获取 slab 描述符</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1165-1166</B>使用 <TT>kmem_getpages()</TT>（见 <A HREF="#func: kmem_getpages">H.7.0.3 节</A>）从页面分配器为 slab 分配页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1169</B>使用 <TT>kmem_cache_slabmgmt()</TT>（见 <A HREF="#func: kmem_cache_slabmgmt">H.2.1.1 节</A>）获取 slab 描述符</DD></DL><PRE CLASS="verbatim">1173     i = 1 &lt;&lt; cachep-&gt;gfporder;
+1174     page = virt_to_page(objp);
+1175     do {
+1176         SET_PAGE_CACHE(page, cachep);
+1177         SET_PAGE_SLAB(page, slabp);
+1178         PageSetSlab(page);
+1179         page++;
+1180     } while (--i);
+</PRE><P>将 slab 所用的页面与 slab 和缓存描述符相连</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1173</B><TT>i</TT> 是该 slab 使用的页面数。每个页面都必须链接到 slab 和缓存描述符。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1174</B><TT>objp</TT> 指向 slab 的开头。宏 <TT>virt_to_page()</TT> 会给出该地址对应的 <TT>struct page</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1175-1180</B>将每个页面的链表字段链接到 slab 和缓存描述符</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1176</B><TT>SET_PAGE_CACHE()</TT><A NAME="@codeindex230"></A> 通过 <TT>page</TT>&#X2192;<TT>list.next</TT> 字段将页面链接到缓存描述符</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1178</B><TT>SET_PAGE_SLAB()</TT><A NAME="@codeindex231"></A> 通过 <TT>page</TT>&#X2192;<TT>list.prev</TT> 字段将页面链接到 slab 描述符</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1178</B>设置 <TT>PG_slab</TT> 页面标志。所有 <TT>PG_</TT> 标志列表见 <A HREF="understand005_zh.html#tab: Page Status Flags">表 2.1</A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1179</B>移动到该 slab 的下一个待链接的页面</DD></DL><PRE CLASS="verbatim">1182     kmem_cache_init_objs(cachep, slabp, ctor_flags);
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1182</B>初始化所有对象（见 <A HREF="#func: kmem_cache_init_objs">H.3.1.1 节</A>）</DD></DL><PRE CLASS="verbatim">1184     spin_lock_irqsave(&amp;cachep-&gt;spinlock, save_flags);
+1185     cachep-&gt;growing--;
+1186 
+1188     list_add_tail(&amp;slabp-&gt;list, &amp;cachep-&gt;slabs_free);
+1189     STATS_INC_GROWN(cachep);
+1190     cachep-&gt;failures = 0;
+1191 
+1192     spin_unlock_irqrestore(&amp;cachep-&gt;spinlock, save_flags);
+1193     return 1;
+</PRE><P>将 slab 加入缓存</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1184</B>以中断安全的方式获取缓存描述符自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1185</B>减少增长计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1188</B>将 slab 添加到 <TT>slabs_free</TT> 链表的末尾</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1189</B>如果设置了 <TT>STATS</TT>，则通过 <TT>STATS_INC_GROWN()</TT><A NAME="@codeindex232"></A> 增加 <TT>cachep</TT>&#X2192;<TT>grown</TT> 字段</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1190</B>将 failures 设置为 0。此字段从未在别处使用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1192</B>以中断安全的方式释放自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1193</B>返回成功
+</DD></DL><PRE CLASS="verbatim">1194 opps1:
+1195     kmem_freepages(cachep, objp);
+1196 failed:
+1197     spin_lock_irqsave(&amp;cachep-&gt;spinlock, save_flags);
+1198     cachep-&gt;growing--;
+1199     spin_unlock_irqrestore(&amp;cachep-&gt;spinlock, save_flags);
+1300     return 0;
+1301 }
+</PRE><P>错误处理</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1194-1195</B>如果已为 slab 分配了页面，则会到达 <TT>opps1</TT>。必须将其释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1197</B>获取访问缓存描述符的自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1198</B>减少增长计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1199</B>释放自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1300</B>返回失败</DD></DL><H3 CLASS="subsection"><A NAME="htoc328">H.2.3</A>　Slab 销毁</H3><P>
+<A NAME="c_sec: Slab Destroying"></A></P><H4 CLASS="subsubsection"><A NAME="htoc329">H.2.3.1</A>函数：kmem_slab_destroy</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_slab_destroy"></A> <A NAME="@codeindex233"></A></P><P>该函数的调用图见 <A HREF="understand011_zh.html#fig: kmem_slab_destroy">图 8.13</A>。为提高可读性，此处省略了调试部分，但它们几乎与对象分配过程中的调试部分相同。关于如何检查标记和投毒模式，参见 <A HREF="#func: kmem_cache_init_objs">H.3.1.1 节</A>。</P><PRE CLASS="verbatim">555 static void kmem_slab_destroy (kmem_cache_t *cachep, slab_t *slabp)
+556 {
+557     if (cachep-&gt;dtor
+561     ) {
+562         int i;
+563         for (i = 0; i &lt; cachep-&gt;num; i++) {
+564             void* objp = slabp-&gt;s_mem+cachep-&gt;objsize*i;
+
+565-574 DEBUG: Check red zone markers
+
+575             if (cachep-&gt;dtor)
+576                 (cachep-&gt;dtor)(objp, cachep, 0);
+
+577-584 DEBUG: Check poison pattern
+
+585         }
+586     }
+587 
+588     kmem_freepages(cachep, slabp-&gt;s_mem-slabp-&gt;colouroff);
+589     if (OFF_SLAB(cachep))
+590         kmem_cache_free(cachep-&gt;slabp_cache, slabp);
+591 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>557-586</B>如果存在析构函数，则对 slab 中的每个对象调用它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>563-585</B>遍历 slab 中的每个对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>564</B>计算要销毁对象的地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>575-576</B>调用析构函数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>588</B>释放该 slab 所使用的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>589</B>如果 slab 描述符保存在 slab 外，则释放其所占用的内存
+</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc120"></A><A NAME="htoc330">H.3</A>　对象</H2><P>
+<A NAME="c_sec: Objects"></A></P><P>本节将介绍如何管理对象。到目前为止，大部分实际的繁重工作已由缓存或 slab 管理器完成。</P><H3 CLASS="subsection"><A NAME="htoc331">H.3.1</A>　初始化 Slab 中的对象</H3><P>
+<A NAME="c_sec: Initialising Objects in a Slab"></A></P><H4 CLASS="subsubsection"><A NAME="htoc332">H.3.1.1</A>函数：kmem_cache_init_objs</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_init_objs"></A> <A NAME="@codeindex234"></A></P><P>该函数的大部分代码都与调试相关，因此我们先讲解去掉调试部分后的函数，再处理调试部分。下面代码片段中的两段调试代码分别标记为 Part 1 和 Part 2。</P><PRE CLASS="verbatim">1058 static inline void kmem_cache_init_objs (kmem_cache_t * cachep,
+1059             slab_t * slabp, unsigned long ctor_flags)
+1060 {
+1061     int i;
+1062 
+1063     for (i = 0; i &lt; cachep-&gt;num; i++) {
+1064         void* objp = slabp-&gt;s_mem+cachep-&gt;objsize*i;
+
+1065-1072        /* Debugging Part 1 */
+
+1079         if (cachep-&gt;ctor)
+1080             cachep-&gt;ctor(objp, cachep, ctor_flags);
+
+1081-1094        /* Debugging Part 2 */
+
+1095         slab_bufctl(slabp)[i] = i+1;
+1096     }
+1097     slab_bufctl(slabp)[i-1] = BUFCTL_END;
+1098     slabp-&gt;free = 0;
+1099 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1058</B>该函数的参数为<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cachep</B>正在初始化对象的缓存
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>slabp</B>对象所在的 slab
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>ctor_flags</B>构造函数所需的标志，表明这是否是原子分配</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1063</B>初始化 <TT>cache</TT>&#X2192;<TT>num</TT> 个对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1064</B>slab 中对象的基地址是 <TT>s_mem</TT>。要分配的对象地址即为 <TT>i * (单个对象的大小)</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1079-1080</B>如果存在构造函数，则调用它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1095</B>宏 <TT>slab_bufctl()</TT> 将 <TT>slabp</TT> 转换为 <TT>slab_t</TT> slab 描述符并将其加 1，使指针指向 slab 描述符的末尾，然后再将其转回 <TT>kmem_bufctl_t</TT>，从而得到 bufctl 数组的起始位置。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1098</B>在 <TT>bufctl</TT> 数组中，第一个空闲对象的索引为 0</DD></DL><P>这就是对象初始化的核心部分。接下来介绍第一段调试代码。</P><PRE CLASS="verbatim">1065 #if DEBUG
+1066         if (cachep-&gt;flags &amp; SLAB_RED_ZONE) {
+1067             *((unsigned long*)(objp)) = RED_MAGIC1;
+1068             *((unsigned long*)(objp + cachep-&gt;objsize -
+1069                     BYTES_PER_WORD)) = RED_MAGIC1;
+1070             objp += BYTES_PER_WORD;
+1071         }
+1072 #endif
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1066</B>如果缓存要使用红色边界，则在对象两端放置标记</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1067</B>在对象开头放置标记</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1068</B>在对象末尾放置标记。请记住，启用红色边界时，对象大小已考虑了红色标记的大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1070</B>将 objp 指针前移一个标记的大小，方便在该调试代码块之后调用的构造函数使用
+</DD></DL><PRE CLASS="verbatim">1081 #if DEBUG
+1082         if (cachep-&gt;flags &amp; SLAB_RED_ZONE)
+1083             objp -= BYTES_PER_WORD;
+1084         if (cachep-&gt;flags &amp; SLAB_POISON)
+1086             kmem_poison_obj(cachep, objp);
+1087         if (cachep-&gt;flags &amp; SLAB_RED_ZONE) {
+1088             if (*((unsigned long*)(objp)) != RED_MAGIC1)
+1089                 BUG();
+1090             if (*((unsigned long*)(objp + cachep-&gt;objsize -
+1091                     BYTES_PER_WORD)) != RED_MAGIC1)
+1092                 BUG();
+1093         }
+1094 #endif
+</PRE><P>这是在构造函数（如果存在）被调用之后执行的调试代码块。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1082-1083</B>在前一个调试代码块中，<TT>objp</TT> 指针被前移了一个红色标记的大小，这里再将其移回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1084-1086</B>如果没有构造函数，用一个已知的模式对对象投毒，以便日后检查是否捕获到未初始化的写操作</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1088</B>检查对象开头的红色标记是否被保留，以捕获对对象之前的写操作</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1090-1091</B>检查确保没有越过对象末尾的写操作</DD></DL><H3 CLASS="subsection"><A NAME="htoc333">H.3.2</A>　对象分配</H3><P>
+<A NAME="c_sec: Object Allocation"></A></P><H4 CLASS="subsubsection"><A NAME="htoc334">H.3.2.1</A>函数：kmem_cache_alloc</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_alloc"></A> <A NAME="@codeindex235"></A></P><P>该函数的调用图见 <A HREF="understand011_zh.html#fig: kmem_cache_alloc">图 8.14</A>。这个简单的函数只是调用 <TT>__kmem_cache_alloc()</TT>。</P><PRE CLASS="verbatim">1529 void * kmem_cache_alloc (kmem_cache_t *cachep, int flags)
+1531 {
+1532     return __kmem_cache_alloc(cachep, flags);
+1533 }
+</PRE><H4 CLASS="subsubsection"><A NAME="htoc335">H.3.2.2</A>函数：__kmem_cache_alloc (UP Case)</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: __kmem_cache_alloc"></A> <A NAME="@codeindex236"></A></P><P>这里讲解该函数中针对 UP（单处理器）情形的部分。SMP 情形将在下一节中处理。</P><PRE CLASS="verbatim">1338 static inline void * __kmem_cache_alloc (kmem_cache_t *cachep, 
+                                              int flags)
+1339 {
+1340     unsigned long save_flags;
+1341     void* objp;
+1342 
+1343     kmem_cache_alloc_head(cachep, flags);
+1344 try_again:
+1345     local_irq_save(save_flags);
+
+1367     objp = kmem_cache_alloc_one(cachep);
+
+1369     local_irq_restore(save_flags);
+1370     return objp;
+1371 alloc_new_slab:
+
+1376     local_irq_restore(save_flags);
+1377     if (kmem_cache_grow(cachep, flags))
+1381         goto try_again;
+1382     return NULL;
+1383 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1338</B>参数是要分配的缓存以及分配相关的标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1343</B>该函数确保使用了合适的 DMA 标志组合</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1345</B>禁用中断并保存标志。该函数会被中断使用，因此这是在 UP 情形下提供同步的唯一方式</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1367</B><TT>kmem_cache_alloc_one()</TT>（见 <A HREF="#func: kmem_cache_alloc_one">H.3.2.5 节</A>）从某个链表中分配一个对象并返回。如果没有空闲对象，该宏（注意它不是函数）会跳转到该函数末尾的 alloc_new_slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1369-1370</B>恢复中断并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1376</B>到达此标签时，<TT>slabs_partial</TT> 中没有空闲对象，且 <TT>slabs_free</TT> 也为空，因此需要新建一个 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1377</B>分配一个新的 slab（见 <A HREF="understand011_zh.html#Sec: Slab Creation">8.2.2 节</A>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1379</B>有新的 slab 可用，因此重试</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1382</B>无法分配 slab，因此返回失败
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc336">H.3.2.3</A>函数：__kmem_cache_alloc (SMP Case)</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: __kmem_cache_alloc SMP"></A> <A NAME="@codeindex237"></A></P><P>这是 SMP 情形下该函数的样子</P><PRE CLASS="verbatim">1338 static inline void * __kmem_cache_alloc (kmem_cache_t *cachep, 
+                                              int flags)
+1339 {
+1340     unsigned long save_flags;
+1341     void* objp;
+1342 
+1343     kmem_cache_alloc_head(cachep, flags);
+1344 try_again:
+1345     local_irq_save(save_flags);
+1347     {
+1348         cpucache_t *cc = cc_data(cachep);
+1349 
+1350         if (cc) {
+1351             if (cc-&gt;avail) {
+1352                 STATS_INC_ALLOCHIT(cachep);
+1353                 objp = cc_entry(cc)[--cc-&gt;avail];
+1354             } else {
+1355                 STATS_INC_ALLOCMISS(cachep);
+1356                 objp =
+                  kmem_cache_alloc_batch(cachep,cc,flags);
+1357                 if (!objp)
+1358                   goto alloc_new_slab_nolock;
+1359             }
+1360         } else {
+1361             spin_lock(&amp;cachep-&gt;spinlock);
+1362             objp = kmem_cache_alloc_one(cachep);
+1363             spin_unlock(&amp;cachep-&gt;spinlock);
+1364         }
+1365     }
+1366     local_irq_restore(save_flags);
+1370     return objp;
+1371 alloc_new_slab:
+1373     spin_unlock(&amp;cachep-&gt;spinlock);
+1374 alloc_new_slab_nolock:
+1375     local_irq_restore(save_flags);
+1377     if (kmem_cache_grow(cachep, flags))
+1381         goto try_again;
+1382     return NULL;
+1383 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1338-1347</B>与 UP 情形相同</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1349</B>获取当前 CPU 的 per CPU 数据</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1350-1360</B>如果有可用的 per CPU 缓存，则……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1351</B>如果有可用对象，则……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1352</B>如果启用，则更新该缓存的统计信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1353</B>获取一个对象并更新 <TT>avail</TT> 计数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1354</B>否则没有可用对象，因此……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1355</B>如果启用，则更新该缓存的统计信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1356</B>分配 <TT>batchcount</TT> 个对象，将除一个之外的所有对象放入 per CPU 缓存，并将最后一个返回给 objp</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1357-1358</B>分配失败，跳转到 <TT>alloc_new_slab_nolock</TT> 来增长缓存并分配新的 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1360-1364</B>如果没有可用的 per CPU 缓存，获取缓存自旋锁，并按 UP 情形相同的方式分配一个对象。例如在 <TT>cache_cache</TT> 的初始化过程中会出现这种情况</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1363</B>对象已成功分配，释放缓存自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1366-1370</B>重新启用中断并返回已分配的对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1371-1372</B>如果 <TT>kmem_cache_alloc_one()</TT> 分配对象失败，则会在仍持有自旋锁的情况下跳转到此处，因此必须释放它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1375-1383</B>与 UP 情形相同
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc337">H.3.2.4</A>函数：kmem_cache_alloc_head</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_alloc_head"></A> <A NAME="@codeindex238"></A></P><P>这个简单的函数确保从 slab 中分配时使用了正确的 slab 与 GFP 标志组合。如果缓存用于 DMA，该函数会确保调用者不会错误地请求普通内存，反之亦然。</P><PRE CLASS="verbatim">1231 static inline void kmem_cache_alloc_head(kmem_cache_t *cachep, 
+                                              int flags)
+1232 {
+1233     if (flags &amp; SLAB_DMA) {
+1234         if (!(cachep-&gt;gfpflags &amp; GFP_DMA))
+1235             BUG();
+1236     } else {
+1237         if (cachep-&gt;gfpflags &amp; GFP_DMA)
+1238             BUG();
+1239     }
+1240 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1231</B>参数是用于分配的缓存以及请求的分配标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1233</B>如果调用者请求 DMA 内存，且……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1234</B>缓存未使用 DMA 内存，则触发 <TT>BUG()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1237</B>否则如果调用者未请求 DMA 内存而该缓存用于 DMA，则触发 <TT>BUG()</TT>
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc338">H.3.2.5</A>函数：kmem_cache_alloc_one</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_alloc_one"></A> <A NAME="@codeindex239"></A></P><P>这是一个预处理宏。也许会觉得奇怪为何不将其定义为内联函数，这是因为它使用预处理宏是为了在 <TT>__kmem_cache_alloc()</TT>（见 <A HREF="#func: __kmem_cache_alloc">H.3.2.2 节</A>）中进行 goto 优化。</P><PRE CLASS="verbatim">1283 #define kmem_cache_alloc_one(cachep)              \
+1284 ({                                                \ 
+1285     struct list_head * slabs_partial, * entry;    \
+1286     slab_t *slabp;                                \
+1287                                                   \
+1288     slabs_partial = &amp;(cachep)-&gt;slabs_partial;     \
+1289     entry = slabs_partial-&gt;next;                  \
+1290     if (unlikely(entry == slabs_partial)) {       \
+1291         struct list_head * slabs_free;            \
+1292         slabs_free = &amp;(cachep)-&gt;slabs_free;       \
+1293         entry = slabs_free-&gt;next;                 \
+1294         if (unlikely(entry == slabs_free))        \
+1295             goto alloc_new_slab;                  \
+1296         list_del(entry);                          \
+1297         list_add(entry, slabs_partial);           \
+1298     }                                             \
+1299                                                   \
+1300     slabp = list_entry(entry, slab_t, list);      \
+1301     kmem_cache_alloc_one_tail(cachep, slabp);     \
+1302 })
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1288-1289</B>从 <TT>slabs_partial</TT> 链表中取出第一个 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1290-1298</B>如果该链表中没有可用 slab，则执行此代码块</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1291-1293</B>从 <TT>slabs_free</TT> 链表中取出第一个 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1294-1295</B>如果 slabs_free 上没有 slab，跳转到 <TT>alloc_new_slab()</TT>。该跳转标签位于 <TT>__kmem_cache_alloc()</TT> 中，会为缓存增长一个 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1296-1297</B>否则将 slab 从空闲链表中移除并放入 <TT>slabs_partial</TT> 链表，因为即将从中取走一个对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1300</B>从链表中获取 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1301</B>从该 slab 分配一个对象
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc339">H.3.2.6</A>函数：kmem_cache_alloc_one_tail</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_alloc_one_tail"></A> <A NAME="@codeindex240"></A></P><P>该函数负责从 slab 中分配一个对象。其中大部分是调试代码。</P><PRE CLASS="verbatim">1242 static inline void * kmem_cache_alloc_one_tail (
+                             kmem_cache_t *cachep,
+1243                         slab_t *slabp)
+1244 {
+1245     void *objp;
+1246 
+1247     STATS_INC_ALLOCED(cachep);
+1248     STATS_INC_ACTIVE(cachep);
+1249     STATS_SET_HIGH(cachep);
+1250 
+1252     slabp-&gt;inuse++;
+1253     objp = slabp-&gt;s_mem + slabp-&gt;free*cachep-&gt;objsize;
+1254     slabp-&gt;free=slab_bufctl(slabp)[slabp-&gt;free];
+1255 
+1256     if (unlikely(slabp-&gt;free == BUFCTL_END)) {
+1257         list_del(&amp;slabp-&gt;list);
+1258         list_add(&amp;slabp-&gt;list, &amp;cachep-&gt;slabs_full);
+1259     }
+1260 #if DEBUG
+1261     if (cachep-&gt;flags &amp; SLAB_POISON)
+1262         if (kmem_check_poison_obj(cachep, objp))
+1263             BUG();
+1264     if (cachep-&gt;flags &amp; SLAB_RED_ZONE) {
+1266         if (xchg((unsigned long *)objp, RED_MAGIC2) !=
+1267                           RED_MAGIC1)
+1268             BUG();
+1269         if (xchg((unsigned long *)(objp+cachep-&gt;objsize -
+1270             BYTES_PER_WORD), RED_MAGIC2) != RED_MAGIC1)
+1271             BUG();
+1272         objp += BYTES_PER_WORD;
+1273     }
+1274 #endif
+1275     return objp;
+1276 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1230</B>参数是要从中分配的缓存和 slab</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1247-1249</B>如果启用了统计，这里会设置三个统计量。<TT>ALLOCED</TT> 是已分配对象的总数。<TT>ACTIVE</TT> 是缓存中活跃对象的数量。<TT>HIGH</TT> 是同一时刻活跃对象数量的最大值</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1252</B><TT>inuse</TT> 是该 slab 上活跃对象的数量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1253</B>获取指向空闲对象的指针。<TT>s_mem</TT> 指向 slab 中的第一个对象。<TT>free</TT> 是 slab 中某个空闲对象的索引。<TT>index * 对象大小</TT> 给出 slab 内的偏移</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1254</B>更新 free 指针为下一个空闲对象的索引</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1256-1259</B>如果 slab 已满，将其从 <TT>slabs_partial</TT> 链表中移除并放入 <TT>slabs_full</TT>。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1260-1274</B>调试代码</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1275</B>不启用调试时，将对象返回给调用者</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1261-1263</B>如果对象被用已知模式投毒，则检查它以防止未初始化访问</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1266-1267</B>如果启用了红色边界，检查对象开头的标记并确认其安全。修改红色标记以便日后检查对对象之前的写操作</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1269-1271</B>检查对象末尾的标记并修改它，以便日后检查对对象之后的写操作</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1272</B>更新对象指针，使其指向红色标记之后</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1275</B>返回对象
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc340">H.3.2.7</A>函数：kmem_cache_alloc_batch</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_alloc_batch"></A> <A NAME="@codeindex241"></A></P><P>该函数为 CPU 对象缓存一次分配一批对象。它只在 SMP 情形下使用。在许多方面它与 <TT>kmem_cache_alloc_one()</TT>（见 <A HREF="#func: kmem_cache_alloc_one">H.3.2.5 节</A>）非常相似。</P><PRE CLASS="verbatim">1305 void* kmem_cache_alloc_batch(kmem_cache_t* cachep, 
+                  cpucache_t* cc, int flags)
+1306 {
+1307     int batchcount = cachep-&gt;batchcount;
+1308 
+1309     spin_lock(&amp;cachep-&gt;spinlock);
+1310     while (batchcount--) {
+1311         struct list_head * slabs_partial, * entry;
+1312         slab_t *slabp;
+1313         /* Get slab alloc is to come from. */
+1314         slabs_partial = &amp;(cachep)-&gt;slabs_partial;
+1315         entry = slabs_partial-&gt;next;
+1316         if (unlikely(entry == slabs_partial)) {
+1317             struct list_head * slabs_free;
+1318             slabs_free = &amp;(cachep)-&gt;slabs_free;
+1319             entry = slabs_free-&gt;next;
+1320             if (unlikely(entry == slabs_free))
+1321                 break;
+1322             list_del(entry);
+1323             list_add(entry, slabs_partial);
+1324         }
+1325 
+1326         slabp = list_entry(entry, slab_t, list);
+1327         cc_entry(cc)[cc-&gt;avail++] =
+1328                kmem_cache_alloc_one_tail(cachep, slabp);
+1329     }
+1330     spin_unlock(&amp;cachep-&gt;spinlock);
+1331 
+1332     if (cc-&gt;avail)
+1333         return cc_entry(cc)[--cc-&gt;avail];
+1334     return NULL;
+1335 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1305</B>参数是要分配的缓存、要填充的 per CPU 缓存以及分配标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1307</B><TT>batchcount</TT> 是要分配的对象数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1309</B>获取访问缓存描述符的自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1310-1329</B>循环 <TT>batchcount</TT> 次</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1311-1324</B>这部分与 <TT>kmem_cache_alloc_one()</TT>（见 <A HREF="#func: kmem_cache_alloc_one">H.3.2.5 节</A>）相同。它从 <TT>slabs_partial</TT> 或 <TT>slabs_free</TT> 中选择一个 slab 进行分配。如果均不可用，则跳出循环</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1326-1327</B>调用 <TT>kmem_cache_alloc_one_tail()</TT>（见 <A HREF="#func: kmem_cache_alloc_one_tail">H.3.2.6 节</A>）并将结果放入 per CPU 缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1330</B>释放缓存描述符锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1332-1333</B>取本批次分配的一个对象并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1334</B>如果未分配到任何对象，返回。<TT>__kmem_cache_alloc()</TT>（见 <A HREF="#func: __kmem_cache_alloc">H.3.2.2 节</A>）会为缓存增长一个 slab 并重试</DD></DL><H3 CLASS="subsection"><A NAME="htoc341">H.3.3</A>　对象释放</H3><P>
+<A NAME="c_sec: Object Freeing"></A></P><H4 CLASS="subsubsection"><A NAME="htoc342">H.3.3.1</A>函数：kmem_cache_free</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_free"></A> <A NAME="@codeindex242"></A></P><P>该函数的调用图见 <A HREF="understand011_zh.html#fig: kmem_cache_free">图 8.15</A>。</P><PRE CLASS="verbatim">1576 void kmem_cache_free (kmem_cache_t *cachep, void *objp)
+1577 {
+1578     unsigned long flags;
+1579 #if DEBUG
+1580     CHECK_PAGE(virt_to_page(objp));
+1581     if (cachep != GET_PAGE_CACHE(virt_to_page(objp)))
+1582         BUG();
+1583 #endif
+1584 
+1585     local_irq_save(flags);
+1586     __kmem_cache_free(cachep, objp);
+1587     local_irq_restore(flags);
+1588 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1576</B>参数是该对象所属的缓存以及对象本身</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1579-1583</B>如果启用了调试，首先用 <TT>CHECK_PAGE()</TT><A NAME="@codeindex243"></A> 检查该页面以确保其是 slab 页面。然后检查页面链表，确保它属于该缓存（见 <A HREF="understand011_zh.html#fig: Page to Cache and Slab Relationship">图 8.8</A>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1585</B>禁用中断以保护该路径</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1586</B><TT>__kmem_cache_free()</TT>（见 <A HREF="#func: __kmem_cache_free (UP)">H.3.3.2 节</A>）在 SMP 情形下将对象释放到 per-CPU 缓存，在普通情形下释放到全局池</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1587</B>重新启用中断
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc343">H.3.3.2</A>函数：__kmem_cache_free (UP Case)</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: __kmem_cache_free (UP)"></A> <A NAME="@codeindex244"></A></P><P>这里讲解该函数在 UP 情形下的样子。显然，它只是将对象释放回 slab。</P><PRE CLASS="verbatim">1493 static inline void __kmem_cache_free (kmem_cache_t *cachep, 
+                                           void* objp)
+1494 {
+1517     kmem_cache_free_one(cachep, objp);
+1519 }
+</PRE><H4 CLASS="subsubsection"><A NAME="htoc344">H.3.3.3</A>函数：__kmem_cache_free (SMP Case)</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: __kmem_cache_free (SMP)"></A> <A NAME="@codeindex245"></A></P><P>这种情形稍微有意思一些。在这种情形下，如果 per-cpu 缓存可用，对象会被释放到 per-cpu 缓存中。</P><PRE CLASS="verbatim">1493 static inline void __kmem_cache_free (kmem_cache_t *cachep, 
+                                          void* objp)
+1494 {
+1496     cpucache_t *cc = cc_data(cachep);
+1497 
+1498     CHECK_PAGE(virt_to_page(objp));
+1499     if (cc) {
+1500         int batchcount;
+1501         if (cc-&gt;avail &lt; cc-&gt;limit) {
+1502             STATS_INC_FREEHIT(cachep);
+1503             cc_entry(cc)[cc-&gt;avail++] = objp;
+1504             return;
+1505         }
+1506         STATS_INC_FREEMISS(cachep);
+1507         batchcount = cachep-&gt;batchcount;
+1508         cc-&gt;avail -= batchcount;
+1509         free_block(cachep,
+1510             &amp;cc_entry(cc)[cc-&gt;avail],batchcount);
+1511         cc_entry(cc)[cc-&gt;avail++] = objp;
+1512         return;
+1513     } else {
+1514         free_block(cachep, &amp;objp, 1);
+1515     }
+1519 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1496</B>获取该 per CPU 缓存的数据（见 <A HREF="understand011_zh.html#Sec: Describing the Per-CPU Object Cache">8.5.1 节</A>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1498</B>确保该页面是 slab 页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1499-1513</B>如果 per-CPU 缓存可用，尝试使用它。它并不总是可用的，例如在缓存销毁过程中，per CPU 缓存已经消失</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1501-1505</B>如果 per CPU 缓存中可用对象数低于 limit，则将对象添加到空闲列表并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1506</B>如果启用，则更新统计信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1507</B>池已满，因此要将 batchcount 个对象释放到全局池</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1508</B>更新可用对象数（<TT>avail</TT>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1509-1510</B>将一批对象释放到全局缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1511</B>释放请求的对象并将其放入 per CPU 池</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1513</B>如果 per-CPU 缓存不可用，则将该对象释放到全局池
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc345">H.3.3.4</A>函数：kmem_cache_free_one</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_free_one"></A> <A NAME="@codeindex246"></A></P><PRE CLASS="verbatim">1414 static inline void kmem_cache_free_one(kmem_cache_t *cachep, 
+                                            void *objp)
+1415 {
+1416     slab_t* slabp;
+1417 
+1418     CHECK_PAGE(virt_to_page(objp));
+1425     slabp = GET_PAGE_SLAB(virt_to_page(objp));
+1426 
+1427 #if DEBUG
+1428     if (cachep-&gt;flags &amp; SLAB_DEBUG_INITIAL)
+1433         cachep-&gt;ctor(objp, cachep,
+            SLAB_CTOR_CONSTRUCTOR|SLAB_CTOR_VERIFY);
+1434 
+1435     if (cachep-&gt;flags &amp; SLAB_RED_ZONE) {
+1436         objp -= BYTES_PER_WORD;
+1437         if (xchg((unsigned long *)objp, RED_MAGIC1) !=
+                             RED_MAGIC2)
+1438             BUG();
+1440         if (xchg((unsigned long *)(objp+cachep-&gt;objsize -
+1441                 BYTES_PER_WORD), RED_MAGIC1) !=
+                              RED_MAGIC2)
+1443             BUG();
+1444     }
+1445     if (cachep-&gt;flags &amp; SLAB_POISON)
+1446         kmem_poison_obj(cachep, objp);
+1447     if (kmem_extra_free_checks(cachep, slabp, objp))
+1448         return;
+1449 #endif
+1450     {
+1451         unsigned int objnr = (objp-slabp-&gt;s_mem)/cachep-&gt;objsize;
+1452 
+1453         slab_bufctl(slabp)[objnr] = slabp-&gt;free;
+1454         slabp-&gt;free = objnr;
+1455     }
+1456     STATS_DEC_ACTIVE(cachep);
+1457     
+1459     {
+1460         int inuse = slabp-&gt;inuse;
+1461         if (unlikely(!--slabp-&gt;inuse)) {
+1462             /* Was partial or full, now empty. */
+1463             list_del(&amp;slabp-&gt;list);
+1464             list_add(&amp;slabp-&gt;list, &amp;cachep-&gt;slabs_free);
+1465         } else if (unlikely(inuse == cachep-&gt;num)) {
+1466             /* Was full. */
+1467             list_del(&amp;slabp-&gt;list);
+1468             list_add(&amp;slabp-&gt;list, &amp;cachep-&gt;slabs_partial);
+1469         }
+1470     }
+1471 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1418</B>确保该页面是 slab 页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1425</B>获取该页面对应的 slab 描述符</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1427-1449</B>调试相关代码，在本节末尾讨论</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1451</B>计算要释放对象的索引</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1454</B>由于该对象现在已空闲，更新 bufctl 以反映这一情况</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1456</B>如果启用了统计，递减该 slab 中活跃对象的数量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1461-1464</B>如果 <TT>inuse</TT> 减为 0，slab 变为空闲并被移到 <TT>slabs_free</TT> 链表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1465-1468</B>如果使用中的数量等于 slab 中的对象数，slab 变为满，因此移到 <TT>slabs_full</TT> 链表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1471</B>函数结束</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1428-1433</B>如果设置了 <TT>SLAB_DEBUG_INITIAL</TT>，则调用构造函数以验证对象处于已初始化状态</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1435-1444</B>检查对象两端的红色标记是否仍然存在。这会检查越过对象边界的写操作以及重复释放</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1445-1446</B>用已知模式对已释放的对象投毒</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1447-1448</B>该函数会确认对象确实属于该 slab 和缓存。然后检查空闲列表（<TT>bufctl</TT>）以确保不是重复释放</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc346">H.3.3.5</A>函数：free_block</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: free_block"></A> <A NAME="@codeindex247"></A></P><P>该函数仅在 SMP 情形下、当 per CPU 缓存过满时使用。它用于批量释放一批对象</P><PRE CLASS="verbatim">1481 static void free_block (kmem_cache_t* cachep, void** objpp, 
+                             int len)
+1482 {
+1483     spin_lock(&amp;cachep-&gt;spinlock);
+1484     __free_block(cachep, objpp, len);
+1485     spin_unlock(&amp;cachep-&gt;spinlock);
+1486 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1481</B>参数为：<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cachep</B> 对象所属的缓存
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>objpp</B> 指向首个要释放对象的指针
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>len</B> 要释放的对象数
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1483</B>获取缓存描述符的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1486</B><TT>__free_block()</TT>（见 <A HREF="#func: __free_block">H.3.3.6 节</A>）执行实际释放各个页面的操作</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1487</B>释放锁</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc347">H.3.3.6</A>函数：__free_block</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: __free_block"></A> <A NAME="@codeindex248"></A></P><P>该函数负责释放 per-CPU 数组 <TT>objpp</TT> 中的每个对象。</P><PRE CLASS="verbatim">1474 static inline void __free_block (kmem_cache_t* cachep,
+1475                 void** objpp, int len)
+1476 {
+1477     for ( ; len &gt; 0; len--, objpp++)
+1478         kmem_cache_free_one(cachep, *objpp);
+1479 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1474</B>参数是对象所属的 <TT>cachep</TT>、对象列表（<TT>objpp</TT>）以及要释放的对象数（<TT>len</TT>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1477</B>循环 <TT>len</TT> 次</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1478</B>从数组中释放一个对象</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc121"></A><A NAME="htoc348">H.4</A>　Sizes 缓存</H2><P>
+<A NAME="c_sec: Sizes Cache"></A></P><H3 CLASS="subsection"><A NAME="htoc349">H.4.1</A>　初始化 Sizes 缓存</H3><H4 CLASS="subsubsection"><A NAME="htoc350">H.4.1.1</A>函数：kmem_cache_sizes_init</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_sizes_init"></A> <A NAME="@codeindex249"></A></P><P>该函数负责为小内存缓冲区创建成对的缓存，分别适用于普通内存或 DMA 内存。</P><PRE CLASS="verbatim">436 void __init kmem_cache_sizes_init(void)
+437 {
+438     cache_sizes_t *sizes = cache_sizes;
+439     char name[20];
+440
+444     if (num_physpages &gt; (32 &lt;&lt; 20) &gt;&gt; PAGE_SHIFT)
+445         slab_break_gfp_order = BREAK_GFP_ORDER_HI;
+446     do {
+452         snprintf(name, sizeof(name), "size-%Zd",
+                 sizes-&gt;cs_size);
+453         if (!(sizes-&gt;cs_cachep =
+454             kmem_cache_create(name, sizes-&gt;cs_size,
+455                       0, SLAB_HWCACHE_ALIGN, NULL, NULL))) {
+456             BUG();
+457         }
+458 
+460         if (!(OFF_SLAB(sizes-&gt;cs_cachep))) {
+461             offslab_limit = sizes-&gt;cs_size-sizeof(slab_t);
+462             offslab_limit /= 2;
+463         }
+464         snprintf(name, sizeof(name), "size-%Zd(DMA)",
+                         sizes-&gt;cs_size);
+465         sizes-&gt;cs_dmacachep = kmem_cache_create(name, 
+                  sizes-&gt;cs_size, 0,
+466                   SLAB_CACHE_DMA|SLAB_HWCACHE_ALIGN, 
+                  NULL, NULL);
+467         if (!sizes-&gt;cs_dmacachep)
+468             BUG();
+469         sizes++;
+470     } while (sizes-&gt;cs_size);
+471 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>438</B>获取指向 <TT>cache_sizes</TT> 数组的指针</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>439</B>缓存的可读名称。其长度应为 <TT>CACHE_NAMELEN</TT><A NAME="@codeindex250"></A>，该值定义为 20 字节</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>444-445</B><TT>slab_break_gfp_order</TT><A NAME="@codeindex251"></A> 决定一个 slab 最多可以使用多少页面（除非 0 个对象都放不下）。它被静态初始化为 <TT>BREAK_GFP_ORDER_LO</TT><A NAME="@codeindex252"></A>（1）。此处检查是否有超过 32MiB 的可用内存；如果有，则允许使用 <TT>BREAK_GFP_ORDER_HI</TT><A NAME="@codeindex253"></A> 个页面，因为当内存更充裕时，内部碎片更可接受。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>446-470</B>为每种需要的内存分配大小创建两个缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>452</B>将缓存的可读名称存入 <TT>name</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>453-454</B>创建缓存，按 L1 缓存对齐</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>460-463</B>计算 off-slab bufctl 上限，它决定当 slab 描述符保存在缓存外时一个缓存可以存储的对象数量。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>464</B>用于 DMA 的缓存的可读名称</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>465-466</B>创建缓存，按 L1 缓存对齐，并适用于 DMA 使用者</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>467</B>如果缓存分配失败，这是一个 bug。如果此时如此早就缺少内存，机器将无法启动</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>469</B>移动到 <TT>cache_sizes</TT> 数组中的下一个元素</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>470</B>数组以最后一个元素为 0 作为结束标志
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc351">H.4.2</A>  <TT>kmalloc()</TT></H3><H4 CLASS="subsubsection"><A NAME="htoc352">H.4.2.1</A>函数：kmalloc</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmalloc"></A> <A NAME="@codeindex254"></A></P><P>该函数的调用图见 <A HREF="understand011_zh.html#fig: kmalloc">图 8.16</A>。</P><PRE CLASS="verbatim">1555 void * kmalloc (size_t size, int flags)
+1556 {
+1557     cache_sizes_t *csizep = cache_sizes;
+1558 
+1559     for (; csizep-&gt;cs_size; csizep++) {
+1560         if (size &gt; csizep-&gt;cs_size)
+1561             continue;
+1562         return __kmem_cache_alloc(flags &amp; GFP_DMA ?
+1563              csizep-&gt;cs_dmacachep : 
+                  csizep-&gt;cs_cachep, flags);
+1564     }
+1565     return NULL;
+1566 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1557</B><TT>cache_sizes</TT> 是每种大小对应的缓存数组（见 <A HREF="understand011_zh.html#Sec: Sizes Cache">8.4 节</A>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1559-1564</B>从最小的缓存开始，检查每个缓存的大小，直到找到足够大以满足请求的缓存为止</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1562</B>如果分配用于 DMA，则从 <TT>cs_dmacachep</TT> 分配对象；否则使用 <TT>cs_cachep</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1565</B>如果没有足够大的 sizes 缓存，或者对象无法分配，则返回失败
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc353">H.4.3</A>  <TT>kfree()</TT></H3><H4 CLASS="subsubsection"><A NAME="htoc354">H.4.3.1</A>函数：kfree</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kfree"></A> <A NAME="@codeindex255"></A></P><P>该函数的调用图见 <A HREF="understand011_zh.html#fig: kfree">图 8.17</A>。值得注意的是，该函数所做的工作几乎与启用了调试的 <TT>kmem_cache_free()</TT>（见 <A HREF="#func: kmem_cache_free">H.3.3.1 节</A>）完全相同。</P><PRE CLASS="verbatim">1597 void kfree (const void *objp)
+1598 {
+1599     kmem_cache_t *c;
+1600     unsigned long flags;
+1601 
+1602     if (!objp)
+1603         return;
+1604     local_irq_save(flags);
+1605     CHECK_PAGE(virt_to_page(objp));
+1606     c = GET_PAGE_CACHE(virt_to_page(objp));
+1607     __kmem_cache_free(c, (void*)objp);
+1608     local_irq_restore(flags);
+1609 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1602</B>如果指针为 NULL 则返回。如果调用者使用了 <TT>kmalloc()</TT> 并有一个统一的失败处理例程立即调用 <TT>kfree()</TT>，就可能出现这种情况</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1604</B>禁用中断</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1605</B>确保该对象所在的页面是 slab 页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1606</B>获取该指针所属的缓存（见 <A HREF="understand011_zh.html#Sec: Slabs">8.2 节</A>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1607</B>释放该内存对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1608</B>重新启用中断
+</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc122"></A><A NAME="htoc355">H.5</A>　Per-CPU 对象缓存</H2><P>
+<A NAME="c_sec: Per-CPU Object Cache"></A></P><P>Per-CPU 对象缓存的结构以及如何在其中添加或移除对象，在 <A HREF="understand011_zh.html#Sec: Describing the Per-CPU Object Cache">8.5.1 节</A> 和 <A HREF="understand011_zh.html#Sec: Adding/Removing Objects from the Per-CPU Cache">8.5.2 节</A> 中详细介绍。</P><H3 CLASS="subsection"><A NAME="htoc356">H.5.1</A>　启用 Per-CPU 缓存</H3><H4 CLASS="subsubsection"><A NAME="htoc357">H.5.1.1</A>函数：enable_all_cpucaches</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: enable_all_cpucaches"></A> <A NAME="@codeindex256"></A></P><BLOCKQUOTE CLASS="figure"><DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV>
+<DIV CLASS="center"><IMG SRC="figures/understand-html081.png"></DIV>
+<DIV CLASS="caption"><TABLE CELLSPACING=6 CELLPADDING=0><TR><TD VALIGN=top ALIGN=left>图 H.1：调用图：<TT>enable_all_cpucaches()</TT></TD></TR>
+</TABLE></DIV>
+<A NAME="fig: enable_all_cpucaches"></A>
+<DIV CLASS="center"><HR WIDTH="80%" SIZE=2></DIV></BLOCKQUOTE><P>该函数锁定缓存链并为每个缓存启用 cpucache。在 <TT>cache_cache</TT> 和 sizes 缓存启用之后，这一点尤为重要。</P><PRE CLASS="verbatim">1714 static void enable_all_cpucaches (void)
+1715 {
+1716     struct list_head* p;
+1717 
+1718     down(&amp;cache_chain_sem);
+1719 
+1720     p = &amp;cache_cache.next;
+1721     do {
+1722         kmem_cache_t* cachep = list_entry(p, kmem_cache_t, next);
+1723 
+1724         enable_cpucache(cachep);
+1725         p = cachep-&gt;next.next;
+1726     } while (p != &amp;cache_cache.next);
+1727 
+1728     up(&amp;cache_chain_sem);
+1729 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1718</B>获取缓存链的信号量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1719</B>获取链中的第一个缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1721-1726</B>遍历整条链</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1722</B>从链中获取一个缓存。此代码会跳过链上的第一个缓存，但 <TT>cache_cache</TT> 不需要 cpucache，因为它极少使用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1724</B>启用 cpucache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1725</B>移到链中的下一个缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1726</B>释放缓存链信号量
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc358">H.5.1.2</A>函数：enable_cpucache</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: enable_cpucache"></A> <A NAME="@codeindex257"></A></P><P>该函数根据缓存所包含对象的大小来计算 cpucache 应有的大小，然后调用执行实际分配的 <TT>kmem_tune_cpucache()</TT>。</P><PRE CLASS="verbatim">1693 static void enable_cpucache (kmem_cache_t *cachep)
+1694 {
+1695     int err;
+1696     int limit;
+1697 
+1699     if (cachep-&gt;objsize &gt; PAGE_SIZE)
+1700         return;
+1701     if (cachep-&gt;objsize &gt; 1024)
+1702         limit = 60;
+1703     else if (cachep-&gt;objsize &gt; 256)
+1704         limit = 124;
+1705     else
+1706         limit = 252;
+1707 
+1708     err = kmem_tune_cpucache(cachep, limit, limit/2);
+1709     if (err)
+1710         printk(KERN_ERR 
+            "enable_cpucache failed for %s, error %d.\n",
+1711                     cachep-&gt;name, -err);
+1712 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1699-1700</B>如果对象大于一个页面，则不创建 per-CPU 缓存，因为代价过高</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1701-1702</B>如果对象大于 1KiB，将 cpu 缓存控制在 3MiB 以下。limit 设为 124 个对象，以考虑 cpucache 描述符的大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1703-1704</B>对更小的对象，只需确保缓存大小不超过 3MiB</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1708</B>为 cpucache 分配内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1710-1711</B>如果分配失败，打印错误消息
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc359">H.5.1.3</A>函数：kmem_tune_cpucache</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_tune_cpucache"></A> <A NAME="@codeindex258"></A></P><P>该函数负责为 cpucache 分配内存。对于系统中的每个 CPU，kmalloc 都会给出一块足以容纳一个 cpu 缓存的内存，并填充 <TT>ccupdate_struct_t</TT> 结构体。然后函数 <TT>smp_call_function_all_cpus()</TT> 调用 <TT>do_ccupdate_local()</TT>，将新信息与缓存描述符中的旧信息互换。</P><PRE CLASS="verbatim">1639 static int kmem_tune_cpucache (kmem_cache_t* cachep, 
+                    int limit, int batchcount)
+1640 {
+1641     ccupdate_struct_t new;
+1642     int i;
+1643 
+1644     /*
+1645      * These are admin-provided, so we are more graceful.
+1646      */
+1647     if (limit &lt; 0)
+1648         return -EINVAL;
+1649     if (batchcount &lt; 0)
+1650         return -EINVAL;
+1651     if (batchcount &gt; limit)
+1652         return -EINVAL;
+1653     if (limit != 0 &amp;&amp; !batchcount)
+1654         return -EINVAL;
+1655 
+1656     memset(&amp;new.new,0,sizeof(new.new));
+1657     if (limit) {
+1658         for (i = 0; i&lt; smp_num_cpus; i++) {
+1659             cpucache_t* ccnew;
+1660 
+1661             ccnew = kmalloc(sizeof(void*)*limit+
+1662                     sizeof(cpucache_t), 
+                         GFP_KERNEL);
+1663             if (!ccnew)
+1664                 goto oom;
+1665             ccnew-&gt;limit = limit;
+1666             ccnew-&gt;avail = 0;
+1667             new.new[cpu_logical_map(i)] = ccnew;
+1668         }
+1669     }
+1670     new.cachep = cachep;
+1671     spin_lock_irq(&amp;cachep-&gt;spinlock);
+1672     cachep-&gt;batchcount = batchcount;
+1673     spin_unlock_irq(&amp;cachep-&gt;spinlock);
+1674 
+1675     smp_call_function_all_cpus(do_ccupdate_local, (void *)&amp;new);
+1676 
+1677     for (i = 0; i &lt; smp_num_cpus; i++) {
+1678         cpucache_t* ccold = new.new[cpu_logical_map(i)];
+1679         if (!ccold)
+1680             continue;
+1681         local_irq_disable();
+1682         free_block(cachep, cc_entry(ccold), ccold-&gt;avail);
+1683         local_irq_enable();
+1684         kfree(ccold);
+1685     }
+1686     return 0;
+1687 oom:
+1688     for (i--; i &gt;= 0; i--)
+1689         kfree(new.new[cpu_logical_map(i)]);
+1690     return -ENOMEM;
+1691 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1639</B>该函数的参数为<DL CLASS="description"><DT CLASS="dt-description">
+</DT><DD CLASS="dd-description"><B>cachep</B> 该 cpucache 所属的缓存
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>limit</B> cpucache 中可以存在的对象总数
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>batchcount</B> 当 <TT>cpucache</TT> 为空时，一次批量分配的对象数
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1647</B>缓存中对象的数量不能为负</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1649</B>不能批量分配负数个对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1651</B>不能分配超过 limit 的一批对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1653</B>如果 limit 为正，则必须提供 batchcount</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1656</B>将更新结构清零</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1657</B>如果提供了 limit，则为 cpucache 分配内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1658-1668</B>为每个 CPU 分配一个 cpucache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1661</B>所需内存为 <TT>limit</TT> 个指针的大小加上 cpucache 描述符的大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1663</B>如果内存不足，则清理并退出</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1665-1666</B>填充 cpucache 描述符的字段</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1667</B>填充 <TT>ccupdate_update_t</TT> 结构体的信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1670</B>告知 <TT>ccupdate_update_t</TT> 结构体正在更新哪个缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1671-1673</B>获取一个中断安全的锁以访问缓存描述符，并设置其 batchcount</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1675</B>让每个 CPU 自行更新其 cpucache 信息。这会使用 <TT>do_ccupdate_local()</TT>（见 <A HREF="#func: do_ccupdate_local">H.5.2.2 节</A>）将缓存描述符中的旧 cpucache 与 <TT>new</TT> 中的新 cpucache 互换</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1677-1685</B>在 <TT>smp_call_function_all_cpus()</TT>（见 <A HREF="#func: smp_call_function_all_cpus">H.5.2.1 节</A>）之后，旧的 cpucache 都在 <TT>new</TT> 中。这段代码遍历所有 cpucache，释放其中的对象，并删除旧的 cpucache</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1686</B>返回成功</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1688</B>如果没有内存，删除到目前为止已分配的所有 cpucache，并返回失败
+</DD></DL><H3 CLASS="subsection"><A NAME="htoc360">H.5.2</A>　更新 Per-CPU 信息</H3><H4 CLASS="subsubsection"><A NAME="htoc361">H.5.2.1</A>函数：smp_call_function_all_cpus</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: smp_call_function_all_cpus"></A> <A NAME="@codeindex259"></A></P><P>该函数为所有 CPU 调用函数 <TT>func()</TT>。在 slab 分配器的上下文中，该函数是 <TT>do_ccupdate_local()</TT>，参数是 <TT>ccupdate_struct_t</TT>。</P><PRE CLASS="verbatim">859 static void smp_call_function_all_cpus(void (*func) (void *arg), 
+                       void *arg)
+860 {
+861     local_irq_disable();
+862     func(arg);
+863     local_irq_enable();
+864 
+865     if (smp_call_function(func, arg, 1, 1))
+866         BUG();
+867 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>861-863</B>本地禁用中断，并为该 CPU 调用此函数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>865</B>为其他所有 CPU 调用此函数。<TT>smp_call_function()</TT> 是与体系结构相关的函数，这里不再进一步讨论</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc362">H.5.2.2</A>函数：do_ccupdate_local</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: do_ccupdate_local"></A> <A NAME="@codeindex260"></A></P><P>该函数将缓存描述符中的 cpucache 信息与 <TT>info</TT> 中当前 CPU 的信息互换。</P><PRE CLASS="verbatim">874 static void do_ccupdate_local(void *info)
+875 {
+876     ccupdate_struct_t *new = (ccupdate_struct_t *)info;
+877     cpucache_t *old = cc_data(new-&gt;cachep);
+878     
+879     cc_data(new-&gt;cachep) = new-&gt;new[smp_processor_id()];
+880     new-&gt;new[smp_processor_id()] = old;
+881 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>876</B><TT>info</TT> 是指向 <TT>ccupdate_struct_t</TT> 的指针，然后被传递给 <TT>smp_call_function_all_cpus()</TT>（见 <A HREF="#func: smp_call_function_all_cpus">H.5.2.1 节</A>）</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>877</B><TT>ccupdate_struct_t</TT> 的一部分是指向该 cpucache 所属缓存的指针。<TT>cc_data()</TT> 返回此处理器对应的 <TT>cpucache_t</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>879</B>将新的 cpucache 放入缓存描述符。<TT>cc_data()</TT> 返回此 CPU 对应的 cpucache 指针。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>880</B>用旧的 cpucache 替换 new 中的指针，以便稍后由 <TT>smp_call_function_call_cpus()</TT> 的调用者（例如 <TT>kmem_tune_cpucache()</TT>）将其删除</DD></DL><H3 CLASS="subsection"><A NAME="htoc363">H.5.3</A>　排空 Per-CPU 缓存</H3><P>调用该函数以排空 per-cpu 缓存中的所有对象。当需要收缩缓存以释放 slab 时会调用它。如果某个对象在 per-cpu 缓存中，即使它未被使用，对应的 slab 也无法被释放。</P><H4 CLASS="subsubsection"><A NAME="htoc364">H.5.3.1</A>函数：drain_cpu_caches</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: drain_cpu_caches"></A> <A NAME="@codeindex261"></A></P><PRE CLASS="verbatim">885 static void drain_cpu_caches(kmem_cache_t *cachep)
+886 {
+887     ccupdate_struct_t new;
+888     int i;
+889 
+890     memset(&amp;new.new,0,sizeof(new.new));
+891 
+892     new.cachep = cachep;
+893 
+894     down(&amp;cache_chain_sem);
+895     smp_call_function_all_cpus(do_ccupdate_local, (void *)&amp;new);
+896 
+897     for (i = 0; i &lt; smp_num_cpus; i++) {
+898         cpucache_t* ccold = new.new[cpu_logical_map(i)];
+899         if (!ccold || (ccold-&gt;avail == 0))
+900             continue;
+901         local_irq_disable();
+902         free_block(cachep, cc_entry(ccold), ccold-&gt;avail);
+903         local_irq_enable();
+904         ccold-&gt;avail = 0;
+905     }
+906     smp_call_function_all_cpus(do_ccupdate_local, (void *)&amp;new);
+907     up(&amp;cache_chain_sem);
+908 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>890</B>清空更新结构，因为接下来要清除所有数据</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>892</B>将 <TT>new.cachep</TT> 设为 cachep，让 <TT>smp_call_function_all_cpus()</TT> 知道它在影响哪个缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>894</B>获取缓存描述符的信号量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>895</B><TT>do_ccupdate_local()</TT>（见 <A HREF="#func: do_ccupdate_local">H.5.2.2 节</A>）将缓存描述符中的 <TT>cpucache_t</TT> 信息与 <TT>new</TT> 中的互换，以便在此处修改它们</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>897-905</B>对系统中的每个 CPU……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>898</B>获取该 CPU 的 cpucache 描述符</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>899</B>如果由于某种原因结构不存在，或者其中没有可用对象，跳到下一个 CPU</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>901</B>禁用该处理器上的中断。可能其他地方的中断处理程序的分配会尝试访问该 per CPU 缓存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>902</B>使用 <TT>free_block()</TT>（见 <A HREF="#func: free_block">H.3.3.5 节</A>）释放这批对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>903</B>重新启用中断</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>904</B>表示没有可用对象</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>906</B>每个 CPU 的信息都已更新，因此为每个 CPU 调用 <TT>do_ccupdate_local()</TT>（见 <A HREF="#func: do_ccupdate_local">H.5.2.2 节</A>），将信息放回缓存描述符</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>907</B>释放缓存链的信号量</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc123"></A><A NAME="htoc365">H.6</A>　Slab 分配器初始化</H2><P>
+<A NAME="c_sec: Slab Allocator Initialisation"></A></P><H4 CLASS="subsubsection"><A NAME="htoc366">H.6.0.2</A>函数：kmem_cache_init</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_cache_init"></A> <A NAME="@codeindex262"></A></P><P>该函数将</P><UL CLASS="itemize"><LI CLASS="li-itemize">
+初始化缓存链链表
+</LI><LI CLASS="li-itemize">初始化用于访问缓存链的互斥量
+</LI><LI CLASS="li-itemize">计算 <TT>cache_cache</TT> 的 colour
+</LI></UL><PRE CLASS="verbatim">416 void __init kmem_cache_init(void)
+417 {
+418     size_t left_over;
+419 
+420     init_MUTEX(&amp;cache_chain_sem);
+421     INIT_LIST_HEAD(&amp;cache_chain);
+422 
+423     kmem_cache_estimate(0, cache_cache.objsize, 0,
+424             &amp;left_over, &amp;cache_cache.num);
+425     if (!cache_cache.num)
+426         BUG();
+427 
+428     cache_cache.colour = left_over/cache_cache.colour_off;
+429     cache_cache.colour_next = 0;
+430 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>420</B>初始化用于访问缓存链的信号量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>421</B>初始化缓存链链表</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>423</B><TT>kmem_cache_estimate()</TT>（见 <A HREF="#func: kmem_cache_estimate">H.1.2.1 节</A>）计算对象数量以及浪费的字节数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>425</B>如果一个页面甚至放不下一个 <TT>kmem_cache_t</TT>，则有严重问题</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>428</B><TT>colour</TT> 是在保持 L1 缓存对齐的同时可以使用的不同缓存行数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>429</B><TT>colour_next</TT> 指示下一个使用的缓存行，从 0 开始
+</DD></DL><P>
+	</P><H2 CLASS="section"><A NAME="toc124"></A><A NAME="htoc367">H.7</A>　与伙伴分配器对接</H2><P>
+<A NAME="c_sec: Interfacing with the Buddy Allocator"></A></P><H4 CLASS="subsubsection"><A NAME="htoc368">H.7.0.3</A>函数：kmem_getpages</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_getpages"></A> <A NAME="@codeindex263"></A></P><P>该函数为 slab 分配器分配页面</P><PRE CLASS="verbatim">486 static inline void * kmem_getpages (kmem_cache_t *cachep, 
+                                        unsigned long flags)
+487 {
+488     void    *addr;
+495     flags |= cachep-&gt;gfpflags;
+496     addr = (void*) __get_free_pages(flags, cachep-&gt;gfporder);
+503     return addr;
+504 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>495</B>无论请求的分配标志是什么，都将缓存标志附加到其上。它可能附加的唯一标志是 <TT>ZONE_DMA</TT>，前提是该缓存需要 DMA 内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>496</B>使用 <TT>__get_free_pages()</TT>（见 <A HREF="understand023_zh.html#func: __get_free_pages">F.2.3 节</A>）从伙伴分配器分配</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>503</B>返回页面；失败则返回 NULL
+</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc369">H.7.0.4</A>函数：kmem_freepages</H4><P> <EM>来源：mm/slab.c</EM> <A NAME="func: kmem_freepages"></A> <A NAME="@codeindex264"></A></P><P>该函数为 slab 分配器释放页面。在调用伙伴分配器 API 之前，它会从页面标志中清除 <TT>PG_slab</TT> 位。</P><PRE CLASS="verbatim">507 static inline void kmem_freepages (kmem_cache_t *cachep, void *addr)
+508 {
+509     unsigned long i = (1&lt;&lt;cachep-&gt;gfporder);
+510     struct page *page = virt_to_page(addr);
+511 
+517     while (i--) {
+518         PageClearSlab(page);
+519         page++;
+520     }
+521     free_pages((unsigned long)addr, cachep-&gt;gfporder);
+522 }
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>509</B>获取最初分配所使用的 order</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>510</B>获取该地址对应的 struct page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>517-520</B>清除每个页面上的 <TT>PG_slab</TT> 位</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>521</B>使用 <TT>free_pages()</TT>（见 <A HREF="understand023_zh.html#func: free_pages">F.4.1 节</A>）将页面释放回伙伴分配器</DD></DL><P>	</P><HR>
+[ <A HREF="understand024_zh.html">&laquo; 上一章</A> ]
+[ <A HREF="index.html">&uarr; 上级</A> ]
+[ <A HREF="../original_html/understand026.html">下一章 &raquo;</A> ]
+</BODY>
+</HTML>
