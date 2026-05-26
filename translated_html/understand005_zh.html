@@ -259,7 +259,47 @@
 
   <h3>2.2.2　计算 Zone 的大小</h3>
   <div class="figure">
-    <img src="../original_html/figures/understand-html003.png" alt="图 2.3">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 280" width="560" role="img" aria-labelledby="fig003-title fig003-desc" font-family="sans-serif" font-size="12">
+      <title id="fig003-title">图 2.3：函数调用图：setup_memory()</title>
+      <desc id="fig003-desc">setup_memory() 的函数调用树：setup_memory() 调用 find_max_pfn()、find_max_low_pfn()、init_bootmem() 和 reserve_bootmem()，其中 init_bootmem() 进一步调用 init_bootmem_core()。</desc>
+      <defs>
+        <marker id="arr003" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+        </marker>
+      </defs>
+
+      <!-- Root: setup_memory() -->
+      <rect x="180" y="15" width="200" height="34" rx="4" fill="#d4edda" stroke="#1a6630" stroke-width="1.5"/>
+      <text x="280" y="37" text-anchor="middle" font-weight="bold">setup_memory()</text>
+
+      <!-- Connector lines from root -->
+      <line x1="220" y1="49" x2="60" y2="100" stroke="#444" stroke-width="1" marker-end="url(#arr003)"/>
+      <line x1="256" y1="49" x2="200" y2="100" stroke="#444" stroke-width="1" marker-end="url(#arr003)"/>
+      <line x1="300" y1="49" x2="340" y2="100" stroke="#444" stroke-width="1" marker-end="url(#arr003)"/>
+      <line x1="340" y1="49" x2="480" y2="100" stroke="#444" stroke-width="1" marker-end="url(#arr003)"/>
+
+      <!-- Level 1 children -->
+      <rect x="10" y="100" width="140" height="34" rx="3" fill="#cfe2ff" stroke="#1f4e8a" stroke-width="1.2"/>
+      <text x="80" y="121" text-anchor="middle">find_max_pfn()</text>
+
+      <rect x="155" y="100" width="165" height="34" rx="3" fill="#cfe2ff" stroke="#1f4e8a" stroke-width="1.2"/>
+      <text x="238" y="121" text-anchor="middle">find_max_low_pfn()</text>
+
+      <rect x="325" y="100" width="140" height="34" rx="3" fill="#cfe2ff" stroke="#1f4e8a" stroke-width="1.2"/>
+      <text x="395" y="121" text-anchor="middle">init_bootmem()</text>
+
+      <rect x="407" y="100" width="148" height="34" rx="3" fill="#cfe2ff" stroke="#1f4e8a" stroke-width="1.2"/>
+      <text x="481" y="121" text-anchor="middle">reserve_bootmem()</text>
+
+      <!-- init_bootmem -> init_bootmem_core -->
+      <line x1="395" y1="134" x2="395" y2="185" stroke="#444" stroke-width="1" marker-end="url(#arr003)"/>
+
+      <rect x="305" y="185" width="185" height="34" rx="3" fill="#fff3cd" stroke="#856404" stroke-width="1.2"/>
+      <text x="397" y="206" text-anchor="middle">init_bootmem_core()</text>
+
+      <!-- Title -->
+      <text x="280" y="258" text-anchor="middle" font-size="13" font-weight="bold">函数调用图：setup_memory()</text>
+    </svg>
     <div class="caption">图 2.3：函数调用图：<tt>setup_memory()</tt></div>
   </div>
 
