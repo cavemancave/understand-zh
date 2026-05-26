@@ -694,10 +694,9 @@ address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>590-59
 failing. The write statistics are updated and then all user pages are removed
 with <TT>zap_page_range()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>598-600</B>This goto is used if the mapping failed immediately after
 the <TT>vm_area_struct</TT> is created. It is freed back to the slab
-allocator before the error is returned</DD></DL><H3 CLASS="subsection"><A NAME="htoc150">D.2.2</A>  Inserting a Memory Region</H3><P>The call graph for <TT>insert_vm_struct()</TT> is shown in Figure <A HREF="understand007.html#fig: insert_vm_struct">4.6</A>.</P><H4 CLASS="subsubsection"><A NAME="htoc151">D.2.2.1</A>  Function: __insert_vm_struct</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: __insert_vm_struct"></A> <A NAME="@codeindex65"></A></P><P>This is the top level function for inserting a new vma into an
-address space. There is a second function like it called simply
-<TT>insert_vm_struct()</TT><A NAME="@codeindex66"></A> that is not described in detail here as the
-only difference is the one line of code increasing the <TT>map_count</TT>.</P><PRE CLASS="verbatim">1174 void __insert_vm_struct(struct mm_struct * mm, 
+allocator before the error is returned</DD></DL><H3 CLASS="subsection"><A NAME="htoc150">D.2.2</A>　插入内存区域</H3><P><TT>insert_vm_struct()</TT> 的调用图见<A HREF="understand007_zh.html#fig: insert_vm_struct">图 4.6</A>。</P><H4 CLASS="subsubsection"><A NAME="htoc151">D.2.2.1</A>　函数：<TT>__insert_vm_struct</TT></H4><P> <EM>源码位置：mm/mmap.c</EM> <A NAME="func: __insert_vm_struct"></A> <A NAME="@codeindex65"></A></P><P>这是将新的 vma 插入到地址空间的顶层函数。还有一个类似的函数叫
+<TT>insert_vm_struct()</TT><A NAME="@codeindex66"></A>，这里不再详细描述，因为它们唯一的区别在于多了一行
+让 <TT>map_count</TT> 自增的代码。</P><PRE CLASS="verbatim">1174 void __insert_vm_struct(struct mm_struct * mm, 
                      struct vm_area_struct * vma)
 1175 {
 1176     struct vm_area_struct * __vma, * prev;
@@ -711,26 +710,20 @@ only difference is the one line of code increasing the <TT>map_count</TT>.</P><P
 1183     mm-&gt;map_count++;
 1184     validate_mm(mm);
 1185 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1174</B>The arguments are the <TT>mm_struct</TT> that represents
-the linear address space and the <TT>vm_area_struct</TT> that is to
-be inserted</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1179</B><TT>find_vma_prepare()</TT>(See Section <A HREF="#func: find_vma_prepare">D.2.2.2</A>)
-locates where the new VMA can be inserted. It will be inserted between
-<TT>prev</TT> and <TT>__vma</TT> and the required nodes for the red-black
-tree are also returned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1180-1181</B>This is a check to make sure the returned VMA is invalid. It
-is virtually impossible for this condition to occur without manually inserting
-bogus VMAs into the address space</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1182</B>This function does the actual work of linking the vma struct into
-the linear linked list and the red-black tree</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1183</B>Increase the <TT>map_count</TT> to show a new mapping has
-been added. This line is not present in <TT>insert_vm_struct()</TT><A NAME="@codeindex67"></A></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1184</B><TT>validate_mm()</TT> is a debugging macro for red-black
-trees. If <TT>DEBUG_MM_RB</TT> is set, the linear list of VMAs and the
-tree will be traversed to make sure it is valid. The tree traversal is a
-recursive function so it is very important that that it is used only if really
-necessary as a large number of mappings could cause a stack overflow. If it
-is not set, <TT>validate_mm()</TT> does nothing at all</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc152">D.2.2.2</A>  Function: find_vma_prepare</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: find_vma_prepare"></A> <A NAME="@codeindex68"></A></P><P>This is responsible for finding the correct places to insert a VMA at the
-supplied address. It returns a number of pieces of information via the actual
-return and the function arguments. The forward VMA to link to is returned
-with return. pprev is the previous node which is required because the list
-is a singly linked list. <TT>rb_link</TT> and <TT>rb_parent</TT> are
-the parent and leaf node the new VMA will be inserted between.</P><PRE CLASS="verbatim">246 static struct vm_area_struct * find_vma_prepare(
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1174</B>参数分别是表示线性地址空间的 <TT>mm_struct</TT>，
+以及要被插入的 <TT>vm_area_struct</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1179</B><TT>find_vma_prepare()</TT>（见节 <A HREF="#func: find_vma_prepare">D.2.2.2</A>）
+找到新 VMA 可以被插入的位置。它将被插入到
+<TT>prev</TT> 和 <TT>__vma</TT> 之间，红黑树所需的节点也会一并返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1180-1181</B>这是一个检查，用于确认返回的 VMA 是否非法。
+若不是手动把伪造的 VMA 插入到地址空间，这种情况几乎不可能发生</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1182</B>这个函数完成将 vma 结构体链接到线性链表
+以及红黑树的实际工作</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1183</B>递增 <TT>map_count</TT>，以表示新增了一个映射。
+在 <TT>insert_vm_struct()</TT><A NAME="@codeindex67"></A> 中没有这一行</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1184</B><TT>validate_mm()</TT> 是用于红黑树的调试宏。
+若设置了 <TT>DEBUG_MM_RB</TT>，会遍历 VMA 的线性链表和树以验证其有效性。
+由于树的遍历是递归函数，确实必要时才使用非常重要，
+否则映射数量过多可能导致栈溢出。
+若未设置，<TT>validate_mm()</TT> 什么也不做</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc152">D.2.2.2</A>　函数：<TT>find_vma_prepare</TT></H4><P> <EM>源码位置：mm/mmap.c</EM> <A NAME="func: find_vma_prepare"></A> <A NAME="@codeindex68"></A></P><P>本函数负责在给定地址处找到插入 VMA 的合适位置。
+它通过函数返回值和参数返回多份信息。要链接到的前向 VMA 通过返回值返回；
+pprev 是前一个节点，由于该链表是单向链表，所以必须返回它。
+<TT>rb_link</TT> 和 <TT>rb_parent</TT> 是新 VMA 将被插入到其间的父节点和叶子节点。</P><PRE CLASS="verbatim">246 static struct vm_area_struct * find_vma_prepare(
                        struct mm_struct * mm,
                        unsigned long addr,
 247                    struct vm_area_struct ** pprev,
@@ -769,11 +762,9 @@ the parent and leaf node the new VMA will be inserted between.</P><PRE CLASS="ve
 278     *rb_parent = __rb_parent;
 279     return vma;
 280 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>246</B>The function arguments are described above</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>253-255</B>Initialise the search</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>263-272</B>This is a similar tree walk to what was described for
-<TT>find_vma()</TT>. The only real difference is the nodes last traversed
-are remembered with the <TT>__rb_link</TT> and <TT>__rb_parent</TT>
-variables</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>275-276</B>Get the back linking VMA via the red-black tree</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>279</B>Return the forward linking VMA</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc153">D.2.2.3</A>  Function: vma_link</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: vma_link"></A> <A NAME="@codeindex69"></A></P><P>This is the top-level function for linking a VMA into the proper lists. It is
-responsible for acquiring the necessary locks to make a safe insertion</P><PRE CLASS="verbatim">337 static inline void vma_link(struct mm_struct * mm, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>246</B>函数参数已在上文描述</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>253-255</B>初始化搜索</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>263-272</B>这是与 <TT>find_vma()</TT> 中所描述类似的树遍历。
+唯一真正的区别是最后遍历到的节点会用 <TT>__rb_link</TT> 和 <TT>__rb_parent</TT>
+变量记录下来</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>275-276</B>通过红黑树获取后向链接的 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>279</B>返回前向链接的 VMA</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc153">D.2.2.3</A>　函数：<TT>vma_link</TT></H4><P> <EM>源码位置：mm/mmap.c</EM> <A NAME="func: vma_link"></A> <A NAME="@codeindex69"></A></P><P>这是将 VMA 链接到合适链表的顶层函数。它负责获取必要的锁以保证安全插入</P><PRE CLASS="verbatim">337 static inline void vma_link(struct mm_struct * mm, 
                 struct vm_area_struct * vma, 
                 struct vm_area_struct * prev,
 338                 rb_node_t ** rb_link, rb_node_t * rb_parent)
@@ -787,14 +778,12 @@ responsible for acquiring the necessary locks to make a safe insertion</P><PRE C
 346     mm-&gt;map_count++;
 347     validate_mm(mm);
 348 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>337</B><TT>mm</TT> is the address space the VMA is to be inserted into.
-<TT>prev</TT> is the backwards linked VMA for the linear linked list of
-VMAs. <TT>rb_link</TT> and <TT>rb_parent</TT> are the nodes required
-to make the rb insertion</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>340</B>This function acquires the spinlock protecting the
-<TT>address_space</TT> representing the file that is been memory mapped.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>341</B>Acquire the page table lock which protects the whole
-<TT>mm_struct</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>342</B>Insert the VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>343</B>Free the lock protecting the <TT>mm_struct</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>345</B>Unlock the <TT>address_space</TT> for the file</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>346</B>Increase the number of mappings in this mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>347</B>If <TT>DEBUG_MM_RB</TT> is set, the RB trees and linked lists
-will be checked to make sure they are still valid</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc154">D.2.2.4</A>  Function: __vma_link</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: __vma_link"></A> <A NAME="@codeindex70"></A></P><P>This simply calls three helper functions which are responsible for linking the
-VMA into the three linked lists that link VMAs together.</P><PRE CLASS="verbatim">329 static void __vma_link(struct mm_struct * mm, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>337</B><TT>mm</TT> 是 VMA 要插入到的地址空间。
+<TT>prev</TT> 是 VMA 线性链表中后向链接的 VMA。
+<TT>rb_link</TT> 和 <TT>rb_parent</TT> 是进行红黑树插入所需的节点</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>340</B>该函数获取保护表示被内存映射文件的
+<TT>address_space</TT> 的自旋锁。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>341</B>获取保护整个 <TT>mm_struct</TT> 的页表锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>342</B>插入该 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>343</B>释放保护 <TT>mm_struct</TT> 的锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>345</B>解锁文件的 <TT>address_space</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>346</B>增加此 mm 中的映射数量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>347</B>若设置了 <TT>DEBUG_MM_RB</TT>，将检查
+红黑树与链表以确保它们仍然有效</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc154">D.2.2.4</A>　函数：<TT>__vma_link</TT></H4><P> <EM>源码位置：mm/mmap.c</EM> <A NAME="func: __vma_link"></A> <A NAME="@codeindex70"></A></P><P>本函数仅是简单地调用三个辅助函数，它们分别负责将 VMA
+链接到把各 VMA 串联起来的三个链表中。</P><PRE CLASS="verbatim">329 static void __vma_link(struct mm_struct * mm, 
                struct vm_area_struct * vma,
                struct vm_area_struct * prev,
 330            rb_node_t ** rb_link, rb_node_t * rb_parent)
@@ -803,11 +792,11 @@ VMA into the three linked lists that link VMAs together.</P><PRE CLASS="verbatim
 333     __vma_link_rb(mm, vma, rb_link, rb_parent);
 334     __vma_link_file(vma);
 335 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>332</B>This links the VMA into the linear linked lists of VMAs in this mm
-via the <TT>vm_next field</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>333</B>This links the VMA into the red-black tree of VMAs in this mm whose
-root is stored in the vm_rb field</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>334</B>This links the VMA into the shared mapping VMA links. Memory
-mapped files are linked together over potentially many mms by this function
-via the <TT>vm_next_share</TT> and <TT>vm_pprev_share</TT> fields</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc155">D.2.2.5</A>  Function: __vma_link_list</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: __vma_link_list"></A> <A NAME="@codeindex71"></A></P><PRE CLASS="verbatim">282 static inline void __vma_link_list(struct mm_struct * mm, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>332</B>这通过 <TT>vm_next 字段</TT>
+将 VMA 链接到此 mm 中 VMA 的线性链表中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>333</B>这将 VMA 链接到此 mm 中 VMA 的红黑树中，
+其根节点存储在 vm_rb 字段</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>334</B>这将 VMA 链接到共享映射 VMA 链中。被内存映射的文件
+通过该函数借助 <TT>vm_next_share</TT> 和 <TT>vm_pprev_share</TT> 字段，
+可能跨越多个 mm 链接在一起</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc155">D.2.2.5</A>　函数：<TT>__vma_link_list</TT></H4><P> <EM>源码位置：mm/mmap.c</EM> <A NAME="func: __vma_link_list"></A> <A NAME="@codeindex71"></A></P><PRE CLASS="verbatim">282 static inline void __vma_link_list(struct mm_struct * mm, 
                      struct vm_area_struct * vma, 
                      struct vm_area_struct * prev,
 283                    rb_node_t * rb_parent)
@@ -825,10 +814,9 @@ via the <TT>vm_next_share</TT> and <TT>vm_pprev_share</TT> fields</DD></DL><H4 C
 293             vma-&gt;vm_next = NULL;
 294     }
 295 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>285</B>If <TT>prev</TT> is not null, the vma is simply inserted into
-the list</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>289</B>Else this is the first mapping and the first element of the list has
-to be stored in the <TT>mm_struct</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>290</B>The VMA is stored as the parent node</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc156">D.2.2.6</A>  Function: __vma_link_rb</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: __vma_link_rb"></A> <A NAME="@codeindex72"></A></P><P>The principal workings of this function are stored within
-&lt;<TT>linux/rbtree.h</TT>&gt; and will not be discussed in detail in this book.</P><PRE CLASS="verbatim">297 static inline void __vma_link_rb(struct mm_struct * mm, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>285</B>若 <TT>prev</TT> 非空，直接将 vma 插入到链表中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>289</B>否则这是首个映射，需要将链表的第一个元素
+存储到 <TT>mm_struct</TT> 中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>290</B>该 VMA 作为父节点存储</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc156">D.2.2.6</A>　函数：<TT>__vma_link_rb</TT></H4><P> <EM>源码位置：mm/mmap.c</EM> <A NAME="func: __vma_link_rb"></A> <A NAME="@codeindex72"></A></P><P>本函数的主要工作存放在 &lt;<TT>linux/rbtree.h</TT>&gt; 中，
+本书不再详细讨论。</P><PRE CLASS="verbatim">297 static inline void __vma_link_rb(struct mm_struct * mm, 
                      struct vm_area_struct * vma,
 298                  rb_node_t ** rb_link, 
                      rb_node_t * rb_parent)
@@ -836,7 +824,7 @@ to be stored in the <TT>mm_struct</TT></DD><DT CLASS="dt-description"></DT><DD C
 300     rb_link_node(&amp;vma-&gt;vm_rb, rb_parent, rb_link);
 301     rb_insert_color(&amp;vma-&gt;vm_rb, &amp;mm-&gt;mm_rb);
 302 }
-</PRE><H4 CLASS="subsubsection"><A NAME="htoc157">D.2.2.7</A>  Function: __vma_link_file</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: __vma_link_file"></A> <A NAME="@codeindex73"></A></P><P>This function links the VMA into a linked list of shared file mappings.</P><PRE CLASS="verbatim">304 static inline void __vma_link_file(struct vm_area_struct * vma)
+</PRE><H4 CLASS="subsubsection"><A NAME="htoc157">D.2.2.7</A>　函数：<TT>__vma_link_file</TT></H4><P> <EM>源码位置：mm/mmap.c</EM> <A NAME="func: __vma_link_file"></A> <A NAME="@codeindex73"></A></P><P>本函数将 VMA 链接到共享文件映射的链表中。</P><PRE CLASS="verbatim">304 static inline void __vma_link_file(struct vm_area_struct * vma)
 305 {
 306     struct file * file;
 307 
@@ -860,11 +848,11 @@ to be stored in the <TT>mm_struct</TT></DD><DT CLASS="dt-description"></DT><DD C
 325         vma-&gt;vm_pprev_share = head;
 326     }
 327 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>309</B>Check to see if this VMA has a shared file mapping. If it does not,
-this function has nothing more to do</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>310-312</B>Extract the relevant information about the mapping from the VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>314-315</B>If this mapping is not allowed to write even if the permissions
-are ok for writing, decrement the <TT>i_writecount</TT> field. A negative
-value to this field indicates that the file is memory mapped and may not be
-written to. Efforts to open the file for writing will now fail</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>317-319</B>Check to make sure this is a shared mapping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>322-325</B>Insert the VMA into the shared mapping linked list</DD></DL><H3 CLASS="subsection"><A NAME="htoc158">D.2.3</A>  Merging Contiguous Regions</H3><H4 CLASS="subsubsection"><A NAME="htoc159">D.2.3.1</A>  Function: vma_merge</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: vma_merge"></A> <A NAME="@codeindex74"></A></P><P>This function checks to see if a region pointed to be <TT>prev</TT> may
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>309</B>检查此 VMA 是否拥有共享文件映射。若无，
+该函数就无需做更多事情</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>310-312</B>从 VMA 中提取该映射的相关信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>314-315</B>若即便权限允许写入，该映射也不允许写，
+则递减 <TT>i_writecount</TT> 字段。该字段为负值
+表示此文件已被内存映射且不可写入。
+此后尝试以写方式打开该文件都会失败</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>317-319</B>确认这是一个共享映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>322-325</B>将该 VMA 插入到共享映射链表中</DD></DL><H3 CLASS="subsection"><A NAME="htoc158">D.2.3</A>  Merging Contiguous Regions</H3><H4 CLASS="subsubsection"><A NAME="htoc159">D.2.3.1</A>  Function: vma_merge</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: vma_merge"></A> <A NAME="@codeindex74"></A></P><P>This function checks to see if a region pointed to be <TT>prev</TT> may
 be expanded forwards to cover the area from <TT>addr</TT> to <TT>end</TT>
 instead of allocating a new VMA. If it cannot, the VMA ahead is checked to
 see can it be expanded backwards instead.</P><PRE CLASS="verbatim">350 static int vma_merge(struct mm_struct * mm, 
