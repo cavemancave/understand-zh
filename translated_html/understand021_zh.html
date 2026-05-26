@@ -928,8 +928,8 @@ VMA 位于从 <TT>addr</TT> 到 <TT>end</TT> 的区域前方。
 587         return 0;
 588 }
 </PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>584</B>不言自明。当不存在文件/设备映射
-（即为匿名映射）且两个区域的 VMA 标志相符时返回真</DD></DL><H3 CLASS="subsection"><A NAME="htoc161">D.2.4</A>  Remapping and Moving a Memory Region</H3><H4 CLASS="subsubsection"><A NAME="htoc162">D.2.4.1</A>  Function: sys_mremap</H4><P> <EM>Source: mm/mremap.c</EM> <A NAME="func: sys_mremap"></A> <A NAME="@codeindex76"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand007.html#fig: sys_mremap">4.7</A>. This
-is the system service call to remap a memory region</P><PRE CLASS="verbatim">347 asmlinkage unsigned long sys_mremap(unsigned long addr,
+（即为匿名映射）且两个区域的 VMA 标志相符时返回真</DD></DL><H3 CLASS="subsection"><A NAME="htoc161">D.2.4</A>　重新映射并移动内存区域</H3><H4 CLASS="subsubsection"><A NAME="htoc162">D.2.4.1</A>　函数：<TT>sys_mremap</TT></H4><P> <EM>源码位置：mm/mremap.c</EM> <A NAME="func: sys_mremap"></A> <A NAME="@codeindex76"></A></P><P>该函数的调用图如图 <A HREF="understand007_zh.html#fig: sys_mremap">4.7</A> 所示。这是
+重新映射内存区域的系统服务调用</P><PRE CLASS="verbatim">347 asmlinkage unsigned long sys_mremap(unsigned long addr,
 348     unsigned long old_len, unsigned long new_len,
 349     unsigned long flags, unsigned long new_addr)
 350 {
@@ -940,13 +940,10 @@ is the system service call to remap a memory region</P><PRE CLASS="verbatim">347
 355     up_write(&amp;current-&gt;mm-&gt;mmap_sem);
 356     return ret;
 357 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>347-349</B>The parameters are the same as those described in the
-<TT>mremap()</TT> man page</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>353</B>Acquire the mm semaphore</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>354</B><TT>do_mremap()</TT>(See Section <A HREF="#func: do_mremap">D.2.4.2</A>) is the top level
-function for remapping a region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>355</B>Release the mm semaphore</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>356</B>Return the status of the remapping</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc163">D.2.4.2</A>  Function: do_mremap</H4><P> <EM>Source: mm/mremap.c</EM> <A NAME="func: do_mremap"></A> <A NAME="@codeindex77"></A></P><P>This function does most of the actual &#X201C;work&#X201D; required to remap, resize and
-move a memory region. It is quite long but can be broken up into distinct
-parts which will be dealt with separately here. The tasks are broadly speaking</P><UL CLASS="itemize"><LI CLASS="li-itemize">Check usage flags and page align lengths</LI><LI CLASS="li-itemize">Handle the condition where <TT>MAP_FIXED</TT> is set and the
-region is been moved to a new location.</LI><LI CLASS="li-itemize">If a region is shrinking, allow it to happen unconditionally</LI><LI CLASS="li-itemize">If the region is growing or moving, perform a number of checks in advance
-to make sure the move is allowed and safe</LI><LI CLASS="li-itemize">Handle the case where the region is been expanded and cannot be moved</LI><LI CLASS="li-itemize">Finally handle the case where the region has to be resized and moved</LI></UL><PRE CLASS="verbatim">219 unsigned long do_mremap(unsigned long addr,
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>347-349</B>参数与 <TT>mremap()</TT> 手册页中所述相同</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>353</B>获取 mm 信号量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>354</B><TT>do_mremap()</TT>（参见 <A HREF="#func: do_mremap">D.2.4.2</A> 节）
+是重新映射区域的顶层函数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>355</B>释放 mm 信号量</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>356</B>返回重新映射的状态</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc163">D.2.4.2</A>　函数：<TT>do_mremap</TT></H4><P> <EM>源码位置：mm/mremap.c</EM> <A NAME="func: do_mremap"></A> <A NAME="@codeindex77"></A></P><P>这个函数完成了重新映射、调整大小以及移动内存区域所需的大部分实际"工作"。
+它相当长，但可以拆分成若干独立部分，本节将分别介绍。任务大致如下</P><UL CLASS="itemize"><LI CLASS="li-itemize">检查使用标志并对长度做页对齐</LI><LI CLASS="li-itemize">处理设置了 <TT>MAP_FIXED</TT> 且区域被移动到新位置的情况</LI><LI CLASS="li-itemize">若区域正在缩小，则无条件允许</LI><LI CLASS="li-itemize">若区域正在增长或移动，则预先进行一系列检查，
+确保此次移动是被允许且安全的</LI><LI CLASS="li-itemize">处理区域正在扩展但无法移动的情况</LI><LI CLASS="li-itemize">最后处理区域需要调整大小并移动的情况</LI></UL><PRE CLASS="verbatim">219 unsigned long do_mremap(unsigned long addr,
 220     unsigned long old_len, unsigned long new_len,
 221     unsigned long flags, unsigned long new_addr)
 222 {
@@ -962,21 +959,18 @@ to make sure the move is allowed and safe</LI><LI CLASS="li-itemize">Handle the 
 232     old_len = PAGE_ALIGN(old_len);
 233     new_len = PAGE_ALIGN(new_len);
 234 
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>219</B>The parameters of the function are
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>219</B>函数参数如下：
 <DL CLASS="description"><DT CLASS="dt-description">
-</DT><DD CLASS="dd-description"><B>addr</B>is the old starting address
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>old_len</B>is the old region length
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>new_len</B>is the new region length</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B>is the option flags passed. If <TT>MREMAP_MAYMOVE</TT>
-		is specified, it means that the region is allowed to move
-		if there is not enough linear address space at the current
-		space. If <TT>MREMAP_FIXED</TT> is specified, it means
-		that the whole region is to move to the specified new_addr
-		with the new length. The area from <TT>new_addr</TT>
-		to <TT>new_addr+new_len</TT> will be unmapped with
-		<TT>do_munmap()</TT>.</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>new_addr</B>is the address of the new region if it is moved
+</DT><DD CLASS="dd-description"><B>addr</B> 旧的起始地址
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>old_len</B> 旧区域的长度
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>new_len</B> 新区域的长度</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>flags</B> 传入的选项标志。若指定 <TT>MREMAP_MAYMOVE</TT>，
+		表示当当前位置线性地址空间不足时，允许移动该区域。
+		若指定 <TT>MREMAP_FIXED</TT>，表示整个区域应当移动到
+		指定的 new_addr，并使用新的长度。从 <TT>new_addr</TT>
+		到 <TT>new_addr+new_len</TT> 的区域将通过
+		<TT>do_munmap()</TT> 解除映射。</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>new_addr</B> 若发生移动，则为新区域的地址
 </DD></DL>
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>224</B>At this point, the default return is <TT>-EINVAL</TT> for
-invalid arguments</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>226-227</B>Make sure flags other than the two allowed flags are not used</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>229-230</B>The address passed in must be page aligned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>232-233</B>Page align the passed region lengths</DD></DL><PRE CLASS="verbatim">236     if (flags &amp; MREMAP_FIXED) {
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>224</B>此时若参数无效，默认返回值为 <TT>-EINVAL</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>226-227</B>确保没有使用允许的两种标志之外的其它标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>229-230</B>传入的地址必须按页对齐</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>232-233</B>对传入的区域长度做页对齐</DD></DL><PRE CLASS="verbatim">236     if (flags &amp; MREMAP_FIXED) {
 237         if (new_addr &amp; ~PAGE_MASK)
 238             goto out;
 239         if (!(flags &amp; MREMAP_MAYMOVE))
@@ -996,23 +990,17 @@ invalid arguments</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"
 253 
 254         do_munmap(current-&gt;mm, new_addr, new_len);
 255     }
-</PRE><P>This block handles the condition where the region location is fixed and must be
-fully moved. It ensures the area been moved to is safe and definitely unmapped.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>236</B><TT>MREMAP_FIXED</TT> is the flag which indicates the location
-	is fixed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>237-238</B>The specified <TT>new_addr</TT> must be be page aligned</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>239-240</B>If <TT>MREMAP_FIXED</TT> is specified, then the
-<TT>MAYMOVE</TT> flag must be used as well</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>242-243</B>Make sure the resized region does not exceed
-<TT>TASK_SIZE</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>248-249</B>Just as the comments indicate, the two regions been used for the
-move may not overlap</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>254</B>Unmap the region that is about to be used. It is presumed the caller
-ensures that the region is not in use for anything important</DD></DL><PRE CLASS="verbatim">261     ret = addr;
+</PRE><P>此代码块处理区域位置固定、必须整体移动的情况。它确保目标区域是安全的，
+并且确实已经被解除映射。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>236</B><TT>MREMAP_FIXED</TT> 是表示位置固定的标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>237-238</B>指定的 <TT>new_addr</TT> 必须按页对齐</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>239-240</B>若指定了 <TT>MREMAP_FIXED</TT>，则必须同时使用
+<TT>MAYMOVE</TT> 标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>242-243</B>确保调整后的区域不会超出 <TT>TASK_SIZE</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>248-249</B>正如注释所示，用于移动的两个区域不能重叠</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>254</B>解除即将被使用区域的映射。假定调用方
+确保该区域没有用于任何重要用途</DD></DL><PRE CLASS="verbatim">261     ret = addr;
 262     if (old_len &gt;= new_len) {
 263         do_munmap(current-&gt;mm, addr+new_len, old_len - new_len);
 264         if (!(flags &amp; MREMAP_FIXED) || (new_addr == addr))
 265             goto out;
 266     }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>261</B>At this point, the address of the resized region is the return
-value</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>262</B>If the old length is larger than the new length, then the region is
-shrinking</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>263</B>Unmap the unused region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>264-235</B>If the region is not to be moved, either because
-<TT>MREMAP_FIXED</TT> is not used or the new address matches the old
-address, goto out which will return the address</DD></DL><PRE CLASS="verbatim">271     ret = -EFAULT;
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>261</B>此时，返回值是调整大小后区域的地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>262</B>若旧长度大于新长度，则区域正在缩小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>263</B>解除未使用部分的映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>264-235</B>若该区域不需要移动——要么因为没有使用
+<TT>MREMAP_FIXED</TT>，要么因为新地址与旧地址相同——则 goto out 返回该地址</DD></DL><PRE CLASS="verbatim">271     ret = -EFAULT;
 272     vma = find_vma(current-&gt;mm, addr);
 273     if (!vma || vma-&gt;vm_start &gt; addr)
 274         goto out;
@@ -1039,18 +1027,14 @@ address, goto out which will return the address</DD></DL><PRE CLASS="verbatim">2
 295         !(flags &amp; MAP_NORESERVE) &amp;&amp;
 296         !vm_enough_memory((new_len - old_len) &gt;&gt; PAGE_SHIFT))
 297         goto out;
-</PRE><P>Do a number of checks to make sure it is safe to grow or move the region</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>271</B>At this point, the default action is to return <TT>-EFAULT</TT>
-causing a segmentation fault as the ranges of memory been used are invalid</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>272</B>Find the VMA responsible for the requested address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>273</B>If the returned VMA is not responsible for this address, then an
-invalid address was used so return a fault</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>276-277</B>If the <TT>old_len</TT> passed in exceeds the length of
-the VMA, it means the user is trying to remap multiple regions which is
-not allowed</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>278-281</B>If the VMA has been explicitly marked as non-resizable, raise a
-fault</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>282-283</B>If the pages for this VMA must be locked in memory, recalculate
-the number of locked pages that will be kept in memory. If the number of pages
-exceed the ulimit set for this resource, return EAGAIN indicating to the caller
-that the region is locked and cannot be resized</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>289</B>The default return at this point is to indicate there is not enough
-memory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>290-292</B>Ensure that the user will not exist their allowed allocation of
-memory</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>294-297</B>Ensure that there is enough memory to satisfy the request after
-the resizing with <TT>vm_enough_memory()</TT>(See Section <A HREF="understand030.html#func: vm_enough_memory">M.1.1</A>)</DD></DL><PRE CLASS="verbatim">302     if (old_len == vma-&gt;vm_end - addr &amp;&amp;
+</PRE><P>进行一系列检查，以确保扩展或移动该区域是安全的</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>271</B>此时，默认动作是返回 <TT>-EFAULT</TT>，
+由于所使用的内存范围无效，会引发段错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>272</B>查找负责所请求地址的 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>273</B>若返回的 VMA 并不负责该地址，
+则使用了非法地址，返回错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>276-277</B>若传入的 <TT>old_len</TT> 超过了该 VMA 的长度，
+说明用户尝试同时重新映射多个区域，这是不允许的</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>278-281</B>若该 VMA 被显式标记为不可调整大小，则引发错误</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>282-283</B>若该 VMA 的页面必须锁定在内存中，
+重新计算将保留在内存中的锁定页数。若页数超出该资源的 ulimit，
+返回 EAGAIN，告知调用方该区域已锁定、无法调整大小</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>289</B>此时默认返回值表示内存不足</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>290-292</B>确保用户不会超出其允许的内存分配额度</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>294-297</B>用 <TT>vm_enough_memory()</TT>（参见
+<A HREF="../original_html/understand030.html#func: vm_enough_memory">M.1.1</A> 节）确认调整大小之后有足够的
+内存满足该请求</DD></DL><PRE CLASS="verbatim">302     if (old_len == vma-&gt;vm_end - addr &amp;&amp;
 303         !((flags &amp; MREMAP_FIXED) &amp;&amp; (addr != new_addr)) &amp;&amp;
 304         (old_len != new_len || !(flags &amp; MREMAP_MAYMOVE))) {
 305         unsigned long max_addr = TASK_SIZE;
@@ -1072,11 +1056,8 @@ the resizing with <TT>vm_enough_memory()</TT>(See Section <A HREF="understand030
 321             goto out;
 322         }
 323     }
-</PRE><P>Handle the case where the region is been expanded and cannot be moved</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>302</B>If it is the full region that is been remapped and ...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>303</B>The region is definitely not been moved and ...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>304</B>The region is been expanded and cannot be moved then ...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>305</B>Set the maximum address that can be used to <TT>TASK_SIZE</TT>,
-3GiB on an x86</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>306-307</B>If there is another region, set the max address to be the start
-of the next region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>309-322</B>Only allow the expansion if the newly sized region does not
-overlap with the next VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>310</B>Calculate the number of extra pages that will be required</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>311</B>Lock the mm spinlock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>312</B>Expand the VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>313</B>Free the mm spinlock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>314</B>Update the statistics for the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>315-319</B>If the pages for this region are locked in memory, make them
-present now</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>320-321</B>Return the address of the resized region</DD></DL><PRE CLASS="verbatim">329     ret = -ENOMEM;
+</PRE><P>处理区域正在被扩展但不能被移动的情况</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>302</B>若被重新映射的是整个区域，并且……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>303</B>该区域确实不会被移动，并且……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>304</B>该区域正在被扩展且不能移动，则……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>305</B>将可用的最大地址设为 <TT>TASK_SIZE</TT>，
+在 x86 上为 3GiB</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>306-307</B>若存在另一个区域，则将最大地址设为下一个区域的起始地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>309-322</B>只有当调整后的区域不会与下一个 VMA 重叠时，才允许扩展</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>310</B>计算需要的额外页数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>311</B>锁定 mm 自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>312</B>扩展该 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>313</B>释放 mm 自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>314</B>更新该 mm 的统计信息</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>315-319</B>若该区域的页面已锁定在内存中，则立刻让它们驻留</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>320-321</B>返回调整大小后的区域地址</DD></DL><PRE CLASS="verbatim">329     ret = -ENOMEM;
 330     if (flags &amp; MREMAP_MAYMOVE) {
 331         if (!(flags &amp; MREMAP_FIXED)) {
 332             unsigned long map_flags = 0;
@@ -1094,25 +1075,22 @@ present now</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>32
 343 out:
 344     return ret;
 345 }
-</PRE><P>To expand the region, a new one has to be allocated and the old one moved to it</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>329</B>The default action is to return saying no memory is available</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>330</B>Check to make sure the region is allowed to move</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>331</B>If <TT>MREMAP_FIXED</TT> is not specified, it means the new
-location was not supplied so one must be found</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>333-334</B>Preserve the <TT>MAP_SHARED</TT> option</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>336</B>Find an unmapped region of memory large enough for the expansion</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>337</B>The return value is the address of the new region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>338-339</B>For the returned address to be not page aligned,
-<TT>get_unmapped_area()</TT> would need to be broken. This could possibly be
-the case with a buggy device driver implementing <TT>get_unmapped_area()</TT>
-incorrectly</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>341</B>Call move_vma to move the region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>343-344</B>Return the address if successful and the error code otherwise</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc164">D.2.4.3</A>  Function: move_vma</H4><P> <EM>Source: mm/mremap.c</EM> <A NAME="func: move_vma"></A> <A NAME="@codeindex78"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand007.html#fig: move_vma">4.8</A>. This
-function is responsible for moving all the page table entries from one VMA
-to another region. If necessary a new VMA will be allocated for the region
-being moved to. Just like the function above, it is very long but may be
-broken up into the following distinct parts.</P><UL CLASS="itemize"><LI CLASS="li-itemize">Function preamble, find the VMA preceding the area about to be moved to
-and the VMA in front of the region to be mapped
-</LI><LI CLASS="li-itemize">Handle the case where the new location is between two existing VMAs.
-See if the preceding region can be expanded forward or the next region
-expanded backwards to cover the new mapped region
-</LI><LI CLASS="li-itemize">Handle the case where the new location is going to be the last VMA on
-the list. See if the preceding region can be expanded forward
-</LI><LI CLASS="li-itemize">If a region could not be expanded, allocate a new VMA from the slab
-allocator
-</LI><LI CLASS="li-itemize">Call <TT>move_page_tables()</TT>, fill in the new VMA details if a new
-one was allocated and update statistics before returning</LI></UL><PRE CLASS="verbatim">125 static inline unsigned long move_vma(struct vm_area_struct * vma,
+</PRE><P>要扩展该区域，必须分配一个新区域，并将旧区域移动过去</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>329</B>默认动作是返回"内存不足"</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>330</B>检查确认该区域是允许移动的</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>331</B>若未指定 <TT>MREMAP_FIXED</TT>，则说明没有提供新位置，
+需要寻找一个</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>333-334</B>保留 <TT>MAP_SHARED</TT> 选项</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>336</B>查找一段足够容纳扩展后区域的未映射内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>337</B>返回值即为新区域的地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>338-339</B>返回地址若没有按页对齐，
+则说明 <TT>get_unmapped_area()</TT> 出错。这种情况可能源于
+某个错误的设备驱动错误地实现了 <TT>get_unmapped_area()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>341</B>调用 move_vma 来移动该区域</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>343-344</B>成功时返回地址，否则返回错误码</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc164">D.2.4.3</A>　函数：<TT>move_vma</TT></H4><P> <EM>源码位置：mm/mremap.c</EM> <A NAME="func: move_vma"></A> <A NAME="@codeindex78"></A></P><P>该函数的调用图如图 <A HREF="understand007_zh.html#fig: move_vma">4.8</A> 所示。
+该函数负责将所有页表项从一个 VMA 移动到另一个区域。
+若有必要，会为目标区域分配一个新的 VMA。和上面那个函数一样，它非常长，
+但可以拆分为以下几个不同的部分。</P><UL CLASS="itemize"><LI CLASS="li-itemize">函数序言：找出即将被移动到的区域前方的 VMA，
+以及待映射区域前方的 VMA
+</LI><LI CLASS="li-itemize">处理新位置位于两个已有 VMA 之间的情况。
+检查前面的区域能否向前扩展，或者后面的区域能否向后扩展，
+以覆盖新映射的区域
+</LI><LI CLASS="li-itemize">处理新位置将成为链表上最后一个 VMA 的情况。
+检查前面的区域能否向前扩展
+</LI><LI CLASS="li-itemize">若没有区域可以被扩展，则从 slab 分配器分配一个新的 VMA
+</LI><LI CLASS="li-itemize">调用 <TT>move_page_tables()</TT>，若分配了新 VMA 则填充其详细信息，
+并在返回前更新统计信息</LI></UL><PRE CLASS="verbatim">125 static inline unsigned long move_vma(struct vm_area_struct * vma,
 126     unsigned long addr, unsigned long old_len, unsigned long new_len,
 127     unsigned long new_addr)
 128 {
@@ -1122,15 +1100,15 @@ one was allocated and update statistics before returning</LI></UL><PRE CLASS="ve
 132 
 133     new_vma = NULL;
 134     next = find_vma_prev(mm, new_addr, &amp;prev);
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>125-127</B>The parameters are
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>125-127</B>参数如下：
 <DL CLASS="description"><DT CLASS="dt-description">
-</DT><DD CLASS="dd-description"><B>vma</B> The VMA that the address been moved belongs to
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>addr</B> The starting address of the moving region
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>old_len</B> The old length of the region to move
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>new_len</B> The new length of the region moved
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>new_addr</B> The new address to relocate to
-</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>134</B>Find the VMA preceding the address been moved to indicated by
-<TT>prev</TT> and return the region after the new mapping as <TT>next</TT></DD></DL><PRE CLASS="verbatim">135     if (next) {
+</DT><DD CLASS="dd-description"><B>vma</B> 被移动地址所属的 VMA
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>addr</B> 被移动区域的起始地址
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>old_len</B> 待移动区域的旧长度
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>new_len</B> 移动后区域的新长度
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>new_addr</B> 重定位的目标新地址
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>134</B>查找被移动到的目标地址前方的 VMA，由 <TT>prev</TT> 指示，
+并将新映射后方的区域作为 <TT>next</TT> 返回</DD></DL><PRE CLASS="verbatim">135     if (next) {
 136         if (prev &amp;&amp; prev-&gt;vm_end == new_addr &amp;&amp;
 137             can_vma_merge(prev, vma-&gt;vm_flags) &amp;&amp; 
               !vma-&gt;vm_file &amp;&amp; !(vma-&gt;vm_flags &amp; VM_SHARED)) {
@@ -1159,15 +1137,12 @@ one was allocated and update statistics before returning</LI></UL><PRE CLASS="ve
 158             new_vma = next;
 159         }
 160     } else {
-</PRE><P>In this block, the new location is between two existing VMAs. Checks are made
-to see can be preceding region be expanded to cover the new mapping and then
-if it can be expanded to cover the next VMA as well. If it cannot be expanded,
-the next region is checked to see if it can be expanded backwards.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>136-137</B>If the preceding region touches the address to be mapped to and
-may be merged then enter this block which will attempt to expand regions</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>138</B>Lock the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>139</B>Expand the preceding region to cover the new location</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>140</B>Unlock the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>141</B>The new VMA is now the preceding VMA which was just expanded</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>142-143</B>Make sure the VMA linked list is intact. It would require a
-device driver with severe brain damage to cause this situation to occur</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>144</B>Check if the region can be expanded forward to encompass the next
-region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>145</B>If it can, then lock the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>146</B>Expand the VMA further to cover the next VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>147</B>There is now an extra VMA so unlink it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>148</B>Unlock the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>150</B>There is one less mapping now so update the <TT>map_count</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>151</B>Free the memory used by the memory mapping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>153</B>Else the <TT>prev</TT> region could not be expanded forward so
-check if the region pointed to be <TT>next</TT> may be expanded backwards to
-cover the new mapping instead</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>155</B>If it can, lock the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>156</B>Expand the mapping backwards</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>157</B>Unlock the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>158</B>The VMA representing the new mapping is now <TT>next</TT></DD></DL><PRE CLASS="verbatim">161         prev = find_vma(mm, new_addr-1);
+</PRE><P>在此代码块中，新位置位于两个已存在的 VMA 之间。先检查前面的区域能否
+扩展以覆盖新映射，然后再检查能否扩展到也覆盖下一个 VMA。
+若无法扩展，则检查下一个区域能否向后扩展。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>136-137</B>若前面的区域与待映射地址相邻且可以合并，
+则进入这一代码块，尝试扩展区域</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>138</B>锁定该 mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>139</B>扩展前面的区域以覆盖新位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>140</B>解锁该 mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>141</B>新 VMA 现在就是刚刚被扩展的前面那个 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>142-143</B>确保 VMA 链表完好。
+只有严重出错的设备驱动才会导致出现这种情况</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>144</B>检查该区域能否进一步向前扩展以包含下一个区域</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>145</B>若可以，则锁定该 mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>146</B>将该 VMA 继续扩展以覆盖下一个 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>147</B>现在多了一个 VMA，将其取消链接</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>148</B>解锁该 mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>150</B>映射数减少了一个，更新 <TT>map_count</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>151</B>释放该内存映射所占用的内存</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>153</B>否则，<TT>prev</TT> 区域无法向前扩展，
+此时检查 <TT>next</TT> 指向的区域能否向后扩展以覆盖新映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>155</B>若可以，则锁定该 mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>156</B>将该映射向后扩展</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>157</B>解锁该 mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>158</B>表示新映射的 VMA 现在是 <TT>next</TT></DD></DL><PRE CLASS="verbatim">161         prev = find_vma(mm, new_addr-1);
 162         if (prev &amp;&amp; prev-&gt;vm_end == new_addr &amp;&amp;
 163             can_vma_merge(prev, vma-&gt;vm_flags) &amp;&amp; !vma-&gt;vm_file &amp;&amp;
                     !(vma-&gt;vm_flags &amp; VM_SHARED)) {
@@ -1177,9 +1152,8 @@ cover the new mapping instead</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-
 167             new_vma = prev;
 168         }
 169     }
-</PRE><P>This block is for the case where the newly mapped region is the last VMA
-(<TT>next</TT> is NULL) so a check is made to see can the preceding region
-be expanded.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>161</B>Get the previously mapped region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>162-163</B>Check if the regions may be mapped</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>164</B>Lock the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>165</B>Expand the preceding region to cover the new mapping</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>166</B>Lock the mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>167</B>The VMA representing the new mapping is now <TT>prev</TT></DD></DL><PRE CLASS="verbatim">170 
+</PRE><P>该代码块对应新映射区域成为最后一个 VMA（<TT>next</TT> 为 NULL）的情况，
+此时检查前面的区域能否被扩展。</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>161</B>获取前一个已映射区域</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>162-163</B>检查这些区域是否可以合并映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>164</B>锁定该 mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>165</B>扩展前面的区域以覆盖新映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>166</B>解锁该 mm</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>167</B>表示新映射的 VMA 现在是 <TT>prev</TT></DD></DL><PRE CLASS="verbatim">170 
 171     allocated_vma = 0;
 172     if (!new_vma) {
 173         new_vma = kmem_cache_alloc(vm_area_cachep, SLAB_KERNEL);
@@ -1188,7 +1162,7 @@ be expanded.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLAS
 176         allocated_vma = 1;
 177     }
 178 
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>171</B>Set a flag indicating if a new VMA was not allocated</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>172</B>If a VMA has not been expanded to cover the new mapping then...</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>173</B>Allocate a new VMA from the slab allocator</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>174-175</B>If it could not be allocated, goto out to return failure</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>176</B>Set the flag indicated a new VMA was allocated</DD></DL><PRE CLASS="verbatim">179     if (!move_page_tables(current-&gt;mm, new_addr, addr, old_len)) {
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>171</B>设置一个标志，表示是否未分配新 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>172</B>若没有 VMA 被扩展以覆盖新映射，则……</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>173</B>从 slab 分配器分配一个新的 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>174-175</B>若分配失败，则 goto out 返回失败</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>176</B>设置已分配新 VMA 的标志</DD></DL><PRE CLASS="verbatim">179     if (!move_page_tables(current-&gt;mm, new_addr, addr, old_len)) {
 180         unsigned long vm_locked = vma-&gt;vm_flags &amp; VM_LOCKED;
 181
 182         if (allocated_vma) {
@@ -1220,13 +1194,13 @@ be expanded.</P><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLAS
 207  out:
 208     return -ENOMEM;
 209 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>179</B><TT>move_page_tables()</TT>(See Section <A HREF="#func: move_page_tables">D.2.4.6</A>)
-is responsible for copying all the page table entries. It returns 0 on success</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>182-193</B>If a new VMA was allocated, fill in all the relevant details,
-including the file/device entries and insert it into the various VMA linked
-lists with <TT>insert_vm_struct()</TT>(See Section <A HREF="#func: __insert_vm_struct">D.2.2.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>194</B>Unmap the old region as it is no longer required</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>197</B>Update the <TT>total_vm</TT> size for this process. The size of
-the old region is not important as it is handled within <TT>do_munmap()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>198-202</B>If the VMA has the <TT>VM_LOCKED</TT> flag, all the
-pages within the region are made present with <TT>mark_pages_present()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>203</B>Return the address of the new region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>205-206</B>This is the error path. If a VMA was allocated, delete it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>208</B>Return an out of memory error</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc165">D.2.4.4</A>  Function: make_pages_present</H4><P> <EM>Source: mm/memory.c</EM> <A NAME="func: make_pages_present"></A> <A NAME="@codeindex79"></A></P><P>This function makes all pages between <TT>addr</TT> and <TT>end</TT>
-present. It assumes that the two addresses are within the one VMA.</P><PRE CLASS="verbatim">1460 int make_pages_present(unsigned long addr, unsigned long end)
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>179</B><TT>move_page_tables()</TT>（参见 <A HREF="#func: move_page_tables">D.2.4.6</A> 节）
+负责复制所有页表项，成功时返回 0</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>182-193</B>若分配了新的 VMA，则填入所有相关细节，
+包括文件/设备项，并通过 <TT>insert_vm_struct()</TT>（参见
+<A HREF="#func: __insert_vm_struct">D.2.2.1</A> 节）将其插入到各个 VMA 链表中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>194</B>解除旧区域的映射，因为它不再需要</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>197</B>更新该进程的 <TT>total_vm</TT> 大小。
+旧区域的大小并不重要，因为它已在 <TT>do_munmap()</TT> 内部处理</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>198-202</B>若该 VMA 带有 <TT>VM_LOCKED</TT> 标志，
+则用 <TT>mark_pages_present()</TT> 让区域内所有页面驻留</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>203</B>返回新区域的地址</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>205-206</B>这是错误处理路径。若已分配 VMA，则将其删除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>208</B>返回内存不足错误</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc165">D.2.4.4</A>　函数：<TT>make_pages_present</TT></H4><P> <EM>源码位置：mm/memory.c</EM> <A NAME="func: make_pages_present"></A> <A NAME="@codeindex79"></A></P><P>该函数使 <TT>addr</TT> 到 <TT>end</TT> 之间的所有页面驻留。
+它假定这两个地址位于同一个 VMA 内。</P><PRE CLASS="verbatim">1460 int make_pages_present(unsigned long addr, unsigned long end)
 1461 {
 1462     int ret, len, write;
 1463     struct vm_area_struct * vma;
@@ -1242,13 +1216,10 @@ present. It assumes that the two addresses are within the one VMA.</P><PRE CLASS
 1473                 len, write, 0, NULL, NULL);
 1474     return ret == len ? 0 : -1;
 1475 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1465</B>Find the VMA with <TT>find_vma()</TT>(See Section <A HREF="#func: find_vma">D.3.1.1</A>) that
-contains the starting address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1466</B>Record if write-access is allowed in <TT>write</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1467-1468</B>If the starting address is after the end address, then
-<TT>BUG()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1469-1470</B>If the range spans more than one VMA its a bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1471</B>Calculate the length of the region to fault in</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1472</B>Call <TT>get_user_pages()</TT> to fault in all the pages in the
-requested region. It returns the number of pages that were faulted in</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1474</B>Return true if all the requested pages were successfully faulted
-in</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc166">D.2.4.5</A>  Function: get_user_pages</H4><P> <EM>Source: mm/memory.c</EM> <A NAME="func: get_user_pages"></A> <A NAME="@codeindex80"></A></P><P>This function is used to fault in user pages and may be used to fault in pages
-belonging to another process, which is required by <TT>ptrace()</TT> for
-example.</P><PRE CLASS="verbatim">454 int get_user_pages(struct task_struct *tsk, struct mm_struct *mm, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1465</B>用 <TT>find_vma()</TT>（参见 <A HREF="#func: find_vma">D.3.1.1</A> 节）
+找到包含起始地址的 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1466</B>将是否允许写访问记录到 <TT>write</TT> 中</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1467-1468</B>若起始地址在结束地址之后，则 <TT>BUG()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1469-1470</B>若范围跨越了多个 VMA，则是一个 bug</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1471</B>计算需要触发缺页加载的区域长度</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1472</B>调用 <TT>get_user_pages()</TT> 将所请求区域内的全部页面缺页装入，
+该函数返回成功装入的页数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>1474</B>若所有请求的页面均成功装入，则返回真</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc166">D.2.4.5</A>　函数：<TT>get_user_pages</TT></H4><P> <EM>源码位置：mm/memory.c</EM> <A NAME="func: get_user_pages"></A> <A NAME="@codeindex80"></A></P><P>该函数用于触发用户页面的缺页装入，也可用于装入属于其它进程的页面，
+例如 <TT>ptrace()</TT> 就需要这种能力。</P><PRE CLASS="verbatim">454 int get_user_pages(struct task_struct *tsk, struct mm_struct *mm, 
                        unsigned long start,
 455                    int len, int write, int force, struct page **pages, 
                        struct vm_area_struct **vmas)
@@ -1264,23 +1235,22 @@ example.</P><PRE CLASS="verbatim">454 int get_user_pages(struct task_struct *tsk
 465     flags &amp;= force ? (VM_MAYREAD | VM_MAYWRITE) : (VM_READ | VM_WRITE);
 466     i = 0;
 467 
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>454</B>The parameters are:
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>454</B>参数如下：
 <DL CLASS="description"><DT CLASS="dt-description">
-</DT><DD CLASS="dd-description"><B>tsk</B> is the process that pages are been faulted for
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>mm</B> is the <TT>mm_struct</TT> managing the address space being
-faulted
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>start</B> is where to start faulting
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>len</B> is the length of the region, in pages, to fault
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>write</B> indicates if the pages are being faulted for writing
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>force</B> indicates that the pages should be faulted even if the region only
-has the <TT>VM_MAYREAD</TT> or <TT>VM_MAYWRITE</TT> flags
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pages</B> is an array of struct pages which may be NULL. If supplied, the
-array will be filled with <TT>struct pages</TT> that were faulted in
-</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vmas</B> is similar to the <TT>pages</TT> array. If supplied, it will be
-filled with VMAs that were affected by the faults
-</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>464</B>Set the required flags to <TT>VM_WRITE</TT> and
-<TT>VM_MAYWRITE</TT> flags if the parameter <TT>write</TT> is set to 1.
-Otherwise use the read equivilants</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>465</B>If force is specified, only require the <TT>MAY</TT> flags</DD></DL><PRE CLASS="verbatim">468     do {
+</DT><DD CLASS="dd-description"><B>tsk</B> 触发缺页装入的目标进程
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>mm</B> 管理被装入地址空间的 <TT>mm_struct</TT>
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>start</B> 缺页装入的起始地址
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>len</B> 待装入区域的长度（以页计）
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>write</B> 指示页面是否为写操作而装入
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>force</B> 指示即使区域仅带有 <TT>VM_MAYREAD</TT> 或
+<TT>VM_MAYWRITE</TT> 标志，也应触发缺页装入
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>pages</B> 一个 struct page 数组，可以为 NULL。
+若提供，将被填入装入的 <TT>struct pages</TT>
+</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>vmas</B> 与 <TT>pages</TT> 数组类似。
+若提供，将被填入受此次缺页影响的 VMA
+</DD></DL></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>464</B>若参数 <TT>write</TT> 为 1，
+则将所需标志设为 <TT>VM_WRITE</TT> 和 <TT>VM_MAYWRITE</TT>；
+否则使用对应的读权限标志</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>465</B>若指定了 force，则只要求 <TT>MAY</TT> 类标志</DD></DL><PRE CLASS="verbatim">468     do {
 469         struct vm_area_struct * vma;
 470 
 471         vma = find_extend_vma(mm, start);
@@ -1330,24 +1300,20 @@ Otherwise use the read equivilants</DD><DT CLASS="dt-description"></DT><DD CLASS
 513     } while(len);
 514 out:
 515     return i;
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>468-513</B>This outer loop will move through every VMA affected by the
-faults</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>471</B>Find the VMA affected by the current value of <TT>start</TT>. This
-variable is incremented in <TT>PAGE_SIZE</TT>d strides</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>473</B>If a VMA does not exist for the address, or the caller has requested
-<TT>struct pages</TT> for a region that is IO mapped (and therefore not
-backed by physical memory) or that the VMA does not have the required flags,
-then return <TT>-EFAULT</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>476</B>Lock the page table spinlock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>479-496</B><TT>follow_page()</TT>(See Section <A HREF="understand020.html#func: follow_page">C.2.1</A>) walks the
-page tables and returns the <TT>struct page</TT> representing the frame
-mapped at <TT>start</TT>. This loop will only be entered if the PTE is not
-present and will keep looping until the PTE is known to be present with the
-page table spinlock held</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>480</B>Unlock the page table spinlock as <TT>handle_mm_fault()</TT> is
-likely to sleep</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>481</B>If the page is not present, fault it in with
-<TT>handle_mm_fault()</TT>(See Section <A HREF="#func: handle_mm_fault">D.5.3.1</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>482-487</B>Update the <TT>task_struct</TT> statistics indicating if a
-major or minor fault occured</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>488-490</B>If the faulting address is invalid, return</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>491-493</B>If the system is out of memory, return <TT>-ENOMEM</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>495</B>Relock the page tables. The loop will check to make sure the page is
-actually present</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>597-505</B>If the caller requested it, populate the <TT>pages</TT> array
-with <TT>struct page</TT>s affected by this function. Each struct will have
-a reference to it taken with <TT>page_cache_get()</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>506-507</B>Similarly, record VMAs affected</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>508</B>Increment <TT>i</TT> which is a counter for the number of pages
-present in the requested region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>509</B>Increment <TT>start</TT> in a page-sized stride</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>510</B>Decrement the number of pages that must be faulted in</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>511</B>Keep moving through the VMAs until the requested pages have been
-faulted in</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>512</B>Release the page table spinlock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>515</B>Return the number of pages known to be present in the region</DD></DL><PRE CLASS="verbatim">516 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>468-513</B>外层循环遍历所有受此次缺页影响的 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>471</B>查找受当前 <TT>start</TT> 值影响的 VMA。
+该变量每次以 <TT>PAGE_SIZE</TT> 为步长递增</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>473</B>若该地址不存在对应的 VMA，或者调用方为一个
+IO 映射区域（因此没有物理内存支撑）请求了 <TT>struct pages</TT>，
+或者该 VMA 不具备所需的标志，则返回 <TT>-EFAULT</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>476</B>锁定页表自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>479-496</B><TT>follow_page()</TT>（参见
+<A HREF="understand020_zh.html#func: follow_page">C.2.1</A> 节）遍历页表，
+返回表示 <TT>start</TT> 处所映射页帧的 <TT>struct page</TT>。
+只有当 PTE 不存在时才会进入此循环，并将持续循环，
+直到在持有页表自旋锁的情况下确认 PTE 已存在</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>480</B>释放页表自旋锁，因为
+<TT>handle_mm_fault()</TT> 可能会休眠</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>481</B>若页面不存在，
+则用 <TT>handle_mm_fault()</TT>（参见 <A HREF="#func: handle_mm_fault">D.5.3.1</A> 节）
+触发缺页装入</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>482-487</B>更新 <TT>task_struct</TT> 的统计信息，
+标记发生的是主缺页还是次缺页</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>488-490</B>若缺页地址非法，则返回</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>491-493</B>若系统内存不足，返回 <TT>-ENOMEM</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>495</B>重新锁定页表。循环会再次检查以确保页面确实存在</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>597-505</B>若调用方要求，则将此函数所影响的
+<TT>struct page</TT> 填入 <TT>pages</TT> 数组。
+每个 struct 都会通过 <TT>page_cache_get()</TT> 增加一次引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>506-507</B>同样记录受影响的 VMA</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>508</B>递增 <TT>i</TT>，它用于记录所请求区域中已驻留的页数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>509</B>以一页为步长递增 <TT>start</TT></DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>510</B>递减仍需缺页装入的页数</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>511</B>持续在各 VMA 间移动，直到所请求页面全部装入</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>512</B>释放页表自旋锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>515</B>返回区域内已确认驻留的页数</DD></DL><PRE CLASS="verbatim">516 
 517     /*
 518      * We found an invalid page in the VMA.  Release all we have
 519      * so far and fail.
@@ -1359,15 +1325,13 @@ faulted in</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>512
 525     i = -EFAULT;
 526     goto out;
 527 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>521</B>This will only be reached if a <TT>struct page</TT> is found
-which represents a non-existant page frame</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>523-524</B>If one if found, release references to all pages stored in the
-<TT>pages</TT> array</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>525-526</B>Return <TT>-EFAULT</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc167">D.2.4.6</A>  Function: move_page_tables</H4><P> <EM>Source: mm/mremap.c</EM> <A NAME="func: move_page_tables"></A> <A NAME="@codeindex81"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand007.html#fig: move_page_tables">4.9</A>.
-This function is responsible copying all the page
-table entries from the region pointed to be <TT>old_addr</TT> to
-<TT>new_addr</TT>. It works by literally copying page table entries one
-at a time. When it is finished, it deletes all the entries from the old
-area. This is not the most efficient way to perform the operation, but it
-is very easy to error recover.</P><PRE CLASS="verbatim"> 90 static int move_page_tables(struct mm_struct * mm,
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>521</B>只有当找到的 <TT>struct page</TT>
+对应一个不存在的页帧时，才会到达此处</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>523-524</B>若发生这种情况，则释放
+<TT>pages</TT> 数组中存放的所有页面的引用</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>525-526</B>返回 <TT>-EFAULT</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc167">D.2.4.6</A>　函数：<TT>move_page_tables</TT></H4><P> <EM>源码位置：mm/mremap.c</EM> <A NAME="func: move_page_tables"></A> <A NAME="@codeindex81"></A></P><P>该函数的调用图如图 <A HREF="understand007_zh.html#fig: move_page_tables">4.9</A> 所示。
+该函数负责将 <TT>old_addr</TT> 指向区域的所有页表项复制到
+<TT>new_addr</TT>。它的做法就是逐项复制页表项，
+完成后再删除旧区域中的所有项。这并非最高效的实现方式，
+但便于错误恢复。</P><PRE CLASS="verbatim"> 90 static int move_page_tables(struct mm_struct * mm,
  91     unsigned long new_addr, unsigned long old_addr, 
         unsigned long len)
  92 {
@@ -1391,17 +1355,15 @@ is very easy to error recover.</P><PRE CLASS="verbatim"> 90 static int move_page
 121     zap_page_range(mm, new_addr, len);
 122     return -1;
 123 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>90</B>The parameters are the mm for the process, the new location, the old
-location and the length of the region to move entries for</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>95</B><TT>flush_cache_range()</TT> will flush all CPU caches for this
-range. It must be called first as some architectures, notably Sparc's require
-that a virtual to physical mapping exist before flushing the TLB</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>102-106</B>This loops through each page in the region and moves the PTE
-with <TT>move_one_pte()</TT>(See Section <A HREF="#func: move_one_page">D.2.4.7</A>). This translates
-to a lot of page table walking and could be performed much better but it is
-a rare operation</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>107</B>Flush the TLB for the old region</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>108</B>Return success</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>118-120</B>This block moves all the PTEs back. A
-<TT>flush_tlb_range()</TT> is not necessary as there is no way the region
-could have been used yet so no TLB entries should exist</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>121</B>Zap any pages that were allocated for the move</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>122</B>Return failure</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc168">D.2.4.7</A>  Function: move_one_page</H4><P> <EM>Source: mm/mremap.c</EM> <A NAME="func: move_one_page"></A> <A NAME="@codeindex82"></A></P><P>This function is responsible for acquiring the spinlock before finding the
-correct PTE with <TT>get_one_pte()</TT> and copying it with
-<TT>copy_one_pte()</TT></P><PRE CLASS="verbatim"> 77 static int move_one_page(struct mm_struct *mm, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>90</B>参数分别是该进程的 mm、新位置、旧位置，
+以及要移动页表项的区域长度</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>95</B><TT>flush_cache_range()</TT> 将刷新该范围内的所有 CPU 缓存。
+它必须先调用，因为某些架构（特别是 Sparc）要求在刷新 TLB 之前
+必须存在虚拟到物理的映射</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>102-106</B>该循环遍历区域中的每个页面，
+并用 <TT>move_one_pte()</TT>（参见 <A HREF="#func: move_one_page">D.2.4.7</A> 节）移动 PTE。
+这会涉及大量页表遍历，本可以更高效地实现，但此操作很少发生</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>107</B>刷新旧区域的 TLB</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>108</B>返回成功</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>118-120</B>此代码块把所有 PTE 移回原位。
+不需要 <TT>flush_tlb_range()</TT>，因为该区域不可能已经被使用过，
+也不应存在任何 TLB 项</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>121</B>清除为本次移动分配的页面</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>122</B>返回失败</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc168">D.2.4.7</A>　函数：<TT>move_one_page</TT></H4><P> <EM>源码位置：mm/mremap.c</EM> <A NAME="func: move_one_page"></A> <A NAME="@codeindex82"></A></P><P>该函数负责在用 <TT>get_one_pte()</TT> 找到正确 PTE 并用
+<TT>copy_one_pte()</TT> 复制之前先获取自旋锁。</P><PRE CLASS="verbatim"> 77 static int move_one_page(struct mm_struct *mm, 
                  unsigned long old_addr, unsigned long new_addr)
  78 {
  79     int error = 0;
@@ -1414,11 +1376,11 @@ correct PTE with <TT>get_one_pte()</TT> and copying it with
  86     spin_unlock(&amp;mm-&gt;page_table_lock);
  87     return error;
  88 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>82</B>Acquire the mm lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>83</B>Call <TT>get_one_pte()</TT>(See Section <A HREF="#func: get_one_pte">D.2.4.8</A>) which
-walks the page tables to get the correct PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>84-85</B>If the PTE exists, allocate a PTE for the destination and copy the
-PTEs with <TT>copy_one_pte()</TT>(See Section <A HREF="#func: copy_one_pte">D.2.4.10</A>)</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>86</B>Release the lock</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>87</B>Return whatever <TT>copy_one_pte()</TT> returned. It will only
-return an error if <TT>alloc_one_pte()</TT>(See Section <A HREF="#func: alloc_one_pte">D.2.4.9</A>)
-failed on line 85</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc169">D.2.4.8</A>  Function: get_one_pte</H4><P> <EM>Source: mm/mremap.c</EM> <A NAME="func: get_one_pte"></A> <A NAME="@codeindex83"></A></P><P>This is a very simple page table walk.</P><PRE CLASS="verbatim"> 18 static inline pte_t *get_one_pte(struct mm_struct *mm, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>82</B>获取 mm 锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>83</B>调用 <TT>get_one_pte()</TT>（参见
+<A HREF="#func: get_one_pte">D.2.4.8</A> 节），它通过遍历页表获取正确的 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>84-85</B>若该 PTE 存在，则为目标地址分配一个 PTE，
+并用 <TT>copy_one_pte()</TT>（参见 <A HREF="#func: copy_one_pte">D.2.4.10</A> 节）复制 PTE</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>86</B>释放该锁</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>87</B>返回 <TT>copy_one_pte()</TT> 的返回值。
+只有当第 85 行的 <TT>alloc_one_pte()</TT>（参见
+<A HREF="#func: alloc_one_pte">D.2.4.9</A> 节）失败时，它才会返回错误</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc169">D.2.4.8</A>　函数：<TT>get_one_pte</TT></H4><P> <EM>源码位置：mm/mremap.c</EM> <A NAME="func: get_one_pte"></A> <A NAME="@codeindex83"></A></P><P>这是一次非常简单的页表遍历。</P><PRE CLASS="verbatim"> 18 static inline pte_t *get_one_pte(struct mm_struct *mm, 
                                      unsigned long addr)
  19 {
  20     pgd_t * pgd;
@@ -1449,8 +1411,8 @@ failed on line 85</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc169">D.2.4.8</
  45 end:
  46     return pte;
  47 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>24</B>Get the PGD for this address</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>25-26</B>If no PGD exists, return NULL as no PTE will exist either</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>27-31</B>If the PGD is bad, mark that an error occurred in the region, clear
-its contents and return NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>33-40</B>Acquire the correct PMD in the same fashion as for the PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>42</B>Acquire the PTE so it may be returned if it exists</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc170">D.2.4.9</A>  Function: alloc_one_pte</H4><P> <EM>Source: mm/mremap.c</EM> <A NAME="func: alloc_one_pte"></A> <A NAME="@codeindex84"></A></P><P>Trivial function to allocate what is necessary for one PTE in a region.</P><PRE CLASS="verbatim"> 49 static inline pte_t *alloc_one_pte(struct mm_struct *mm, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>24</B>获取该地址对应的 PGD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>25-26</B>若 PGD 不存在，则返回 NULL，因为 PTE 也不会存在</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>27-31</B>若 PGD 损坏，则标记该区域发生了错误，
+清除其内容并返回 NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>33-40</B>以与 PGD 相同的方式获取正确的 PMD</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>42</B>获取 PTE，若存在则可将其返回</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc170">D.2.4.9</A>　函数：<TT>alloc_one_pte</TT></H4><P> <EM>源码位置：mm/mremap.c</EM> <A NAME="func: alloc_one_pte"></A> <A NAME="@codeindex84"></A></P><P>用于在区域中分配一个 PTE 所需资源的简单函数。</P><PRE CLASS="verbatim"> 49 static inline pte_t *alloc_one_pte(struct mm_struct *mm, 
                      unsigned long addr)
  50 {
  51     pmd_t * pmd;
@@ -1461,8 +1423,8 @@ its contents and return NULL</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-d
  56         pte = pte_alloc(mm, pmd, addr);
  57     return pte;
  58 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>54</B>If a PMD entry does not exist, allocate it</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>55-56</B>If the PMD exists, allocate a PTE entry. The check to make sure it
-succeeded is performed later in the function <TT>copy_one_pte()</TT></DD></DL><H4 CLASS="subsubsection"><A NAME="htoc171">D.2.4.10</A>  Function: copy_one_pte</H4><P> <EM>Source: mm/mremap.c</EM> <A NAME="func: copy_one_pte"></A> <A NAME="@codeindex85"></A></P><P>Copies the contents of one PTE to another. </P><PRE CLASS="verbatim"> 60 static inline int copy_one_pte(struct mm_struct *mm, 
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>54</B>若 PMD 项不存在，则分配它</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>55-56</B>若 PMD 存在，则分配一个 PTE 项。
+对分配是否成功的检查随后由 <TT>copy_one_pte()</TT> 函数完成</DD></DL><H4 CLASS="subsubsection"><A NAME="htoc171">D.2.4.10</A>　函数：<TT>copy_one_pte</TT></H4><P> <EM>源码位置：mm/mremap.c</EM> <A NAME="func: copy_one_pte"></A> <A NAME="@codeindex85"></A></P><P>将一个 PTE 的内容复制到另一个 PTE。</P><PRE CLASS="verbatim"> 60 static inline int copy_one_pte(struct mm_struct *mm, 
                    pte_t * src, pte_t * dst)
  61 {
  62     int error = 0;
@@ -1479,10 +1441,8 @@ succeeded is performed later in the function <TT>copy_one_pte()</TT></DD></DL><H
  73     }
  74     return error;
  75 }
-</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>65</B>If the source PTE does not exist, just return 0 to say the copy was
-successful</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>66</B>Get the PTE and remove it from its old location</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>67-71</B>If the <TT>dst</TT> does not exist, it means the call to
-<TT>alloc_one_pte()</TT> failed and the copy operation has failed and must be
-aborted</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>72</B>Move the PTE to its new location</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>74</B>Return an error if one occurred</DD></DL><H3 CLASS="subsection"><A NAME="htoc172">D.2.5</A>  Deleting a memory region</H3><H4 CLASS="subsubsection"><A NAME="htoc173">D.2.5.1</A>  Function: do_munmap</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: do_munmap"></A> <A NAME="@codeindex86"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand007.html#fig: do_munmap">4.11</A>. This
+</PRE><DL CLASS="description"><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>65</B>若源 PTE 不存在，则直接返回 0，表示复制成功</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>66</B>获取该 PTE，并将其从旧位置移除</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>67-71</B>若 <TT>dst</TT> 不存在，则说明
+<TT>alloc_one_pte()</TT> 调用失败，复制操作失败，必须中止</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>72</B>将 PTE 移到新位置</DD><DT CLASS="dt-description"></DT><DD CLASS="dd-description"><B>74</B>若发生错误，则返回错误</DD></DL><H3 CLASS="subsection"><A NAME="htoc172">D.2.5</A>  Deleting a memory region</H3><H4 CLASS="subsubsection"><A NAME="htoc173">D.2.5.1</A>  Function: do_munmap</H4><P> <EM>Source: mm/mmap.c</EM> <A NAME="func: do_munmap"></A> <A NAME="@codeindex86"></A></P><P>The call graph for this function is shown in Figure <A HREF="understand007.html#fig: do_munmap">4.11</A>. This
 function is responsible for unmapping a region. If necessary, the unmapping
 can span multiple VMAs and it can partially unmap one if necessary. Hence the
 full unmapping operation is divided into two major operations. This function
