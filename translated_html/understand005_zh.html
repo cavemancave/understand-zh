@@ -402,7 +402,50 @@
   <p><tt>mem_map</tt> 区域在系统启动期间以两种方式之一创建。在 NUMA 系统上，全局 <tt>mem_map</tt> 被视为从 <tt>PAGE_OFFSET</tt> 开始的虚拟数组；对每个活动结点调用 <tt>free_area_init_node()</tt>，为其分配该数组中属于自己的部分。在 UMA 系统上，<tt>free_area_init()</tt> 使用 <tt>contig_page_data</tt> 作为结点，全局 <tt>mem_map</tt> 同时充当该结点的"局部" <tt>mem_map</tt>。两个函数的调用图如图 2.5 所示。</p>
 
   <div class="figure">
-    <img src="../original_html/figures/understand-html005.png" alt="图 2.5">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 580 300" width="580" role="img" aria-labelledby="fig005-title fig005-desc" font-family="sans-serif" font-size="12">
+      <title id="fig005-title">图 2.5：函数调用图：free_area_init()</title>
+      <desc id="fig005-desc">free_area_init() 和 free_area_init_node() 共同调用核心函数 free_area_init_core()，后者进一步调用 alloc_bootmem_node() 分配 lmem_map，以及 init_waitqueue_head() 初始化等待队列。</desc>
+      <defs>
+        <marker id="arr005" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+        </marker>
+      </defs>
+
+      <!-- Two top-level callers -->
+      <rect x="30" y="15" width="185" height="34" rx="4" fill="#d4edda" stroke="#1a6630" stroke-width="1.5"/>
+      <text x="122" y="37" text-anchor="middle" font-weight="bold">free_area_init()</text>
+      <text x="122" y="50" text-anchor="middle" font-size="10" fill="#555">（UMA）</text>
+
+      <rect x="350" y="15" width="195" height="34" rx="4" fill="#d4edda" stroke="#1a6630" stroke-width="1.5"/>
+      <text x="447" y="37" text-anchor="middle" font-weight="bold">free_area_init_node()</text>
+      <text x="447" y="50" text-anchor="middle" font-size="10" fill="#555">（NUMA）</text>
+
+      <!-- Both call free_area_init_core -->
+      <line x1="122" y1="49" x2="240" y2="110" stroke="#444" stroke-width="1" marker-end="url(#arr005)"/>
+      <line x1="447" y1="49" x2="340" y2="110" stroke="#444" stroke-width="1" marker-end="url(#arr005)"/>
+
+      <!-- free_area_init_core -->
+      <rect x="175" y="110" width="230" height="34" rx="4" fill="#cfe2ff" stroke="#1f4e8a" stroke-width="1.5"/>
+      <text x="290" y="132" text-anchor="middle" font-weight="bold">free_area_init_core()</text>
+
+      <!-- Children of free_area_init_core -->
+      <line x1="230" y1="144" x2="120" y2="195" stroke="#444" stroke-width="1" marker-end="url(#arr005)"/>
+      <line x1="290" y1="144" x2="290" y2="195" stroke="#444" stroke-width="1" marker-end="url(#arr005)"/>
+      <line x1="350" y1="144" x2="460" y2="195" stroke="#444" stroke-width="1" marker-end="url(#arr005)"/>
+
+      <rect x="30" y="195" width="185" height="34" rx="3" fill="#fff3cd" stroke="#856404" stroke-width="1.2"/>
+      <text x="122" y="216" text-anchor="middle">alloc_bootmem_node()</text>
+
+      <rect x="195" y="195" width="195" height="34" rx="3" fill="#fff3cd" stroke="#856404" stroke-width="1.2"/>
+      <text x="292" y="216" text-anchor="middle">init_waitqueue_head()</text>
+
+      <rect x="395" y="195" width="160" height="34" rx="3" fill="#fff3cd" stroke="#856404" stroke-width="1.2"/>
+      <text x="475" y="211" text-anchor="middle">wait_table_size()</text>
+      <text x="475" y="224" text-anchor="middle" font-size="10" fill="#555">（计算等待表大小）</text>
+
+      <!-- Title -->
+      <text x="290" y="275" text-anchor="middle" font-size="13" font-weight="bold">函数调用图：free_area_init()</text>
+    </svg>
     <div class="caption">图 2.5：函数调用图：<tt>free_area_init()</tt></div>
   </div>
 
