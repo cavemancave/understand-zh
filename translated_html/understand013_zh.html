@@ -50,7 +50,78 @@ Linux 选页所使用的方法相当经验化，其背后的理论也是由多�
 </p>
 
 <div class="figure" id="fig-page-cache-lru">
-  <img src="../original_html/figures/understand-html059.png" alt="图 10.1：页缓存的 LRU 链表">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 260" width="660"
+       role="img" aria-labelledby="fig059-title fig059-desc"
+       font-family="sans-serif" font-size="12">
+    <title id="fig059-title">图 10.1：页缓存的 LRU 链表</title>
+    <desc id="fig059-desc">展示 active_list（活跃链表）和 inactive_list（非活跃链表）。lru_cache_add() 将新页加入 inactive_list 尾部；mark_page_accessed() 将引用到的页从 inactive_list 移至 active_list 头部；refill_inactive() 将 active_list 尾部的页移回 inactive_list 头部。</desc>
+    <defs>
+      <marker id="arr059" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="#333"/>
+      </marker>
+    </defs>
+
+    <!-- active_list label -->
+    <text x="10" y="68" font-weight="bold" fill="#1f4e8a">active_list</text>
+    <text x="10" y="82" font-size="10" fill="#555">（≈ 2/3 页缓存）</text>
+
+    <!-- active_list nodes -->
+    <rect x="140" y="50" width="70" height="30" rx="4" fill="#eef5ff" stroke="#1f4e8a" stroke-width="1.5"/>
+    <text x="175" y="70" text-anchor="middle" fill="#1f4e8a">头部</text>
+
+    <rect x="230" y="50" width="70" height="30" rx="4" fill="#eef5ff" stroke="#1f4e8a" stroke-width="1.5"/>
+    <text x="265" y="70" text-anchor="middle" fill="#1f4e8a">…</text>
+
+    <rect x="320" y="50" width="70" height="30" rx="4" fill="#eef5ff" stroke="#1f4e8a" stroke-width="1.5"/>
+    <text x="355" y="70" text-anchor="middle" fill="#1f4e8a">…</text>
+
+    <rect x="410" y="50" width="70" height="30" rx="4" fill="#eef5ff" stroke="#1f4e8a" stroke-width="1.5"/>
+    <text x="445" y="70" text-anchor="middle" fill="#1f4e8a">尾部</text>
+
+    <!-- active_list arrows -->
+    <line x1="210" y1="65" x2="228" y2="65" stroke="#333" stroke-width="1.5" marker-end="url(#arr059)"/>
+    <line x1="300" y1="65" x2="318" y2="65" stroke="#333" stroke-width="1.5" marker-end="url(#arr059)"/>
+    <line x1="390" y1="65" x2="408" y2="65" stroke="#333" stroke-width="1.5" marker-end="url(#arr059)"/>
+
+    <!-- inactive_list label -->
+    <text x="10" y="178" font-weight="bold" fill="#1f4e8a">inactive_list</text>
+
+    <!-- inactive_list nodes -->
+    <rect x="140" y="160" width="70" height="30" rx="4" fill="#eef5ff" stroke="#1f4e8a" stroke-width="1.5"/>
+    <text x="175" y="180" text-anchor="middle" fill="#1f4e8a">头部</text>
+
+    <rect x="230" y="160" width="70" height="30" rx="4" fill="#eef5ff" stroke="#1f4e8a" stroke-width="1.5"/>
+    <text x="265" y="180" text-anchor="middle" fill="#1f4e8a">…</text>
+
+    <rect x="320" y="160" width="70" height="30" rx="4" fill="#eef5ff" stroke="#1f4e8a" stroke-width="1.5"/>
+    <text x="355" y="180" text-anchor="middle" fill="#1f4e8a">…</text>
+
+    <rect x="410" y="160" width="70" height="30" rx="4" fill="#eef5ff" stroke="#1f4e8a" stroke-width="1.5"/>
+    <text x="445" y="180" text-anchor="middle" fill="#1f4e8a">尾部</text>
+
+    <!-- inactive_list arrows -->
+    <line x1="210" y1="175" x2="228" y2="175" stroke="#333" stroke-width="1.5" marker-end="url(#arr059)"/>
+    <line x1="300" y1="175" x2="318" y2="175" stroke="#333" stroke-width="1.5" marker-end="url(#arr059)"/>
+    <line x1="390" y1="175" x2="408" y2="175" stroke="#333" stroke-width="1.5" marker-end="url(#arr059)"/>
+
+    <!-- lru_cache_add: box pointing to inactive tail -->
+    <rect x="520" y="157" width="120" height="36" rx="4" fill="#fff8e1" stroke="#b8860b" stroke-width="1.5"/>
+    <text x="580" y="171" text-anchor="middle" font-size="11" fill="#5a3e00">lru_cache_add()</text>
+    <text x="580" y="185" text-anchor="middle" font-size="10" fill="#5a3e00">加入 inactive 尾部</text>
+    <line x1="520" y1="175" x2="482" y2="175" stroke="#b8860b" stroke-width="1.5" marker-end="url(#arr059)"/>
+
+    <!-- mark_page_accessed: inactive head → active head (upward arrow) -->
+    <path d="M175,160 C175,130 175,110 175,82" stroke="#2a7a2a" stroke-width="1.5" fill="none" marker-end="url(#arr059)"/>
+    <rect x="90" y="108" width="150" height="36" rx="4" fill="#e8f5e9" stroke="#2a7a2a" stroke-width="1.5"/>
+    <text x="165" y="122" text-anchor="middle" font-size="11" fill="#1a5a1a">mark_page_accessed()</text>
+    <text x="165" y="136" text-anchor="middle" font-size="10" fill="#1a5a1a">inactive→active 头部</text>
+
+    <!-- refill_inactive: active tail → inactive head (downward curved arrow) -->
+    <path d="M445,80 C445,115 300,130 175,160" stroke="#8b1a1a" stroke-width="1.5" fill="none" marker-end="url(#arr059)"/>
+    <rect x="490" y="100" width="150" height="36" rx="4" fill="#fdecea" stroke="#8b1a1a" stroke-width="1.5"/>
+    <text x="565" y="114" text-anchor="middle" font-size="11" fill="#5a0a0a">refill_inactive()</text>
+    <text x="565" y="128" text-anchor="middle" font-size="10" fill="#5a0a0a">active 尾→inactive 头</text>
+  </svg>
   <div class="caption">图 10.1：页缓存的 LRU 链表</div>
 </div>
 
