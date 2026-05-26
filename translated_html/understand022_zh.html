@@ -466,7 +466,32 @@
 
 <div class="figure">
   <hr width="80%" size="2">
-  <img src="../original_html/figures/understand-html080.png" alt="图 E.1：调用图：free_bootmem()">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" role="img"
+       aria-labelledby="fig080-title fig080-desc"
+       style="max-width:100%;height:auto;font-family:Consolas,monospace;">
+    <title id="fig080-title">图 E.1：调用图：free_bootmem()</title>
+    <desc id="fig080-desc">free_bootmem() 调用 free_bootmem_core() 的调用图。</desc>
+    <defs>
+      <marker id="arr-fig080" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#666"/>
+      </marker>
+      <style>
+        .nd-top080 { fill:#e8eef9; stroke:#1a3a6b; stroke-width:1.8; }
+        .nd080     { fill:#ffffff; stroke:#1a3a6b; stroke-width:1.3; }
+        .earr080   { fill:none; stroke:#666; stroke-width:1.2; marker-end:url(#arr-fig080); }
+        .lbl080    { fill:#1a3a6b; text-anchor:middle; dominant-baseline:central; }
+      </style>
+    </defs>
+    <!-- free_bootmem() -->
+    <rect class="nd-top080" x="80" y="14" width="160" height="36" rx="5"/>
+    <text class="lbl080" style="font-size:13px;font-weight:600;" x="160" y="32">free_bootmem()</text>
+    <!-- arrow -->
+    <line class="earr080" x1="160" y1="50" x2="160" y2="100"/>
+    <!-- free_bootmem_core() -->
+    <rect class="nd080" x="55" y="100" width="210" height="34" rx="4"/>
+    <text class="lbl080" style="font-size:12px;" x="160" y="117">free_bootmem_core()</text>
+  </svg>
   <div class="caption">图 E.1：调用图：<tt>free_bootmem()</tt></div>
   <a name="fig: free_bootmem"></a>
   <hr width="80%" size="2">
