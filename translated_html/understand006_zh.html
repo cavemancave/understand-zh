@@ -162,7 +162,69 @@
   <p><tt>MASK</tt> 可与线性地址做按位与以屏蔽高位，经常用于判断地址是否在某级页表上对齐。<tt>SIZE</tt> 表明该级每个表项所映射的字节数。<tt>SIZE</tt> 与 <tt>MASK</tt> 的关系如图 3.3 所示。</p>
 
   <div class="figure">
-    <img src="../original_html/figures/understand-html008.png" alt="图 3.3">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 290" width="640" role="img" aria-labelledby="fig008-title fig008-desc" font-family="sans-serif" font-size="12">
+  <title id="fig008-title">图 3.3：线性地址 Size 与 Mask 宏</title>
+  <desc id="fig008-desc">展示三个层级（页、PMD、PGDIR）的 SIZE 和 MASK 宏的含义：SIZE 为每个表项所映射的字节数（2 的 SHIFT 次方），MASK 为对应位的掩码（低位清零）。</desc>
+  <defs>
+    <marker id="arr008" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="320" y="22" text-anchor="middle" font-size="13" font-weight="bold">图 3.3：线性地址 Size 与 Mask 宏</text>
+
+  <!-- Column headers -->
+  <text x="30" y="45" font-size="11" font-weight="bold" fill="#333">级别</text>
+  <text x="320" y="45" text-anchor="middle" font-size="11" font-weight="bold" fill="#333">地址结构（低位由 MASK 清零）</text>
+  <text x="520" y="45" text-anchor="middle" font-size="11" font-weight="bold" fill="#333">SIZE / MASK</text>
+
+  <!-- ── Page level row ── -->
+  <text x="30" y="80" font-size="11" fill="#333">页级</text>
+  <!-- upper bits (kept by PAGE_MASK): 20 bits wide -->
+  <rect x="130" y="58" width="270" height="28" fill="#f4f4f4" stroke="#888"/>
+  <text x="265" y="76" text-anchor="middle" font-size="10" fill="#555">高 20 位（保留）</text>
+  <!-- lower 12 bits (zeroed by PAGE_MASK): -->
+  <rect x="400" y="58" width="120" height="28" fill="#fce8e8" stroke="#c0392b"/>
+  <text x="460" y="76" text-anchor="middle" font-size="10" fill="#c0392b">低 12 位（清零）</text>
+  <!-- Annotations -->
+  <text x="520" y="68" font-size="10" fill="#1f4e8a">PAGE_SIZE = 4 KiB</text>
+  <text x="520" y="82" font-size="10" fill="#c0392b">PAGE_MASK 清零低 12 位</text>
+
+  <!-- ── PMD level row ── -->
+  <text x="30" y="140" font-size="11" fill="#333">PMD 级</text>
+  <!-- upper bits kept: 12 bits wide -->
+  <rect x="130" y="118" width="160" height="28" fill="#f4f4f4" stroke="#888"/>
+  <text x="210" y="136" text-anchor="middle" font-size="10" fill="#555">高 12 位（保留）</text>
+  <!-- lower 20 bits zeroed: -->
+  <rect x="290" y="118" width="230" height="28" fill="#fce8e8" stroke="#c0392b"/>
+  <text x="405" y="136" text-anchor="middle" font-size="10" fill="#c0392b">低 20 位（清零）</text>
+  <!-- Annotations -->
+  <text x="520" y="128" font-size="10" fill="#1f4e8a">PMD_SIZE = 4 MiB</text>
+  <text x="520" y="142" font-size="10" fill="#c0392b">PMD_MASK 清零低 20 位</text>
+  <text x="520" y="156" font-size="10" fill="#666">（x86 无 PAE）</text>
+
+  <!-- ── PGDIR level row ── -->
+  <text x="30" y="205" font-size="11" fill="#333">PGDIR 级</text>
+  <!-- upper bits kept: 10 bits -->
+  <rect x="130" y="178" width="100" height="28" fill="#f4f4f4" stroke="#888"/>
+  <text x="180" y="196" text-anchor="middle" font-size="10" fill="#555">高 10 位</text>
+  <!-- lower 22 bits zeroed: -->
+  <rect x="230" y="178" width="290" height="28" fill="#fce8e8" stroke="#c0392b"/>
+  <text x="375" y="196" text-anchor="middle" font-size="10" fill="#c0392b">低 22 位（清零）</text>
+  <!-- Annotations -->
+  <text x="520" y="188" font-size="10" fill="#1f4e8a">PGDIR_SIZE = 4 GiB / 1024</text>
+  <text x="520" y="202" font-size="10" fill="#c0392b">PGDIR_MASK 清零低 22 位</text>
+
+  <!-- Legend -->
+  <rect x="130" y="235" width="20" height="12" fill="#f4f4f4" stroke="#888"/>
+  <text x="158" y="246" font-size="10" fill="#555">高位（MASK 保留）</text>
+  <rect x="260" y="235" width="20" height="12" fill="#fce8e8" stroke="#c0392b"/>
+  <text x="288" y="246" font-size="10" fill="#c0392b">低位（MASK 清零，跨度 = SIZE）</text>
+
+  <!-- Note -->
+  <text x="320" y="272" text-anchor="middle" font-size="10" fill="#666">SIZE = 2^SHIFT，MASK = ~(SIZE−1)，用于判断地址是否在对应级别对齐</text>
+</svg>
     <div class="caption">图 3.3：线性地址 Size 与 Mask 宏</div>
   </div>
 
